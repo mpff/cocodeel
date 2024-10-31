@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cocodeel"
+version = "0.0.1"
+authors = [
+  { name="Manuel Pfeuffer", email="manuel.pfeuffer@hu-berlin.de" },
+]
+description = "PyTorch modules for efficient estimation of neural networks with control variables."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: BSD 3-Clause License",
+    "Operating System :: OS Independent",
+]
+keywords = [
+    "PyTorch",
+    "Deep Learning",
+    "Statistics",
+    "Confounder Control",
+    "Neuroimaging"
+]
+
+[project.urls]
+Homepage = "https://github.com/mpff/cocodeel"
+Issues = "https://github.com/mpff/cocodeel/issues"
