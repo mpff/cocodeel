@@ -57,7 +57,7 @@ class CovarNeuralNetwork(lightning.LightningModule):
 class PostHocOrthogonalizedModel(lightning.LightningModule):
 
     def __init__(self, model, train_dataloader):
-        """ Orthogonalizes a pre-trained model (that includes covars!) over the training data set. """
+        """ Orthogonalizes a pre-trained model over the training data set. """
         super().__init__()
         self.model = copy.deepcopy(model)
         # Update last layer with orthogonalization.
