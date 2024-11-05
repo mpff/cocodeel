@@ -54,3 +54,40 @@ class CovarNeuralNetwork(lightning.LightningModule):
         optimizer = torch.optim.AdamW(self.parameters(), **self.optimizer_params)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **self.scheduler_params)
         return {'optimizer': optimizer, 'lr_scheduler': scheduler, 'monitor': 'val_loss'}
+
+
+class PostHocOrthogonalizedModel(lightning.LightningModule):
+
+    def __init__(self, model, train_dataloader):
+        """ Orthogonalizes a pre-trained model (that includes covars!) over the training data set. """
+        super().__init__()
+        self.model = copy.deepcopy(model)
+        # Update last layer with orthogonalization.
+        self.model.ortho_parameters = torch.nn.Parameter(torch.zeros((self.model.num_covars, 1)), requires_grad=False)
+        with torch.no_grad():
+            # See Rügamer (2023) ... Algorithm ...
+            xtx = torch.zeros((self.model.num_covars, self.model.num_covars), device=self.model.device)
+            xte = torch.zeros((self.model.num_covars, 1), device=self.model.device)
+            for batch in train_dataloader:
+                u = batch["image"].to(self.model.device)
+                x = batch["covar"].to(self.model.device)
+                h = self.model.backbone(u)
+                eta_h = self.model.deep_predictor(h)
+                xtx += x.T @ x
+                xte += x.T @ eta_h
+            self.model.ortho_parameters.data = torch.linalg.solve(xtx, xte)
+            self.model.struct_predictor.weight.data += self.model.ortho_parameters.T
+
+    def linear_predictor(self, u, x):
+        h = self.model.backbone(u)
+        h_orth = h - x @ self.ortho_parameters
+        return self.model.deep_predictor(h_orth) + self.model.struct_predictor(x)
+
+    def forward(self, u, x):
+        eta = self.linear_predictor(u, x)
+        return self.model.output_func(eta)
+
+    def loss(self, u, x, y):
+        eta = self.linear_predictor(u, x)
+        loss = self.model.loss_func(eta.squeeze(), y)
+        return loss
