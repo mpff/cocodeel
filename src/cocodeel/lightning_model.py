@@ -32,13 +32,11 @@ class CovarNeuralNetwork(lightning.LightningModule):
         # Save hyperparameters to checkpoint.
         self.save_hyperparameters("num_covars", "num_features", "optimizer_params", "scheduler_params")
 
-    def forward(self, U, X):
-        H = self.backbone(U)
-        eta = self.deep_predictor(H) + self.struct_predictor(X)
     def linear_predictor(self, u, x):
         h = self.model.backbone(u)
         return self.model.deep_predictor(h) + self.model.struct_predictor(x)
 
+    def forward(self, u, x):
         eta = self.linear_predictor(u, x)
         return self.output_func(eta)
 
