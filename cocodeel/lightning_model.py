@@ -6,7 +6,7 @@ import lightning
 class CovarNeuralNetwork(lightning.LightningModule):
 
     def __init__(self, backbone, output_func, loss_func,
-                 num_covars, backbone_params, optimizer_params, scheduler_params):
+                 num_covars=1, backbone_params={}, optimizer_params={}, scheduler_params={}):
         """ Neural network with (or without) covariates added in the last layer.
         Parameters:
             backbone (nn.Module): The backbone model for feature extraction.
@@ -26,15 +26,13 @@ class CovarNeuralNetwork(lightning.LightningModule):
         self.optimizer_params = optimizer_params
         self.scheduler_params = scheduler_params
         # Initialise last layer of the network.
-        # IMPORTANT: No bias term, because we assume that we always have at least a covariate vector of ones!
+        # IMPORTANT: No explicit bias term, as we assume at least a covariate vector of ones!
         self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=False)
         self.struct_predictor = torch.nn.Linear(self.num_covars, 1, bias=False)
-        # Save hyperparameters to checkpoint.
-        self.save_hyperparameters("num_covars", "num_features", "optimizer_params", "scheduler_params")
 
     def linear_predictor(self, u, x):
-        h = self.model.backbone(u)
-        return self.model.deep_predictor(h) + self.model.struct_predictor(x)
+        h = self.backbone(u)
+        return self.deep_predictor(h) + self.struct_predictor(x)
 
     def forward(self, u, x):
         eta = self.linear_predictor(u, x)
