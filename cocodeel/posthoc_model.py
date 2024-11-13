@@ -26,6 +26,7 @@ class PostHocOrthogonalizedModel(lightning.LightningModule):
 
     def forward(self, u, x):
         h = self.model.backbone(u)
-        h_orth = h - x @ self.model.ortho_parameters
-        eta = self.model.deep_predictor(h_orth) + self.model.struct_predictor(x)
+        eta_deep = self.model.deep_predictor(h) - x @ self.model.ortho_parameters
+        eta_struct = self.model.struct_predictor(x)
+        eta = eta_deep + eta_struct
         return self.model.output_func(eta)
