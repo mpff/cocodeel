@@ -34,9 +34,8 @@ class CovarNeuralNetwork(lightning.LightningModule):
 
     def training_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        h = self.backbone(u)
-        eta = self.deep_predictor(h) + self.struct_predictor(x)
-        loss =  self.loss_func(eta.squeeze(), y)
+        yhat = self.forward(u, x)
+        loss =  self.loss_func(yhat.squeeze(), y)
         return loss
 
     def configure_optimizers(self):
