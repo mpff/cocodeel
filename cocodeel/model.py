@@ -3,7 +3,7 @@ import lightning
 
 class CovarNeuralNetwork(lightning.LightningModule):
 
-    def __init__(self, backbone, output_func, loss_func,
+    def __init__(self, backbone, output_func, loss_func, optimizer,
                  num_features=32, num_covars=1,
                  backbone_params={}, optimizer_params={}):
         """ Neural network with (or without) covariates added in the last layer.
@@ -19,6 +19,7 @@ class CovarNeuralNetwork(lightning.LightningModule):
         self.backbone = backbone(**backbone_params)
         self.output_func = output_func()
         self.loss_func = loss_func()
+        self.optimizer = optimizer
         self.num_covars = num_covars
         self.num_features = num_features
         self.optimizer_params = optimizer_params
@@ -26,6 +27,11 @@ class CovarNeuralNetwork(lightning.LightningModule):
         # IMPORTANT: No explicit bias term, as we assume at least a covariate vector of ones!
         self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=False)
         self.struct_predictor = torch.nn.Linear(self.num_covars, 1, bias=False)
+        self.save_hyperparameters()
+
+    def configure_optimizers(self):
+        optimizer = self.optimizer(self.parameters(), **self.optimizer_params)
+        return optimizer
 
     def forward(self, u, x):
         h = self.backbone(u)
@@ -34,10 +40,22 @@ class CovarNeuralNetwork(lightning.LightningModule):
 
     def training_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self.forward(u, x)
-        loss =  self.loss_func(yhat.squeeze(), y)
+        yhat = self(u, x)
+        loss = self.loss_func(yhat.squeeze(), y)
+        self.log("train_loss", loss)
         return loss
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), **self.optimizer_params)
-        return optimizer
+    def validation_step(self, batch, batch_idx):
+        u, x, y = batch["image"], batch["covar"], batch["label"]
+        yhat = self(u, x)
+        loss = self.loss_func(yhat.squeeze(), y)
+        self.log("val_loss", loss)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        u, x, y = batch["image"], batch["covar"], batch["label"]
+        yhat = self(u, x)
+        loss = self.loss_func(yhat.squeeze(), y)
+        self.log("test_loss", loss)
+        return self.loss_func(yhat.squeeze(), y)
+
