@@ -4,7 +4,7 @@ import lightning
 class NeuralNetwork(lightning.LightningModule):
 
     def __init__(self, backbone, output_func, loss_func, optimizer,
-                 num_covars=0, backbone_params={},
+                 num_features= 32, num_covars=0, backbone_params={},
                  optimizer_params={}, scheduler=None, scheduler_params=None):
         """ Neural network without added in the last layer.
         Parameters:
@@ -19,7 +19,7 @@ class NeuralNetwork(lightning.LightningModule):
         self.backbone = backbone(**backbone_params)
         # Initialise last layer of the network.
         self.num_covars = num_covars
-        self.num_features = backbone_params['out_features']
+        self.num_features = num_features
         self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=True)
         self.output_func = output_func()
         self.loss_func = loss_func()
