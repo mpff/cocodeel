@@ -1,5 +1,6 @@
 # Pytorch lightning
 */lightning_logs/*
+*/notebooks/simulation/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
