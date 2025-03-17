@@ -83,7 +83,7 @@ class NeuralNetwork(lightning.LightningModule):
 class CovarNeuralNetwork(lightning.LightningModule):
 
     def __init__(self, backbone, output_func, loss_func, optimizer,
-                 num_covars=1, backbone_params={},
+                 num_features=32, num_covars=1, backbone_params={},
                  optimizer_params={}, scheduler=None, scheduler_params=None):
         """ Neural network with (or without) covariates added in the last layer.
         Parameters:
@@ -98,7 +98,7 @@ class CovarNeuralNetwork(lightning.LightningModule):
         self.backbone = backbone(**backbone_params)
         # Initialise last layer of the network.
         self.num_covars = num_covars
-        self.num_features = backbone_params['out_features']
+        self.num_features = num_features
         # IMPORTANT: No explicit bias term, as we assume at least a covariate vector of ones!
         self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=False)
         self.struct_predictor = torch.nn.Linear(self.num_covars, 1, bias=False)
