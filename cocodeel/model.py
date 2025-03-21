@@ -49,6 +49,7 @@ class NeuralNetwork(lightning.LightningModule):
         eta = self.deep_predictor(h)
         loss = self.loss_func(eta.squeeze(), y)
         self.log("train_loss", loss)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
@@ -57,6 +58,7 @@ class NeuralNetwork(lightning.LightningModule):
         eta = self.deep_predictor(h)
         loss = self.loss_func(eta.squeeze(), y)
         self.log("val_loss", loss)
+        return loss
 
     def test_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
