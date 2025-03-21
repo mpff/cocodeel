@@ -5,7 +5,7 @@ class NeuralNetwork(lightning.LightningModule):
 
     def __init__(self, backbone, output_func, loss_func, optimizer,
                  num_features= 32, num_covars=0, backbone_params={},
-                 optimizer_params={}, scheduler=None, scheduler_params=None):
+                 optimizer_params={}, loss_params={}, scheduler=None, scheduler_params=None):
         """ Neural network without added in the last layer.
         Parameters:
             backbone (nn.Module): The backbone model for feature extraction.
@@ -22,7 +22,7 @@ class NeuralNetwork(lightning.LightningModule):
         self.num_features = num_features
         self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=True)
         self.output_func = output_func()
-        self.loss_func = loss_func()
+        self.loss_func = loss_func(**loss_params)
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
         self.scheduler = scheduler
@@ -44,32 +44,38 @@ class NeuralNetwork(lightning.LightningModule):
 
     def training_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.loss_func(yhat.squeeze(), y)
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
+        h = self.backbone(u)
+        eta = self.deep_predictor(h)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("train_loss", loss)
-        return loss
 
     def validation_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.loss_func(yhat.squeeze(), y)
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
+        h = self.backbone(u)
+        eta = self.deep_predictor(h)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("val_loss", loss)
-        return loss
 
     def test_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.loss_func(yhat.squeeze(), y)
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
+        h = self.backbone(u)
+        eta = self.deep_predictor(h)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("test_loss", loss)
-        return self.loss_func(yhat.squeeze(), y)
+        return loss
 
     def predict_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
         yhat = self(u, x)
         return yhat
 
     def predict_deep(self, batch, batch_idx=None):
         u = batch["image"]
+        u = u.to(self.device)
         h = self.backbone(u)
         return self.deep_predictor(h) - self.deep_predictor.bias
 
@@ -77,14 +83,14 @@ class NeuralNetwork(lightning.LightningModule):
         return self.deep_predictor.bias.repeat(len(batch["label"]), 1)
 
     def struct_coefs(self):
-        return self.deep_predictor.bias.detach().numpy().squeeze()
+        return self.deep_predictor.bias.detach().cpu().numpy().squeeze()
 
 
 class CovarNeuralNetwork(lightning.LightningModule):
 
     def __init__(self, backbone, output_func, loss_func, optimizer,
                  num_features=32, num_covars=1, backbone_params={},
-                 optimizer_params={}, scheduler=None, scheduler_params=None):
+                 optimizer_params={}, loss_params={}, scheduler=None, scheduler_params=None):
         """ Neural network with (or without) covariates added in the last layer.
         Parameters:
             backbone (nn.Module): The backbone model for feature extraction.
@@ -103,7 +109,7 @@ class CovarNeuralNetwork(lightning.LightningModule):
         self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=False)
         self.struct_predictor = torch.nn.Linear(self.num_covars, 1, bias=False)
         self.output_func = output_func()
-        self.loss_func = loss_func()
+        self.loss_func = loss_func(**loss_params)
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
         self.scheduler = scheduler
@@ -125,38 +131,47 @@ class CovarNeuralNetwork(lightning.LightningModule):
 
     def training_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.loss_func(yhat.squeeze(), y)
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
+        h = self.backbone(u)
+        eta = self.deep_predictor(h) + self.struct_predictor(x)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.loss_func(yhat.squeeze(), y)
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
+        h = self.backbone(u)
+        eta = self.deep_predictor(h) + self.struct_predictor(x)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("val_loss", loss)
         return loss
 
     def test_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.loss_func(yhat.squeeze(), y)
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
+        h = self.backbone(u)
+        eta = self.deep_predictor(h) + self.struct_predictor(x)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("test_loss", loss)
-        return self.loss_func(yhat.squeeze(), y)
+        return loss
 
     def predict_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
+        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
         yhat = self(u, x)
         return yhat
 
     def predict_deep(self, batch, batch_idx=None):
         u = batch["image"]
+        u = u.to(self.device)
         h = self.backbone(u)
         return self.deep_predictor(h)
 
     def predict_struct(self, batch, batch_idx=None):
         x = batch["covar"]
+        x = x.to(self.device)
         return self.struct_predictor(x)
 
     def struct_coefs(self):
-        return self.struct_predictor.weight.detach().numpy().squeeze()
+        return self.struct_predictor.weight.detach().cpu().numpy().squeeze()

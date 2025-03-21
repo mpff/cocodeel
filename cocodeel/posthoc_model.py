@@ -34,28 +34,31 @@ class PostHocOrthogonalizedModel(lightning.LightningModule):
         return self.model.output_func(eta)
 
     def test_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.model.loss_func(yhat.squeeze(), y)
+        y = batch["label"].to(self.model.device)
+        eta = self.predict_struct(batch) + self.predict_deep(batch)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("test_loss", loss)
         return loss
 
     def predict_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
+        u, x, y = u.to(self.model.device), x.to(self.model.device), y.to(self.model.device)
         yhat = self(u, x)
         return yhat
 
     def predict_deep(self, batch, batch_idx=None):
         u, x = batch["image"], batch["covar"]
+        u, x = u.to(self.model.device), x.to(self.model.device)
         h = self.model.backbone(u)
         return self.model.deep_predictor(h) - x @ self.model.ortho_parameters
 
     def predict_struct(self, batch, batch_idx=None):
         x = batch["covar"]
+        x = x.to(self.model.device)
         return self.model.struct_predictor(x)
 
     def struct_coefs(self):
-        return self.model.struct_predictor.weight.detach().numpy().squeeze()
+        return self.model.struct_predictor.weight.detach().cpu().numpy().squeeze()
 
 
 class PostHocLSModel(lightning.LightningModule):
@@ -160,19 +163,21 @@ class PostHocLSModel(lightning.LightningModule):
         return self.model.output_func(eta)
 
     def test_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.model.loss_func(yhat.squeeze(), y)
+        y = batch["label"].to(self.model.device)
+        eta = self.predict_struct(batch) + self.predict_deep(batch)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("test_loss", loss)
         return loss
 
     def predict_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
+        u, x, y = u.to(self.model.device), x.to(self.model.device), y.to(self.model.device)
         yhat = self(u, x)
         return yhat
 
     def predict_deep(self, batch, batch_idx=None):
         u, x = batch["image"], batch["covar"]
+        u, x = u.to(self.model.device), x.to(self.model.device)
         h = self.model.backbone(u)
         if self.orthogonalize:
             h = h - x @ self.model.ortho_parameters
@@ -180,20 +185,22 @@ class PostHocLSModel(lightning.LightningModule):
 
     def predict_struct(self, batch, batch_idx=None):
         x = batch["covar"]
+        x = x.to(self.model.device)
         return self.model.struct_predictor(x)
 
     def struct_coefs(self):
-        return self.model.struct_predictor.weight.detach().numpy().squeeze()
+        return self.model.struct_predictor.weight.detach().cpu().numpy().squeeze()
 
 
 class PostHocIRLSModel(lightning.LightningModule):
-    def __init__(self, model, train_dataloader, num_covars = None, pen_factor = 1e-6, orthogonalize=False, max_iters=10, tol=1e-3):
+    def __init__(self, model, train_dataloader, num_covars = None, pen_factor = 1e-6, orthogonalize=False, max_iters=25, tol=1e-3):
         """
         Applies IRLS to re-estimate last layer parameters of a pre-trained model over
         the training data set for generalized linear models with responses from the exponential family.
         """
         super().__init__()
-        self.model = copy.deepcopy(model)  # Pre-trained CovarNeuralNetwork model
+        self.to(model.device)
+        self.model = copy.deepcopy(model).to(model.device)  # Pre-trained CovarNeuralNetwork model
         self.max_iters = max_iters  # Maximum iterations for IRLS
         self.tol = tol  # Tolerance for convergence in IRLS
         self.loss_func = model.loss_func
@@ -205,8 +212,8 @@ class PostHocIRLSModel(lightning.LightningModule):
         if num_covars is not None:
             self.model.num_covars = num_covars
         # IMPORTANT: No explicit bias term, as we assume at least a covariate vector of ones!
-        self.model.deep_predictor = torch.nn.Linear(self.model.num_features, 1, bias=False)
-        self.model.struct_predictor = torch.nn.Linear(self.model.num_covars, 1, bias=False)
+        self.model.deep_predictor = torch.nn.Linear(self.model.num_features, 1, bias=False, device=self.model.device)
+        self.model.struct_predictor = torch.nn.Linear(self.model.num_covars, 1, bias=False, device=self.model.device)
 
         # Initialize parameters for orthogonalization.
         self.model.ortho_parameters = torch.nn.Parameter(
@@ -385,19 +392,21 @@ class PostHocIRLSModel(lightning.LightningModule):
         return self.model.output_func(eta)
 
     def test_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        yhat = self(u, x)
-        loss = self.model.loss_func(yhat.squeeze(), y)
+        y = batch["image"], batch["covar"], batch["label"].to(self.model.device)
+        eta = self.predict_struct(batch) + self.predict_deep(batch)
+        loss = self.loss_func(eta.squeeze(), y)
         self.log("test_loss", loss)
         return loss
 
     def predict_step(self, batch, batch_idx):
         u, x, y = batch["image"], batch["covar"], batch["label"]
+        u, x, y = u.to(self.model.device), x.to(self.model.device), y.to(self.model.device)
         yhat = self(u, x)
         return yhat
 
     def predict_deep(self, batch, batch_idx=None):
         u, x = batch["image"], batch["covar"]
+        u, x = u.to(self.model.device), x.to(self.model.device)
         h = self.model.backbone(u)
         if self.orthogonalize:
             h = h - x @ self.model.ortho_parameters
@@ -405,7 +414,8 @@ class PostHocIRLSModel(lightning.LightningModule):
 
     def predict_struct(self, batch, batch_idx=None):
         x = batch["covar"]
+        x = x.to(self.model.device)
         return self.model.struct_predictor(x)
 
     def struct_coefs(self):
-        return self.model.struct_predictor.weight.detach().numpy().squeeze()
+        return self.model.struct_predictor.weight.detach().cpu().numpy().squeeze()
