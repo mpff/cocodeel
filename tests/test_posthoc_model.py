@@ -12,6 +12,7 @@ class TestPostHocOrthoganlizedModel(unittest.TestCase):
     def setUp(self):
         params = {"backbone": TestCaseBackbone,
                   "loss_func": torch.nn.MSELoss,
+                  "optimizer": torch.optim.AdamW,
                   "output_func": torch.nn.Identity,
                   "num_features": 32,
                   "num_covars": 2}

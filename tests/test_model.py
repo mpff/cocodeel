@@ -3,6 +3,7 @@ import torch
 
 from tests.utils.model import TestCaseBackbone
 
+from cocodeel.model import NeuralNetwork
 from cocodeel.model import CovarNeuralNetwork
 
 
