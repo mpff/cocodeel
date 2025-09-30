@@ -1,20 +1,28 @@
-import torch
+from torch.utils.data import Dataset
 
+class CovarDataset(Dataset):
+    """Dataset with covariates."""
 
-class CovarDataset(torch.utils.data.Dataset):
-    def __init__(self, image, covar, label, transform=None):
-        self.image = image
-        self.covar = covar
-        self.label = label
+    def __init__(self, X, Z, y, transform=None):
+        """
+        Args:
+            X (torch.tensor): Array of input images.
+            Z (torch.tensor): Array of covariates.
+            y (torch.tensor): Array of outputs.
+            transform (torchvision.transforms): Optional transform applied to X.
+        """
+        self.X = X
+        self.Z = Z
+        self.y = y
         self.transform = transform
 
     def __len__(self):
-        return len(self.label)
+        return len(self.y)
 
     def __getitem__(self, idx):
-        image = self.image[idx]
-        covar = self.covar[idx]
-        label = self.label[idx]
+        X = self.X[idx]
+        Z = self.Z[idx]
+        y = self.y[idx]
         if self.transform:
-            image = self.transform(image)
-        return {"image": image, "covar": covar, "label": label}
+            X = self.transform(X)
+        return {"X": X, "Z": Z, "y": y}
