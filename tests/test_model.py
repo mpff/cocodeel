@@ -1,80 +1,65 @@
 import unittest
 import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 
-from tests.utils.model import TestCaseBackbone
-
-from cocodeel.model import NeuralNetwork
-from cocodeel.model import CovarNeuralNetwork
+from cocodeel.dataset import CovarDataset
+from cocodeel.model import BaseNetwork
 
 
-class TestCovarNeuralNetwork(unittest.TestCase):
+class DummyBackbone(nn.Module):
+    def __init__(self, out_features):
+        super().__init__()
+        self.out_features = out_features
+        self.dummy = nn.Parameter(torch.zeros(1))
+
+    def forward(self, x):
+        # Flatten input to match num_features.
+        return x.view(x.size(0), -1)
+
+
+class TestBaseNetwork(unittest.TestCase):
+
     def setUp(self):
-        params = {"backbone": TestCaseBackbone,
-                  "loss_func": torch.nn.MSELoss,
-                  "optimizer": torch.optim.AdamW,
-                  "output_func": torch.nn.Identity,
-                  "num_covars": 2}
-        self.batch_size = 4
-        self.net = CovarNeuralNetwork(**params)
-        self.test_input = torch.randn(self.batch_size, self.net.num_features)
-        self.test_covar = torch.randn(self.batch_size, self.net.num_covars)
+        torch.manual_seed(0)
+        self.out_features = 6
+        self.backbone = DummyBackbone
+        self.backbone_params = {'out_features': self.out_features}
+        self.model = BaseNetwork(self.backbone, self.backbone_params)
 
-    @torch.no_grad()
-    def test_output(self):
-        outputs = self.net(self.test_input, self.test_covar)
-        self.assertEqual((self.batch_size, 1), outputs.shape)
+    def test_forward_shape(self):
+        x = torch.randn(4, 2, 3)  # batch of 4 samples, reshaped to 6 features
+        y = self.model(x)
+        self.assertEqual(y.shape, (4, 1))
 
+    def test_center_features_updates_mean_and_intercept(self):
+        # Create fake data: features will average to 1.0 for each dim
+        X = torch.ones(10, 2, 3)  # 10 samples, flatten to shape (10, 6)
+        dataset = CovarDataset(X, torch.zeros(10), torch.zeros(10))  # Z,y values don't matter
+        loader = DataLoader(dataset, batch_size=5)
 
-class TestBinaryCovarNeuralNetwork(unittest.TestCase):
-    def setUp(self):
-        params = {"backbone": TestCaseBackbone,
-                  "loss_func": torch.nn.BCEWithLogitsLoss,
-                  "optimizer": torch.optim.AdamW,
-                  "output_func": torch.nn.Identity,
-                  "num_covars": 2}
-        self.batch_size = 4
-        self.net = CovarNeuralNetwork(**params)
-        self.test_input = torch.randn(self.batch_size, self.net.num_features)
-        self.test_covar = torch.randn(self.batch_size, self.net.num_covars)
+        # Before centering.
+        intercept_before = self.model.intercept.clone()
+        predictions_before = self.model.forward(X)
 
-    @torch.no_grad()
-    def test_binary_response_training(self):
-        test_input = torch.randn(self.batch_size, self.net.num_features)
-        test_covar = torch.randn(self.batch_size, self.net.num_covars)
-        y_binary = torch.randint(0, 2, (self.batch_size, 1)).float() 
+        # Center the features.
+        self.assertTrue(self.model.is_centered is False)
+        self.model.center_features(loader)
+        self.assertTrue(self.model.is_centered is True)
 
-        y_pred = self.net(test_input, test_covar)
-        self.assertEqual(y_pred.shape, y_binary.shape)
-
-        loss = self.net.loss_func(y_pred, y_binary)
-        self.assertGreater(loss.item(), 0)
-
-
-class TestMultiCLassCovarNeuralNetwork(unittest.TestCase):
-    def setUp(self):
-        params = {"backbone": TestCaseBackbone,
-                  "loss_func": torch.nn.CrossEntropyLoss,
-                  "optimizer": torch.optim.AdamW,
-                  "output_func": torch.nn.Identity,
-                  "num_covars": 2}
-        self.batch_size = 4
-        self.num_classes = 3
-        self.net = CovarNeuralNetwork(**params)
-        self.test_input = torch.randn(self.batch_size, self.net.num_features)
-        self.test_covar = torch.randn(self.batch_size, self.net.num_covars)
-
-    @torch.no_grad()
-    def test_multiclass_response_training(self):
-        test_input = torch.randn(self.batch_size, self.net.num_features)
-        test_covar = torch.randn(self.batch_size, self.net.num_covars)
-        y_multiclass = torch.randint(0, self.num_classes, (self.batch_size,)).float()  
-
-        y_pred = self.net(test_input, test_covar)
-        self.assertEqual(y_pred.shape, (self.batch_size, 1))
-
-        loss = self.net.loss_func(y_pred.squeeze(), y_multiclass)
-        self.assertGreater(loss.item(), 0)
+        # Check that the mean is approx. 1.0
+        self.assertTrue(torch.allclose(self.model.center_x.mean, torch.ones(self.out_features), atol=1e-6))
+        # Check that the intercept is updated (from 0 to fx.weight @ mean).
+        expected_shift = self.model.fx.weight @ self.model.center_x.mean
+        self.assertTrue(torch.allclose(
+            self.model.intercept,
+            intercept_before + expected_shift,
+            atol=1e-6
+        ))
+        # Check that predictions are not affected by centering.
+        predictions_after = self.model.forward(X)
+        self.assertTrue(torch.allclose(predictions_before, predictions_after, atol=1e-6))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

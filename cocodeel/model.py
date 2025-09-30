@@ -1,179 +1,33 @@
 import torch
-import lightning
+import torch.nn as nn
 
-class NeuralNetwork(lightning.LightningModule):
+from cocodeel.transform import Center
 
-    def __init__(self, backbone, output_func, loss_func, optimizer,
-                 num_features= 32, num_covars=0, backbone_params={},
-                 optimizer_params={}, loss_params={}, scheduler=None, scheduler_params=None):
-        """ Neural network without added in the last layer.
+class BaseNetwork(nn.Module):
+    def __init__(self, backbone, backbone_params={}):
+        """ Base Network class for a model with CENTRED features and INTERCEPT.
         Parameters:
-            backbone (nn.Module): The backbone model for feature extraction.
-            ....
+            backbone (nn.Module): the CNN backbone for feature extraction.
+            backbone_params (dict): parameters to give to the backbone model.
         Methods:
-            forward: Defines the forward computation at every call.
-            ....
+            forward: defines the forward computation at every call.
         """
-        super().__init__()
-        # Define network architecture
+        super(BaseNetwork, self).__init__()
         self.backbone = backbone(**backbone_params)
-        # Initialise last layer of the network.
-        self.num_covars = num_covars
-        self.num_features = num_features
-        self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=True)
-        self.output_func = output_func()
-        self.loss_func = loss_func(**loss_params)
-        self.optimizer = optimizer
-        self.optimizer_params = optimizer_params
-        self.scheduler = scheduler
-        self.scheduler_params = scheduler_params
-        self.save_hyperparameters()
+        self.backbone_params = backbone_params
+        self.center_x = Center(self.backbone.out_features)
+        self.is_centered = False
+        self.fx = nn.Linear(self.backbone.out_features, 1, bias=False)
+        self.intercept = nn.Parameter(torch.zeros(1), requires_grad=True)
 
-    def configure_optimizers(self):
-        optimizer = self.optimizer(self.parameters(), **self.optimizer_params)
-        if self.scheduler is None:
-            return optimizer
-        else:
-            scheduler = self.scheduler(optimizer, **self.scheduler_params)
-            return {'optimizer': optimizer, 'lr_scheduler': scheduler, "monitor": "val_loss"}
+    def forward(self, x, z=None):
+        x = self.backbone(x)
+        x = self.center_x(x)
+        y = self.intercept + self.fx(x)
+        return y
 
-    def forward(self, u, x=None):
-        h = self.backbone(u)
-        eta = self.deep_predictor(h)
-        return self.output_func(eta)
-
-    def training_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        h = self.backbone(u)
-        eta = self.deep_predictor(h)
-        loss = self.loss_func(eta.squeeze(), y)
-        self.log("train_loss", loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        h = self.backbone(u)
-        eta = self.deep_predictor(h)
-        loss = self.loss_func(eta.squeeze(), y)
-        self.log("val_loss", loss)
-        return loss
-
-    def test_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        h = self.backbone(u)
-        eta = self.deep_predictor(h)
-        loss = self.loss_func(eta.squeeze(), y)
-        self.log("test_loss", loss)
-        return loss
-
-    def predict_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        yhat = self(u, x)
-        return yhat
-
-    def predict_deep(self, batch, batch_idx=None):
-        u = batch["image"]
-        u = u.to(self.device)
-        h = self.backbone(u)
-        return self.deep_predictor(h) - self.deep_predictor.bias
-
-    def predict_struct(self, batch, batch_idx=None):
-        return self.deep_predictor.bias.repeat(len(batch["label"]), 1)
-
-    def struct_coefs(self):
-        return self.deep_predictor.bias.detach().cpu().numpy().squeeze()
-
-
-class CovarNeuralNetwork(lightning.LightningModule):
-
-    def __init__(self, backbone, output_func, loss_func, optimizer,
-                 num_features=32, num_covars=1, backbone_params={},
-                 optimizer_params={}, loss_params={}, scheduler=None, scheduler_params=None):
-        """ Neural network with (or without) covariates added in the last layer.
-        Parameters:
-            backbone (nn.Module): The backbone model for feature extraction.
-            ....
-        Methods:
-            forward: Defines the forward computation at every call.
-            ....
-        """
-        super().__init__()
-        # Define network architecture
-        self.backbone = backbone(**backbone_params)
-        # Initialise last layer of the network.
-        self.num_covars = num_covars
-        self.num_features = num_features
-        # IMPORTANT: No explicit bias term, as we assume at least a covariate vector of ones!
-        self.deep_predictor = torch.nn.Linear(self.num_features, 1, bias=False)
-        self.struct_predictor = torch.nn.Linear(self.num_covars, 1, bias=False)
-        self.output_func = output_func()
-        self.loss_func = loss_func(**loss_params)
-        self.optimizer = optimizer
-        self.optimizer_params = optimizer_params
-        self.scheduler = scheduler
-        self.scheduler_params = scheduler_params
-        self.save_hyperparameters()
-
-    def configure_optimizers(self):
-        optimizer = self.optimizer(self.parameters(), **self.optimizer_params)
-        if self.scheduler is None:
-            return optimizer
-        else:
-            scheduler = self.scheduler(optimizer, **self.scheduler_params)
-            return {'optimizer': optimizer, 'lr_scheduler': scheduler, "monitor": "val_loss"}
-
-    def forward(self, u, x):
-        h = self.backbone(u)
-        eta = self.deep_predictor(h) + self.struct_predictor(x)
-        return self.output_func(eta)
-
-    def training_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        h = self.backbone(u)
-        eta = self.deep_predictor(h) + self.struct_predictor(x)
-        loss = self.loss_func(eta.squeeze(), y)
-        self.log("train_loss", loss)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        h = self.backbone(u)
-        eta = self.deep_predictor(h) + self.struct_predictor(x)
-        loss = self.loss_func(eta.squeeze(), y)
-        self.log("val_loss", loss)
-        return loss
-
-    def test_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        h = self.backbone(u)
-        eta = self.deep_predictor(h) + self.struct_predictor(x)
-        loss = self.loss_func(eta.squeeze(), y)
-        self.log("test_loss", loss)
-        return loss
-
-    def predict_step(self, batch, batch_idx):
-        u, x, y = batch["image"], batch["covar"], batch["label"]
-        u, x, y = u.to(self.device), x.to(self.device), y.to(self.device)
-        yhat = self(u, x)
-        return yhat
-
-    def predict_deep(self, batch, batch_idx=None):
-        u = batch["image"]
-        u = u.to(self.device)
-        h = self.backbone(u)
-        return self.deep_predictor(h)
-
-    def predict_struct(self, batch, batch_idx=None):
-        x = batch["covar"]
-        x = x.to(self.device)
-        return self.struct_predictor(x)
-
-    def struct_coefs(self):
-        return self.struct_predictor.weight.detach().cpu().numpy().squeeze()
+    def center_features(self, dataloader):
+        self.center_x.fit_from_loader(dataloader, self.backbone, 'X', device=next(self.parameters()).device)
+        with torch.no_grad():
+            self.intercept += self.fx.weight @ self.center_x.mean
+        self.is_centered = True

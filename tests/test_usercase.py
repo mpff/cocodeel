@@ -1,134 +1,93 @@
 import unittest
 import torch
-import lightning
 
-from tests.utils.model import TestCaseBackbone
+from torch import nn
+from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
-from cocodeel.model import CovarNeuralNetwork
-from cocodeel.posthoc_model import PostHocOrthogonalizedModel
+from cocodeel.model import BaseNetwork
+from cocodeel.posthoc_model import PostHocLinearCovarNetwork
 
 
-class TestUserCase(unittest.TestCase):
+# Dummy backbone with trainable parameters
+class DummyBackbone(nn.Module):
+    def __init__(self, in_features=4, out_features=4):
+        super().__init__()
+        self.layer = nn.Linear(in_features, out_features)
+        self.in_features = in_features
+        self.out_features = out_features
+
+    def forward(self, x):
+        return self.layer(x)
+
+
+class TestSimpleTraining(unittest.TestCase):
 
     def setUp(self):
-        self.N = 1000
-        self.inputs = torch.randn(self.N, 32)
-        self.covars = torch.randn(self.N, 2)
-        # Add vector of ones to covars.
-        self.covars = torch.cat((torch.ones(self.N, 1), self.covars), 1)
-        # Create label with coefficients [1,1,1]
-        self.labels = torch.matmul(self.covars, torch.tensor([1., 1., 1.])) + torch.randn(self.N)
-        self.train_set = CovarDataset(self.inputs, self.covars, self.labels)
-        self.train_loader = torch.utils.data.DataLoader(dataset=self.train_set, batch_size=int(self.N/10))
+        self.num_features = 4
+        self.num_covariates = 2
+        self.n = 1000
+        self.X = torch.randn(self.n, self.num_features)
+        self.Z = torch.randn(self.n, self.num_covariates)
+        self.y = self.X.sum(dim=1, keepdim=True) + self.Z.sum(dim=1, keepdim=True) + 0.1 * torch.randn(self.n, 1)
+        self.dataset = CovarDataset(X=self.X, Z=self.Z, y=self.y)
+        self.loader = DataLoader(self.dataset, batch_size=16, shuffle=True)
 
-    @unittest.skip("Refactor this test to use the new CovarNeuralNetwork.")
-    def test_train_pho_model(self):
-        # define model
-        params = {"backbone": TestCaseBackbone,
-                  "backbone_params": {"num_features": 32},
-                  "loss_func": torch.nn.MSELoss,
-                  "optimizer": torch.optim.AdamW,
-                  "output_func": torch.nn.Identity,
-                  "num_covars": 3,
-                  "optimizer_params": {"lr": 0.01}}
-        net = CovarNeuralNetwork(**params)
-        # train model
-        trainer = lightning.Trainer(max_epochs=5)
-        trainer.fit(net, self.train_loader)
-        # check struct part dimensions
-        self.assertEqual((1, 3), net.struct_predictor.weight.shape)
-        # train post-hoc orthogonalized model
-        pho_net = PostHocOrthogonalizedModel(net, self.train_loader)
-        # check struct part dimensions are closer to [1, 1, 1]
-        self.assertEqual((1, 3), pho_net.model.struct_predictor.weight.shape)
-        self.assertLessEqual(
-            torch.norm(torch.tensor([1., 1., 1.]) - pho_net.model.struct_predictor.weight.squeeze()),
-            torch.norm(torch.tensor([1., 1., 1.]) - net.struct_predictor.weight.squeeze())
+    def test_training_and_posthoc(self):
+
+        model = BaseNetwork(backbone=DummyBackbone,
+                            backbone_params={"in_features": self.num_features, "out_features": self.num_features})
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        loss_fn = nn.MSELoss()
+
+        model.train()
+        for epoch in range(10):
+            for batch in self.loader:
+                x, y = batch["X"], batch["y"]
+                optimizer.zero_grad()
+                preds = model(x)
+                loss = loss_fn(preds, y)
+                loss.backward()
+                optimizer.step()
+        model.eval()
+
+        posthoc_model = PostHocLinearCovarNetwork(model, num_covariates=self.num_covariates, train_dataloader=self.loader)
+
+        preds = posthoc_model(self.X, self.Z)
+
+        self.assertEqual(preds.shape, self.y.shape)
+
+        # Check intercept close to y mean
+        y_mean = self.y.mean()
+        intercept = posthoc_model.intercept.squeeze()
+        torch.testing.assert_close(intercept, y_mean, atol=1e-4, rtol=0)
+
+        # Check centering of features
+        centered_X = posthoc_model.center_x(posthoc_model.backbone(self.X))
+        centered_Z = posthoc_model.center_z(self.Z)
+
+        torch.testing.assert_close(
+            centered_X.mean(dim=0),
+            torch.zeros_like(centered_X[0]),
+            atol=1e-4, rtol=0,
         )
 
-
-class TestBinaryResponse(unittest.TestCase):
-    def setUp(self):
-        self.N = 1000
-        self.inputs = torch.randn(self.N, 32)
-        self.covars = torch.randn(self.N, 2)
-        self.covars = torch.cat((torch.ones(self.N, 1), self.covars), 1)
-        # create binary labels incorporating true coefficient [1, 1, 1]
-        self.labels = (torch.matmul(self.covars, torch.tensor([1., 1., 1.])) + torch.randn(self.N) > 0).float()  
-        self.train_set = CovarDataset(self.inputs, self.covars, self.labels)
-        self.train_loader = torch.utils.data.DataLoader(
-            dataset=self.train_set, batch_size=int(self.N / 10)
+        torch.testing.assert_close(
+            centered_Z.mean(dim=0),
+            torch.zeros_like(centered_Z[0]),
+            atol=1e-4, rtol=0
         )
 
-    @unittest.skip("Refactor this test to use the new CovarNeuralNetwork.")
-    def test_train_pho_model_binary(self):
-        # define model
-        params = {
-            "backbone": TestCaseBackbone,
-            "backbone_params": {"num_features": 32},
-            "optimizer": torch.optim.AdamW,
-            "loss_func": torch.nn.BCEWithLogitsLoss,
-            "output_func": torch.nn.Identity,  
-            "num_covars": 3,
-            "optimizer_params": {"lr": 0.01},
-        }
-        net = CovarNeuralNetwork(**params)
-        # train model
-        trainer = lightning.Trainer(max_epochs=5)
-        trainer.fit(net, self.train_loader)
-        # check struct predictor weight dimensions
-        self.assertEqual((1, 3), net.struct_predictor.weight.shape)
-        # train post-hoc orthogonalized model
-        pho_net = PostHocOrthogonalizedModel(net, self.train_loader)
-        # check struct predictor dimensions are closer to [1, 1, 1]
-        self.assertEqual((1, 3), pho_net.model.struct_predictor.weight.shape)
-        self.assertLessEqual(
-            torch.norm(torch.tensor([1., 1., 1.]) - pho_net.model.struct_predictor.weight.squeeze()),
-            torch.norm(torch.tensor([1., 1., 1.]) - net.struct_predictor.weight.squeeze())
-        )
+        # Check fz weights close to true values.
+        fz = posthoc_model.fz.weight.squeeze()
+        torch.testing.assert_close(fz, torch.ones_like(fz), atol=1e-2, rtol=0)
 
+        # Check fx prediction close to true values.
+        fx_pred = posthoc_model.fx(centered_X)
+        fx_true = self.X.sum(dim=1, keepdim=True)
+        fx_erro = (fx_pred - fx_true).abs().mean()
+        torch.testing.assert_close(fx_erro, torch.zeros_like(fx_erro), atol=1e-1, rtol=0)
 
-class TestMulticlassResponse(unittest.TestCase):
-    def setUp(self):
-        self.N = 1000
-        self.inputs = torch.randn(self.N, 32)
-        self.covars = torch.randn(self.N, 2)
-        self.covars = torch.cat((torch.ones(self.N, 1), self.covars), 1)
-        # create multiclass labels incorporating true coefficient [1, 1, 1]
-        self.labels = torch.bucketize(torch.matmul(self.covars, torch.tensor([1., 1., 1.])) + 
-                                      torch.randn(self.N), boundaries=torch.tensor([-1.0, 1.0])).float()
-        self.train_set = CovarDataset(self.inputs, self.covars, self.labels)
-        self.train_loader = torch.utils.data.DataLoader(
-            dataset=self.train_set, batch_size=int(self.N / 10)
-        )
-
-    @unittest.skip("Refactor this test to use the new CovarNeuralNetwork.")
-    def test_train_pho_model_multiclass(self):
-        # define model
-        params = {
-            "backbone": TestCaseBackbone,
-            "backbone_params": {"num_features": 32},
-            "loss_func": torch.nn.CrossEntropyLoss,
-            "optimizer": torch.optim.AdamW,
-            "output_func": torch.nn.Identity,  
-            "num_covars": 3,
-            "optimizer_params": {"lr": 0.01},
-        }
-        net = CovarNeuralNetwork(**params)
-        # train model
-        trainer = lightning.Trainer(max_epochs=5)
-        trainer.fit(net, self.train_loader)
-        # check struct predictor weight dimensions
-        self.assertEqual((1, 3), net.struct_predictor.weight.shape)
-        # train post-hoc orthogonalized model
-        pho_net = PostHocOrthogonalizedModel(net, self.train_loader)
-        # check struct predictor dimensions are closer to [1, 1, 1]
-        self.assertEqual((1, 3), pho_net.model.struct_predictor.weight.shape)
-        self.assertLessEqual(
-            torch.norm(torch.tensor([1., 1., 1.]) - pho_net.model.struct_predictor.weight.squeeze()),
-            torch.norm(torch.tensor([1., 1., 1.]) - net.struct_predictor.weight.squeeze())
-        )
 
 
 if __name__ == '__main__':
