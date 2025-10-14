@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, Dataset
 from cocodeel.transform import Center
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocLinearCovarNetwork
+from cocodeel.posthoc_model import PostHocCovarNetwork
 
 
 
@@ -47,13 +47,13 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
             self.base_model.backbone.linear.bias[0] = 0.0
 
     def test_posthoc_fit_close_to_true_weights(self):
-        model = PostHocLinearCovarNetwork(
+        model = PostHocCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             train_dataloader=self.dataloader
         )
 
-        # Check that output is close to expected linear form
+        # Check that simulation_images is close to expected linear form
         with torch.no_grad():
             x = self.X
             z = self.Z
@@ -64,7 +64,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(error, torch.zeros_like(error), atol=1e-5))
 
     def test_output_shape(self):
-        model = PostHocLinearCovarNetwork(
+        model = PostHocCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             train_dataloader=self.dataloader
@@ -74,7 +74,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertEqual(out.shape, (self.n, 1))
 
     def test_features_are_centered(self):
-        model = PostHocLinearCovarNetwork(
+        model = PostHocCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             train_dataloader=self.dataloader
@@ -86,7 +86,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
             self.assertTrue(torch.allclose(mean, torch.zeros_like(mean), atol=1e-5))
 
     def test_covariates_are_centered(self):
-        model = PostHocLinearCovarNetwork(
+        model = PostHocCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             train_dataloader=self.dataloader
@@ -97,7 +97,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
             self.assertTrue(torch.allclose(mean, torch.zeros_like(mean), atol=1e-5))
 
     def test_intercept_is_mean_of_y(self):
-        model = PostHocLinearCovarNetwork(
+        model = PostHocCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             train_dataloader=self.dataloader

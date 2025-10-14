@@ -44,7 +44,7 @@ class TestBaseNetwork(unittest.TestCase):
 
         # Center the features.
         self.assertTrue(self.model.is_centered is False)
-        self.model.center_features(loader)
+        self.model.center_effects(loader)
         self.assertTrue(self.model.is_centered is True)
 
         # Check that the mean is approx. 1.0

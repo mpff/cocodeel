@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocLinearCovarNetwork
+from cocodeel.posthoc_model import PostHocCovarNetwork
 
 
 # Dummy backbone with trainable parameters
@@ -51,7 +51,7 @@ class TestSimpleTraining(unittest.TestCase):
                 optimizer.step()
         model.eval()
 
-        posthoc_model = PostHocLinearCovarNetwork(model, num_covariates=self.num_covariates, train_dataloader=self.loader)
+        posthoc_model = PostHocCovarNetwork(model, num_covariates=self.num_covariates, train_dataloader=self.loader)
 
         preds = posthoc_model(self.X, self.Z)
 
