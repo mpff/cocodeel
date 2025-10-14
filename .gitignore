@@ -1,9 +1,9 @@
 # Pytorch lightning
 */lightning_logs/*
 */notebooks/simulation/*
-*/outputs/*
-*results/*
-*/graphics/*
+**/outputs
+**/results
+**/graphics
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
