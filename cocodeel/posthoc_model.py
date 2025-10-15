@@ -122,7 +122,7 @@ class PostHocCovarNetwork(BaseNetwork):
         X_np = torch.cat([X, Z], dim=1).cpu().numpy()
         y_np = y.cpu().numpy()
         p_fac_np = torch.ones(X_np.shape[1]).cpu().numpy()
-        p_fac_np[X.shape[1]:] = 0.0  # No penalty on covariates
+        #p_fac_np[X.shape[1]:] = 0.0  # No penalty on covariates
 
         # Example conversion for X, y, p_fac:
         with localconverter(ro.default_converter + numpy2ri.converter):
