@@ -70,66 +70,6 @@ class PostHocOrthNetwork(BaseNetwork):
         self.is_centered = True
         return self
 
-    def _linear_fit_from_loader(self, train_dataloader, lam=None):
-        device = next(self.parameters()).device
-        features = []
-        covariates = []
-        targets = []
-        with torch.no_grad():
-            for batch in train_dataloader:
-                x = batch["X"].to(device)
-                z = batch["Z"].to(device)
-                y = batch["y"].to(device)
-                x = self.backbone(x)
-                x = self.center_x(x)
-                z = self.center_z(z)
-                y = self.center_y(y)
-                features.append(x)
-                covariates.append(z)
-                targets.append(y)
-        X = torch.cat(features, dim=0)
-        Z = torch.cat(covariates, dim=0)
-        y = torch.cat(targets, dim=0)
-
-        # Convert to numpy for glmnet
-        X_np = torch.cat([X, Z], dim=1).cpu().numpy()
-        y_np = y.cpu().numpy()
-        p_fac_np = torch.ones(X_np.shape[1]).cpu().numpy()
-        p_fac_np[X.shape[1]:] = 0.0  # No penalty on covariates
-
-        # Example conversion for X, y, p_fac:
-        with localconverter(ro.default_converter + numpy2ri.converter):
-            X_r = ro.conversion.py2rpy(X_np)
-            y_r = ro.conversion.py2rpy(y_np)
-            p_fac_r = ro.conversion.py2rpy(p_fac_np)
-
-        if lam is not None:
-            # Fit with fixed lambda ridge, intercept disabled.
-            glmnet_fit = glmnet.glmnet(X_r, y_r, alpha=0,
-                                       lambda_=ro.FloatVector([lam]),
-                                       penalty_factor=p_fac_r,
-                                       intercept=False)
-            coefs = ro.r['as.matrix'](glmnet.coef_glmnet(glmnet_fit, s=lam))
-            best_lambda = lam
-        else:
-            # Fit with CV ridge, intercept disabled.
-            cv_fit = glmnet.cv_glmnet(X_r, y_r, alpha=0,
-                                      penalty_factor=p_fac_r,
-                                      intercept=False)
-            # Extract coefficients (WARNING: Intercept is 0 here).
-            coefs = ro.r['as.matrix'](glmnet.coef_cv_glmnet(cv_fit, s="lambda.min"))
-            best_lambda = ro.r['as.numeric'](cv_fit.rx2("lambda.min"))[0]
-
-        coefs_np = np.array(coefs).flatten()
-
-        # Assign back to model
-        with torch.no_grad():
-            self.fx.weight.copy_(torch.tensor(coefs_np[1:X.shape[1]+1], dtype=torch.float32))
-            self.fz.weight.copy_(torch.tensor(coefs_np[X.shape[1]+1:], dtype=torch.float32))
-        # Save best lambda
-        self.lam.copy_(torch.tensor(best_lambda, dtype=torch.float32))
-
-
     def _fit_orthogonalization(self, train_dataloader):
         # Fit orthogonalization parameters (coefs) using torch.linagl.lstsq over Z and fx!
         self.eval()
