@@ -1,9 +1,11 @@
 # Pytorch lightning
-*/lightning_logs/*
-*/notebooks/simulation/*
+**/lightning_logs/*
+**/notebooks
 **/outputs
 **/results
 **/graphics
+
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -168,3 +170,6 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 .Rproj.user
+
+# VS Code
+.vscode/
