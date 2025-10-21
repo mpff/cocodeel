@@ -110,18 +110,18 @@ class PostHocCovarNetwork(BaseNetwork):
         # Prepare numpy arrays
         X_np = torch.cat([X, Z], dim=1).cpu().numpy()
         y_np = y.cpu().numpy()
-        penalty_factor = np.ones(X_np.shape[1])  # all penalized equally (can be customized!)
+        #penalty_factor = np.ones(X_np.shape[1])  # all penalized equally (can be customized!)
 
         with localconverter(ro.default_converter + numpy2ri.converter):
             X_r = ro.conversion.py2rpy(X_np)
             y_r = ro.conversion.py2rpy(y_np)
-            p_fac_r = ro.conversion.py2rpy(penalty_factor)
+            #p_fac_r = ro.conversion.py2rpy(penalty_factor)
 
         if lam is not None:
             fit = glmnet.glmnet(
                 X_r, y_r, alpha=0,
                 lambda_=ro.FloatVector([lam]),
-                penalty_factor=p_fac_r,
+                #penalty_factor=p_fac_r,
                 intercept=False
             )
             coefs = ro.r["as.matrix"](glmnet.coef_glmnet(fit, s=lam))
@@ -129,7 +129,7 @@ class PostHocCovarNetwork(BaseNetwork):
         else:
             cv_fit = glmnet.cv_glmnet(
                 X_r, y_r, alpha=0,
-                penalty_factor=p_fac_r,
+                #penalty_factor=p_fac_r,
                 intercept=False
             )
             coefs = ro.r["as.matrix"](glmnet.coef_cv_glmnet(cv_fit, s="lambda.min"))
