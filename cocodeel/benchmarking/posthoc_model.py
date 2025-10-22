@@ -25,7 +25,7 @@ class PostHocOrthNetwork(BaseNetwork):
         self.orth.weight.data.fill_(0.0)  # Initialize orthogonalization to 0.
 
         self.center_z = Center(self.num_covariates)
-        self.is_centered = False
+        self.register_buffer('is_centered', torch.tensor(False))
 
     def forward(self, x, z=None):
         return self.intercept + self.predict_fx(x, z)
@@ -67,7 +67,7 @@ class PostHocOrthNetwork(BaseNetwork):
         self.center_y.fit(y)
         # Adjust intercept.
         self.intercept.data = self.center_y.mean
-        self.is_centered = True
+        self.is_centered.data = torch.tensor(True)
         return self
 
     def _fit_orthogonalization(self, train_dataloader):

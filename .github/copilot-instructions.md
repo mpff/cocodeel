@@ -64,7 +64,7 @@ PostHocCovarNetwork supports orthogonalization of f(X) with respect to Z. When e
 - Test centering invariance: predictions unchanged after `center_effects()`
 - Test orthogonalisation: fx uncorrelated with Z after orthogonalization (on training data), predictions unchanged after orthogonalization
 - Verify shape compatibility: models handle batch dimensions correctly, model handle x,z inputs correctly, multiple covariates handled correctly, etc.
-- Verify saving and loading model state_dicts: predictions consistent after reload, centering preserved, orthogonalization preserved, R model parameters preserved for PostHoc models, etc.
+- Verify saving and loading model state_dicts: predictions consistent after reload, centering preserved (including is_centered flag), orthogonalization preserved, R model parameters preserved for PostHoc models, etc.
 
 ### Experiment Structure
 - Notebooks in `experiments/` follow numbered sequence (1-simulation.ipynb, 2-evaluation.ipynb)
