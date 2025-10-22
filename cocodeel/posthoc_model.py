@@ -91,7 +91,7 @@ class PostHocCovarNetwork(BaseNetwork):
         self.center_y.fit(y)
 
         self.intercept.data = self.center_y.mean
-        self.is_centered = True
+        self.is_centered.data = torch.tensor(True)
         return self
 
     # -------------------------------------------------------------------------

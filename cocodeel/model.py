@@ -15,7 +15,7 @@ class _BaseCovarNetwork(nn.Module):
         # Centering modules
         self.center_x = Center(self.backbone.out_features)
         self.center_y = Center(1)
-        self.is_centered = False
+        self.register_buffer('is_centered', torch.tensor(False))
 
         # Output components
         self.fx = nn.Linear(self.backbone.out_features, 1, bias=False)
@@ -69,7 +69,7 @@ class _BaseCovarNetwork(nn.Module):
         self.center_x.fit(X)
         self.center_y.fit(y)
         self.intercept.data = self.center_y.mean
-        self.is_centered = True
+        self.is_centered.data = torch.tensor(True)
         return self
 
 
@@ -111,5 +111,5 @@ class CovarNetwork(_BaseCovarNetwork):
         self.center_z.fit(Z)
         self.center_y.fit(y)
         self.intercept.data = self.center_y.mean
-        self.is_centered = True
+        self.is_centered.data = torch.tensor(True)
         return self
