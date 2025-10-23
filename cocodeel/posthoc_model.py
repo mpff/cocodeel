@@ -153,27 +153,21 @@ class PostHocCovarNetwork(BaseNetwork):
         # 2. Regress X on Z to get residuals.
         resid_X = X - Z @ torch.linalg.lstsq(Z, X).solution
         # 3. Fit fx on residuals.
-        if self.lam == 0.0:
-            beta_X = torch.linalg.lstsq(resid_X, resid_y).solution
-        else:
-            I = torch.eye(resid_X.shape[1], device=resid_X.device)
-            beta_X = torch.linalg.solve(
-                resid_X.T @ resid_X + self.lam * I,
-                resid_X.T @ resid_y
-            )
+        I = torch.eye(resid_X.shape[1], device=resid_X.device)
+        beta_X = torch.linalg.solve(
+            resid_X.T @ resid_X + self.lam * I,
+            resid_X.T @ resid_y
+        )
 
         # Estimate fz weights by LS fit on new residuals:
         # 1. Remove fx from y.
         resid_y = y - X @ beta_X
         # 2. Fit fz on residuals.
-        if self.lam == 0.0:
-            beta_Z = torch.linalg.lstsq(Z, resid_y).solution
-        else:
-            I = torch.eye(Z.shape[1], device=Z.device)
-            beta_Z = torch.linalg.solve(
-                Z.T @ Z + self.lam * I,
-                Z.T @ resid_y
-            )
+        I = torch.eye(Z.shape[1], device=Z.device)
+        beta_Z = torch.linalg.solve(
+            Z.T @ Z + self.lam * I,
+            Z.T @ resid_y
+        )
 
         # Update weights.
         self.fx.weight.data.copy_(beta_X.view(1, -1))
