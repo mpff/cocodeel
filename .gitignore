@@ -2,8 +2,8 @@
 **/lightning_logs/*
 **/notebooks
 **/outputs
-**/graphics
-
+**/experiments
+cocodeel.Rproj
 
 
 # Byte-compiled / optimized / DLL files
