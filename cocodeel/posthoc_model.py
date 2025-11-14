@@ -136,18 +136,17 @@ class PostHocCovarNetwork(BaseNetwork):
             coefs = ro.r["as.matrix"](glmnet.coef_cv_glmnet(cv_fit, s="lambda.min"))
             best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
 
-        coefs_np = np.array(coefs).flatten()
-        n_feat = X.shape[1]
-        
-        # Update model parameters
-        self.fx.weight.copy_(torch.tensor(coefs_np[1:n_feat + 1], dtype=torch.float32))
-        self.fz.weight.copy_(torch.tensor(coefs_np[n_feat + 1:], dtype=torch.float32))
-        
         # Store best Lambda
         self.lam.copy_(torch.tensor(best_lambda, dtype=torch.float32))
         
-        # TODO: This is debug code to refit in Pytorch! REMOVE LATER!
-        print("Refitting linear effects in Pytorch for debugging...")
+        # Update model parameters (Depreciated)
+        #coefs_np = np.array(coefs).flatten()
+        #n_feat = X.shape[1]
+        #self.fx.weight.copy_(torch.tensor(coefs_np[1:n_feat + 1], dtype=torch.float32))
+        #self.fz.weight.copy_(torch.tensor(coefs_np[n_feat + 1:], dtype=torch.float32))
+        
+        # Refit using Backfitting in Pytorch.
+        # Estimate fx weights by LS fit on residuals:
         # 1. Regress y_tilde on Z to get residuals.
         resid_y = y - Z @ torch.linalg.lstsq(Z, y).solution
         # 2. Regress X on Z to get residuals.
@@ -174,8 +173,6 @@ class PostHocCovarNetwork(BaseNetwork):
         self.fz.weight.data.copy_(beta_Z.view(1, -1))
 
         
-
-
     @torch.no_grad()
     def _fit_orthogonalization(self, dataloader):
         """Fit linear orthogonalization term via least squares on (Z, fX)."""
