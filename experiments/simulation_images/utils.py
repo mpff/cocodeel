@@ -16,18 +16,19 @@ def simulate_dataloader(simulation_params, seed=0):
     return train_loader, val_loader
 
 
-def predict(model, test_loader):
+def predict(model, test_loader, device='cpu'):
+    model.to(device)
     model.eval()
     y_preds, fx_preds, fz_preds = [], [], []
     for batch in test_loader:
-        X_test, Z_test, y_test = batch['X'], batch['Z'], batch['y']
+        X_test, Z_test, y_test = batch['X'].to(device), batch['Z'].to(device), batch['y'].to(device)
         with torch.no_grad():
             y_preds.append(model(X_test, Z_test))
             fx_preds.append(model.predict_fx(X_test, Z_test))
             fz_preds.append(model.predict_fz(Z_test))
-    y_preds = torch.cat(y_preds, dim=0)
-    fx_preds = torch.cat(fx_preds, dim=0)
-    fz_preds = torch.cat(fz_preds, dim=0)
+    y_preds = torch.cat(y_preds, dim=0).detach().cpu()
+    fx_preds = torch.cat(fx_preds, dim=0).detach().cpu()
+    fz_preds = torch.cat(fz_preds, dim=0).detach().cpu()
     return y_preds, fx_preds, fz_preds
 
 def mspe_single_run(preds, targets):
