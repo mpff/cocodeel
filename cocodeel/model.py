@@ -92,6 +92,7 @@ class CovarNetwork(_BaseCovarNetwork):
         super().__init__(backbone, backbone_params, num_covariates)
 
         # Add covariate-specific components
+        self.num_covariates = num_covariates
         self.center_z = Center(num_covariates)
         self.fz = nn.Linear(num_covariates, 1, bias=False)
 
