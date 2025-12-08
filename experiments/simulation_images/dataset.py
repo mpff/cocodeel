@@ -3,7 +3,7 @@ import torch
 def simulate_traffic_light_data(
         n=800, h=20, w=60, circle_radius=8,
         bz=1., b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., seed=0,
-        n_covars = 1, outcome_type='continuous'):
+        outcome_type='continuous'):
 
     torch.manual_seed(seed)
 
@@ -60,6 +60,6 @@ def simulate_traffic_light_data(
     # 5. Effects (centered), unchanged
     fx = b2 * (v2 - 0.5) + b3 * (v3 - 0.5)
     fz = bz * (Z - 0.5)
-    fr = b2 * (v2 - 0.5 - cv2*(Z - 0.5)) + b3 * (v3 - 0.5)
+    fr = b2 * (1 - cv2) * (v2_raw - 0.5) + b3 * (v3 - 0.5)
 
     return X, Z, y, fx, fz, fr
