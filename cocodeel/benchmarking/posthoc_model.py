@@ -91,6 +91,7 @@ class PostHocOrthNetwork(BaseNetwork):
             Z = torch.cat(Z, dim=0)
             # Solve Z * coef = fX in least squares sense.
             self.orth.weight.data = torch.linalg.lstsq(Z, fX).solution
+            # FIX BUG HERE! It is .solution.T to get correct shape.
 
 
 class SemiStructuredNetwork(CovarNetwork):
