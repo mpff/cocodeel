@@ -1,3 +1,4 @@
+from os import link
 import torch
 import torch.nn as nn
 import numpy as np
@@ -27,30 +28,31 @@ class PostHocCovarNetwork(BaseNetwork):
     def __init__(self, model, num_covariates, orthogonalize=False):
         super().__init__(
             backbone=model.backbone.__class__,
-            backbone_params=model.backbone_params
+            backbone_params=model.backbone_params,
+            num_covariates=num_covariates,
+            link=model.link
         )
-        # Copy pretrained weights
         self.load_state_dict(model.state_dict())
-
         self.num_covariates = num_covariates
         self.orthogonalize = orthogonalize
 
-        # Covariate components
+        # Covariate components.
         self.center_z = Center(num_covariates)
         self.fz = nn.Linear(num_covariates, 1, bias=False)
 
-        # Optional orthogonalization
+        # Optional orthogonalization.
         self.orth = nn.Linear(num_covariates, 1, bias=False)
         self.orth.weight.data.zero_()
 
-        # Store the fitted lambda
+        # Penalization Paramter for ridge refit.
         self.lam = nn.Parameter(torch.tensor(0.0), requires_grad=False)
 
     # -------------------------------------------------------------------------
     # Forward & prediction methods
     # -------------------------------------------------------------------------
     def forward(self, x, z):
-        return self.intercept + self.predict_fx(x, z) + self.predict_fz(z)
+        eta = self.intercept + self.predict_fx(x, z) + self.predict_fz(z)
+        return self.output_func(eta)
 
     def predict_fx(self, x, z=None):
         """Feature contribution, optionally orthogonalized against Z."""
@@ -71,26 +73,30 @@ class PostHocCovarNetwork(BaseNetwork):
         return fz
 
     # -------------------------------------------------------------------------
-    # Fitting logic
+    # Fitting methods
     # -------------------------------------------------------------------------
-    def fit(self, dataloader, lam=None):
+    def fit(self, dataloader, lam=None, max_iters=10, tol=1e-6):
         """Fit post-hoc ridge regression (and optionally orthogonalization)."""
         self.center_effects(dataloader)
-        self._fit_linear_effects(dataloader, lam)
+        self._fit_effects(dataloader, lam=lam, max_iters=max_iters, tol=tol)
         if self.orthogonalize:
             self._fit_orthogonalization(dataloader)
         return self
-
+    
     @torch.no_grad()
     def center_effects(self, dataloader):
         """Center X, Z, and y using the dataloader."""
+        
+        if self.is_centered:
+            return self
+
         X, Z, y = self._extract_features_from_loader(dataloader)
 
         self.center_x.fit(X)
         self.center_z.fit(Z)
         self.center_y.fit(y)
 
-        self.intercept.data = self.center_y.mean
+        self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
         self.is_centered.data = torch.tensor(True)
         return self
 
@@ -98,80 +104,99 @@ class PostHocCovarNetwork(BaseNetwork):
     # Internal methods
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def _fit_linear_effects(self, dataloader, lam=None):
-        """Fit linear weights on top of frozen backbone using R's glmnet."""
+    def _fit_effects(self, dataloader, lam, max_iters, tol):
+        """
+        IRLS-based fitting of generalized additive effects with ridge penalty.
+        Model: y = g(fx(x) + fz(z))
+        Using weighted least squares with GLM variance + link derivative.
+        """
+        
+        # Grab data.
         X, Z, y = self._extract_features_from_loader(dataloader)
-
-        # Center data
         X = self.center_x(X)
         Z = self.center_z(Z)
-        y = self.center_y(y)
 
-        # Prepare numpy arrays
-        X_np = torch.cat([X, Z], dim=1).cpu().numpy()
-        y_np = y.cpu().numpy()
-        p_fac_np = np.ones(X_np.shape[1])
-        #p_fac_np[X.shape[1]:] = 0.0  # No penalty on covariates
+        # Initialize intercept.
+        eta_mean = self.center_y.mean
+        self.intercept.data = self._link_function(eta_mean)
 
-        with localconverter(ro.default_converter + numpy2ri.converter):
-            X_r = ro.conversion.py2rpy(X_np)
-            y_r = ro.conversion.py2rpy(y_np)
-            p_fac_r = ro.conversion.py2rpy(p_fac_np)
+        # Initialize old weights for convergence check.
+        fz_old = torch.zeros_like(self.fz.weight.data)
+        fx_old = torch.zeros_like(self.fx.weight.data)
 
-        if lam is not None:
-            fit = glmnet.glmnet(
-                X_r, y_r, alpha=0,
-                lambda_=ro.FloatVector([lam]),
-                penalty_factor=p_fac_r,
-                intercept=False
-            )
-            coefs = ro.r["as.matrix"](glmnet.coef_glmnet(fit, s=lam))
-            best_lambda = lam
-        else:
-            cv_fit = glmnet.cv_glmnet(
-                X_r, y_r, alpha=0,
-                penalty_factor=p_fac_r,
-                intercept=False
-            )
-            coefs = ro.r["as.matrix"](glmnet.coef_cv_glmnet(cv_fit, s="lambda.min"))
-            best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
+        # Iteratively reweighted least squares until convergence.
+        for i in range(max_iters):
+            
+            # ---- Prepare reweighted data ----
 
-        # Store best Lambda
-        self.lam.copy_(torch.tensor(best_lambda, dtype=torch.float32))
+            # Get current predictions, weight matrix, and working response.
+            eta = self.intercept + self.fx(X) + self.fz(Z)
+            mu = self.output_func(eta)
+            var = self._variance_function(mu)
+            g_prime = self._link_derivative(mu)
+            weights = g_prime**2 / (var + 1e-6)
+            W = torch.diag(weights.flatten())
+            y_work = eta + (y - mu) / (g_prime + 1e-6)
+            
+            # Update intercept.
+            self.intercept.data = y_work.mean()
+
+            # Centered reweighting. (Note: not equal to demeaning in case of weights!)
+            yw = torch.sqrt(W) @ (y_work - (W @ y_work).sum() / weights.sum())
+            Xw = torch.sqrt(W) @ (X - (W @ X).sum(dim=0, keepdim=True) / weights.sum())
+            Zw = torch.sqrt(W) @ (Z - (W @ Z).sum(dim=0, keepdim=True) / weights.sum())
+            
+            # --- Fitting Procedure ---
+            
+            # 1. Regress yw on Zw to get residuals.
+            resid_y = yw - Zw @ torch.linalg.lstsq(Zw, yw).solution
         
-        # Update model parameters (Depreciated)
-        #coefs_np = np.array(coefs).flatten()
-        #n_feat = X.shape[1]
-        #self.fx.weight.copy_(torch.tensor(coefs_np[1:n_feat + 1], dtype=torch.float32))
-        #self.fz.weight.copy_(torch.tensor(coefs_np[n_feat + 1:], dtype=torch.float32))
-        
-        # Refit using Backfitting in Pytorch.
-        # Estimate fx weights by LS fit on residuals:
-        # 1. Regress y_tilde on Z to get residuals.
-        resid_y = y - Z @ torch.linalg.lstsq(Z, y).solution
-        # 2. Regress X on Z to get residuals.
-        resid_X = X - Z @ torch.linalg.lstsq(Z, X).solution
-        # 3. Fit fx on residuals.
-        I = torch.eye(resid_X.shape[1], device=resid_X.device)
-        beta_X = torch.linalg.solve(
-            resid_X.T @ resid_X + self.lam * I,
-            resid_X.T @ resid_y
-        )
+            # 2. Regress Xw on Zw to get residuals.
+            resid_X = Xw - Zw @ torch.linalg.lstsq(Zw, Xw).solution
+            
+            # 3. Use glmnet to fit cross-validated ridge regression of resid_y on resid_X.
+            # NOTE: glmnet does not seem to be reliable for refitting. We do CV for lam if not given
+            # and then refit with the best lam using torch.linalg.lstsq.
+            if lam is None:
+                # 3a. Prepare data for R.
+                resid_X_np = resid_X.cpu().numpy()
+                resid_y_np = resid_y.cpu().numpy()
+                with localconverter(ro.default_converter + numpy2ri.converter):
+                    X_r = ro.conversion.py2rpy(resid_X_np)
+                    y_r = ro.conversion.py2rpy(resid_y_np)
+                # 3b. Fit ridge regression in R (glmnet), either with given lam or CV.
+                cv_fit = glmnet.cv_glmnet(
+                    X_r, y_r,
+                    alpha=0,
+                    intercept=False
+                )
+                best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
+                self.lam.copy_(torch.tensor(best_lambda, dtype=torch.float32))
+            else:
+                self.lam.copy_(torch.tensor(lam, dtype=torch.float32))
+            # 3c. Refit ridge regression with best lam using torch.
+            beta_fx = torch.linalg.solve(
+                resid_X.T @ resid_X + self.lam.item() * torch.eye(resid_X.shape[1]),
+                resid_X.T @ resid_y
+            )
+            self.fx.weight.data.copy_(beta_fx.view(1, -1))
+            
+            # 4. Compute fz weights.
+            resid_y_new = yw - self.fx(Xw)
+            beta_fz = torch.linalg.solve(Zw.T @ Zw, Zw.T @ resid_y_new)
+            self.fz.weight.data.copy_(beta_fz.view(1, -1))
+            
+            # 5. Check convergence via relative change in fx weights and deviance (TODO)
+            if self.link == "identity":
+                break  # No need for IRLS iterations for identity link
+            delta_fx = torch.norm(self.fx.weight.data - fx_old) / (torch.norm(fx_old) + 1e-8)
+            delta_fz = torch.norm(self.fz.weight.data - fz_old) / (torch.norm(fz_old) + 1e-8)
+            if delta_fx < tol and delta_fz < tol:
+                break
+            fx_old = self.fx.weight.data.clone()
+            fz_old = self.fz.weight.data.clone()
 
-        # Estimate fz weights by LS fit on new residuals:
-        # 1. Remove fx from y.
-        resid_y = y - X @ beta_X
-        # 2. Fit fz on residuals.
-        I = torch.eye(Z.shape[1], device=Z.device)
-        beta_Z = torch.linalg.solve(
-            Z.T @ Z + self.lam * I,
-            Z.T @ resid_y
-        )
-
-        # Update weights.
-        self.fx.weight.data.copy_(beta_X.view(1, -1))
-        self.fz.weight.data.copy_(beta_Z.view(1, -1))
-
+        return self
         
     @torch.no_grad()
     def _fit_orthogonalization(self, dataloader):

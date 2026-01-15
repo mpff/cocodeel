@@ -71,7 +71,7 @@ class TestBaseNetwork(unittest.TestCase):
         self.assertEqual(self.model.center_z, None)
         self.assertTrue(torch.allclose(self.model.center_y.mean, torch.tensor(1.0), atol=1e-6))
         # Check that intercept is updated correctly.
-        expected_intercept = intercept_before + self.model.fx.weight.data @ self.model.center_x.mean
+        expected_intercept = intercept_before + self.model.fx(self.model.center_x.mean)
         self.assertTrue(torch.allclose(self.model.intercept, expected_intercept, atol=1e-6))
         # Check that fx is centered.
         fx_after = self.model.predict_fx(X)
@@ -137,7 +137,7 @@ class TestCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(self.model.center_z.mean, torch.ones(self.num_covariates), atol=1e-6))
         self.assertTrue(torch.allclose(self.model.center_y.mean, torch.tensor(1.0), atol=1e-6))
         # Check that intercept is updated correctly.
-        expected_intercept = intercept_before + self.model.fx.weight.data @ self.model.center_x.mean + self.model.fz.weight.data @ self.model.center_z.mean
+        expected_intercept = intercept_before + self.model.fx(self.model.center_x.mean) + self.model.fz(self.model.center_z.mean)
         self.assertTrue(torch.allclose(self.model.intercept, expected_intercept, atol=1e-6))
         # Check that fx is centered.
         fx_after = self.model.predict_fx(X)

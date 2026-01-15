@@ -145,12 +145,16 @@ class BaseNetwork(_BaseCovarNetwork):
     @torch.no_grad()
     def center_effects(self, dataloader):
         """Center X, Z, and y using the dataloader."""
+
+        if self.is_centered:
+            return self
+    
         X, _, y = self._extract_features_from_loader(dataloader)
 
         self.center_x.fit(X)
         self.center_y.fit(y)
 
-        self.intercept.data += self.fx.weight.data @ self.center_x.mean.data
+        self.intercept.data += self.fx(self.center_x.mean)
         self.is_centered.data = torch.tensor(True)
         return self
 
@@ -182,12 +186,16 @@ class CovarNetwork(_BaseCovarNetwork):
     @torch.no_grad()
     def center_effects(self, dataloader):
         """Center X, Z, and y using the dataloader."""
+        
+        if self.is_centered:
+            return self
+        
         X, Z, y = self._extract_features_from_loader(dataloader)
 
         self.center_x.fit(X)
         self.center_z.fit(Z)
         self.center_y.fit(y)
 
-        self.intercept.data += self.fx.weight.data @ self.center_x.mean.data + self.fz.weight.data @ self.center_z.mean.data
+        self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
         self.is_centered.data = torch.tensor(True)
         return self
