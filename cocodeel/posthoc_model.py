@@ -39,6 +39,7 @@ class PostHocCovarNetwork(BaseNetwork):
         # Covariate components.
         self.center_z = Center(num_covariates)
         self.fz = nn.Linear(num_covariates, 1, bias=False)
+        self.fz.weight.data.zero_()
 
         # Optional orthogonalization.
         self.orth = nn.Linear(num_covariates, 1, bias=False)
@@ -75,7 +76,7 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     # Fitting methods
     # -------------------------------------------------------------------------
-    def fit(self, dataloader, lam=None, max_iters=10, tol=1e-6):
+    def fit(self, dataloader, lam=None, max_iters=25, tol=1e-6):
         """Fit post-hoc ridge regression (and optionally orthogonalization)."""
         self.center_effects(dataloader)
         self._fit_effects(dataloader, lam=lam, max_iters=max_iters, tol=tol)
@@ -86,9 +87,6 @@ class PostHocCovarNetwork(BaseNetwork):
     @torch.no_grad()
     def center_effects(self, dataloader):
         """Center X, Z, and y using the dataloader."""
-        
-        if self.is_centered:
-            return self
 
         X, Z, y = self._extract_features_from_loader(dataloader)
 
@@ -96,8 +94,14 @@ class PostHocCovarNetwork(BaseNetwork):
         self.center_z.fit(Z)
         self.center_y.fit(y)
 
-        self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
-        self.is_centered.data = torch.tensor(True)
+        # NOTE: Hacky centering of intercept if fx already centered.
+        # TODO: better way to handle this?
+        if self.is_centered:
+            self.intercept.data += self.fz(self.center_z.mean)
+        else:
+            self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
+            self.is_centered.data = torch.tensor(True)
+
         return self
 
     # -------------------------------------------------------------------------
@@ -116,13 +120,17 @@ class PostHocCovarNetwork(BaseNetwork):
         X = self.center_x(X)
         Z = self.center_z(Z)
 
-        # Initialize intercept.
+        # Find starting values for intercept, fx and fz using linear model.
+        # TODO: better initialization?
+        #self._linear_glmnet_fit(X, Z, y)
+
+        # Alternative Initialize intercept as mean of y.
         eta_mean = self.center_y.mean
-        self.intercept.data = self._link_function(eta_mean)
+        self.intercept.data = self._link_function(eta_mean).view(1)  # mean defined as shape (1,)!
 
         # Initialize old weights for convergence check.
-        fz_old = torch.zeros_like(self.fz.weight.data)
-        fx_old = torch.zeros_like(self.fx.weight.data)
+        fz_old = torch.zeros_like(y)
+        fx_old = torch.zeros_like(y)
 
         # Iteratively reweighted least squares until convergence.
         for i in range(max_iters):
@@ -139,20 +147,23 @@ class PostHocCovarNetwork(BaseNetwork):
             y_work = eta + (y - mu) / (g_prime + 1e-6)
             
             # Update intercept.
-            self.intercept.data = y_work.mean()
+            self.intercept.data = y_work.mean().view(1)
 
             # Centered reweighting. (Note: not equal to demeaning in case of weights!)
+            #yw = torch.sqrt(W) @ (y_work - y_work.mean())
             yw = torch.sqrt(W) @ (y_work - (W @ y_work).sum() / weights.sum())
             Xw = torch.sqrt(W) @ (X - (W @ X).sum(dim=0, keepdim=True) / weights.sum())
             Zw = torch.sqrt(W) @ (Z - (W @ Z).sum(dim=0, keepdim=True) / weights.sum())
-            
+
             # --- Fitting Procedure ---
             
             # 1. Regress yw on Zw to get residuals.
-            resid_y = yw - Zw @ torch.linalg.lstsq(Zw, yw).solution
+            # NOTE: Add small ridge for numerical stability.
+            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-6 * torch.eye(Zw.shape[1]), Zw.T @ yw) 
         
             # 2. Regress Xw on Zw to get residuals.
-            resid_X = Xw - Zw @ torch.linalg.lstsq(Zw, Xw).solution
+            # NOTE: Add small ridge for numerical stability.
+            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-6 * torch.eye(Zw.shape[1]), Zw.T @ Xw)
             
             # 3. Use glmnet to fit cross-validated ridge regression of resid_y on resid_X.
             # NOTE: glmnet does not seem to be reliable for refitting. We do CV for lam if not given
@@ -186,16 +197,42 @@ class PostHocCovarNetwork(BaseNetwork):
             beta_fz = torch.linalg.solve(Zw.T @ Zw, Zw.T @ resid_y_new)
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
             
-            # 5. Check convergence via relative change in fx weights and deviance (TODO)
+            # 5. Check convergence via relative change in fx and fz (TODO)
             if self.link == "identity":
                 break  # No need for IRLS iterations for identity link
-            delta_fx = torch.norm(self.fx.weight.data - fx_old) / (torch.norm(fx_old) + 1e-8)
-            delta_fz = torch.norm(self.fz.weight.data - fz_old) / (torch.norm(fz_old) + 1e-8)
+            delta_fx = torch.norm(self.fx(X) - fx_old) / (torch.norm(fx_old) + 1e-8)
+            delta_fz = torch.norm(self.fz(Z) - fz_old) / (torch.norm(fz_old) + 1e-8)
             if delta_fx < tol and delta_fz < tol:
                 break
-            fx_old = self.fx.weight.data.clone()
-            fz_old = self.fz.weight.data.clone()
+            fx_old = self.fx(X).clone()
+            fz_old = self.fz(Z).clone()
 
+        return self
+    
+    @torch.no_grad()
+    def _linear_glmnet_fit(self, X, Z, y):
+        """Initial linear fit of fx and fz via least squares glmnet on (X, Z, y)."""
+        # Prepare data for R.
+        X_np = X.cpu().numpy()
+        Z_np = Z.cpu().numpy()
+        y_np = y.cpu().numpy()
+        XZ_np = np.hstack([X_np, Z_np])
+        with localconverter(ro.default_converter + numpy2ri.converter):
+            XZ_r = ro.conversion.py2rpy(XZ_np)
+            y_r = ro.conversion.py2rpy(y_np)
+        # Fit linear model in R (glmnet).
+        cv_fit = glmnet.cv_glmnet(
+            XZ_r, y_r,
+            alpha=0,
+            penalty_factor=ro.FloatVector([1.0]*X.shape[1] + [0.0]*Z.shape[1]),
+            intercept=True
+        )
+        best_coefs = ro.r["as.numeric"](glmnet.coef_glmnet(cv_fit, s="lambda.min"))
+        coefs_np = np.array(best_coefs)
+        coefs_tensor = torch.tensor(coefs_np, dtype=torch.float32)
+        self.intercept.data = coefs_tensor[0].view(1)
+        self.fx.weight.data = coefs_tensor[1:X.shape[1]+1].view(1, -1)
+        self.fz.weight.data = coefs_tensor[X.shape[1]+1:].view(1, -1)
         return self
         
     @torch.no_grad()

@@ -142,7 +142,7 @@ class TestLogisticTraining(unittest.TestCase):
             'backbone_params': {'out_features': self.out_features},
             'num_covariates': self.num_covariates
             }
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.loss_fn = nn.BCELoss()
         # Data
         self.X = torch.randn(self.n, 3)
         self.Z = torch.randn(self.n, self.num_covariates)
@@ -175,7 +175,7 @@ class TestLogisticTraining(unittest.TestCase):
             val_loader=self.val_loader,
             device='cpu',
             loss_fn=self.loss_fn,
-            epochs=2,
+            epochs=50,
             lr=0.01
         ).eval()
         # Check prediction shape
@@ -196,7 +196,7 @@ class TestLogisticTraining(unittest.TestCase):
         )
         posthoc_model.fit(self.train_loader)
         preds_posthoc = model(self.X, self.Z)
-        self.assertEqual(preds.shape, self.y.shape)
+        self.assertEqual(preds_posthoc.shape, self.y.shape)
 
     def test_train_logistic_covar_model(self):
         # Fit Post-hoc Covariate model.
