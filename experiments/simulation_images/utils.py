@@ -9,10 +9,11 @@ def simulate_dataloader(simulation_params, seed=0):
     torch.manual_seed(seed)
     X, Z, y, fx, fz, fr = simulate_traffic_light_data(**simulation_params, seed=seed)
     N = X.shape[0]
+    batch_size = 200 if N >= 200 else N
     train_data = CovarDataset(X[:N // 2], Z[:N // 2], y[:N // 2])
     val_data = CovarDataset(X[N // 2:], Z[N // 2:], y[N // 2:])
-    train_loader = DataLoader(train_data, batch_size= N // 30, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size= N // 30, shuffle=False)
+    train_loader = DataLoader(train_data, batch_size = batch_size, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size= batch_size, shuffle=False)
     return train_loader, val_loader
 
 

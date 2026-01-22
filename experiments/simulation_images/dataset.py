@@ -39,11 +39,10 @@ def simulate_traffic_light_data(
         X[i, 0][mask2] = v2[i]
         X[i, 0][mask3] = v3[i]
 
-    # 4. Outcome generation
+    # 4. Outcome generation (centered effects).
     # -----------------------------------------
-    fx = b2 * v2 + b3 * v3
-    # Z should be bz @ Z / sqrt(n_covars) to keep variance 1.
-    fz = bz * n_covars**0.5 * Zcorr
+    fx = b2 * (v2 - 0.5) + b3 * (v3 - 0.5)
+    fz = bz * (Zcorr - 0.5) / n_covars**0.5
     # Base linear predictor
     eta = fx + fz
 
@@ -51,19 +50,43 @@ def simulate_traffic_light_data(
         y = eta + sdy * torch.randn(n, 1)
 
     elif outcome_type == 'binary':
-        # Center to avoid saturation
-        eta_centered = eta - eta.mean()
         # Logistic link
-        p = torch.sigmoid(eta_centered)
+        p = torch.sigmoid(eta)
         # Bernoulli sampling
         y = torch.bernoulli(p)
 
     else:
         raise ValueError("outcome_type must be 'continuous' or 'binary'.")
 
-    # 5. Effects (centered), unchanged
-    fx = b2 * (v2 - 0.5) + b3 * (v3 - 0.5)
-    fz = bz * n_covars**0.5 * (Zcorr - 0.5)
+    # 5. Residual Effect.
     fr = b2 * (1 - cv2) * (v2_raw - 0.5) + b3 * (v3 - 0.5)
 
     return X, Z, y, fx, fz, fr
+
+
+def split_mask_into_vertical_strips(mask, n_strips):
+    """
+    Splits a boolean mask into n_strips vertical sub-masks.
+    Returns a list of boolean masks.
+    """
+    ys, xs = mask.nonzero(as_tuple=True)
+    x_min, x_max = xs.min(), xs.max() + 1
+    width = x_max - x_min
+
+    # Compute strip boundaries
+    base = width // n_strips
+    remainder = width % n_strips
+
+    strips = []
+    start = x_min
+    for i in range(n_strips):
+        w_i = base + (1 if i < remainder else 0)
+        end = start + w_i
+
+        strip = torch.zeros_like(mask)
+        strip[ys, xs] = (xs >= start) & (xs < end)
+        strips.append(strip)
+
+        start = end
+
+    return strips
