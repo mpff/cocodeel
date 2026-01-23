@@ -17,7 +17,8 @@ class PostHocOrthNetwork(BaseNetwork):
         """
         super().__init__(
             backbone=model.backbone.__class__,
-            backbone_params=model.backbone_params
+            backbone_params=model.backbone_params,
+            link=model.link
         )
         self.load_state_dict(model.state_dict())
         self.num_covariates = num_covariates
@@ -29,7 +30,7 @@ class PostHocOrthNetwork(BaseNetwork):
         self.register_buffer('is_centered', torch.tensor(False))
 
     def forward(self, x, z):
-        return self.intercept + self.predict_fx(x, z)
+        return self.output_func(self.intercept + self.predict_fx(x, z))
 
     def predict_fx(self, x, z):
         x = self.backbone(x)
