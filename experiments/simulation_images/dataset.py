@@ -56,12 +56,12 @@ def simulate_traffic_light_data(
     # 4. Outcome generation (NOT CENTERED)
     # -------------------------------------------------
     # Adjust coefficients for number of covariates
-    b2 = b2 / n_covars**0.5
-    bz = bz / n_covars**0.5
+    b2 = b2 / n_covars**2
+    bz = bz / n_covars**2
 
     # Base linear predictor.
-    fx = (b2 * v2).mean(dim=1, keepdim=True) + b3 * v3
-    fz = (bz * Z).sum(dim=1, keepdim=True)
+    fx = b2 * (v2 - 0.5).mean(dim=1, keepdim=True) + b3 * (v3 - 0.5)
+    fz = bz * (Z - 0.5).mean(dim=1, keepdim=True)
     eta = fx + fz
 
     # Response generation.
@@ -76,10 +76,7 @@ def simulate_traffic_light_data(
     # -------------------------------------------------
     # 5. Residual (unconfounded) effect (CENTERED)
     # -------------------------------------------------
-    fx = fx - b2 * n_covars * 0.5 - b3 * 0.5
-    fz = fz - bz * n_covars * 0.5
-    fr = fx - b2 * cv2 * Z.sum(dim=1, keepdim=True)
-    fr = fr - b2 * n_covars * 0.5 - b3 * 0.5 - b2 * cv2 * n_covars * 0.5
+    fr = fx - b2 * cv2 * (Z - 0.5).mean(dim=1, keepdim=True)
 
     return X, Z, y, fx, fz, fr
 
