@@ -44,22 +44,27 @@ def simulate_traffic_light_data(
     # Fill images
     for i in range(n):
         # v1 circle: confounded by Zs, split into strips
-        for j, strip in enumerate(mask1_strips):
-            X[i, 0][strip] = v1[i, j]
+        for j, jstrip in enumerate(mask1_strips):
+            X[i, 0][jstrip] = v1[i, j]
         # v2 circle: confounded by Zs, split into strips
-        for j, strip in enumerate(mask2_strips):
-            X[i, 0][strip] = v2[i, j]
+        for j, jstrip in enumerate(mask2_strips):
+            X[i, 0][jstrip] = v2[i, j]
         # v3 circle: unconfounded
         X[i, 0][mask3] = v3[i]
 
     # -------------------------------------------------
-    # 4. Outcome generation (CENTERED)
+    # 4. Outcome generation (NOT CENTERED)
     # -------------------------------------------------
+    # Adjust coefficients for number of covariates
+    b2 = b2 / n_covars**0.5
+    bz = bz / n_covars**0.5
+
     # Base linear predictor.
-    fx = b2 * (v2 - 0.5).mean(dim=1, keepdim=True) / n_covars**0.5 + b3 * (v3 - 0.5)
-    fz = bz * (Z - 0.5).sum(dim=1, keepdim=True) / n_covars**0.5
+    fx = (b2 * v2).mean(dim=1, keepdim=True) + b3 * v3
+    fz = (bz * Z).sum(dim=1, keepdim=True)
     eta = fx + fz
 
+    # Response generation.
     if outcome_type == 'continuous':
         y = eta + sdy * torch.randn(n, 1)
     elif outcome_type == 'binary':
@@ -71,8 +76,10 @@ def simulate_traffic_light_data(
     # -------------------------------------------------
     # 5. Residual (unconfounded) effect (CENTERED)
     # -------------------------------------------------
-    #fr = b2 * (1 - cv2) * (v2_raw - 0.5) + b3 * (v3 - 0.5)
-    fr = fx - (b2 * cv2) * (Z - 0.5).sum(dim=1, keepdim=True) / n_covars**0.5
+    fx = fx - b2 * n_covars * 0.5 - b3 * 0.5
+    fz = fz - bz * n_covars * 0.5
+    fr = fx - b2 * cv2 * Z.sum(dim=1, keepdim=True)
+    fr = fr - b2 * n_covars * 0.5 - b3 * 0.5 - b2 * cv2 * n_covars * 0.5
 
     return X, Z, y, fx, fz, fr
 
