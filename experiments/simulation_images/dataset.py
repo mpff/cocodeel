@@ -19,6 +19,13 @@ def simulate_traffic_light_data(
     v2_raw = torch.rand(n, 1)
     v3 = torch.rand(n, 1)  # independent
 
+    # Correlate v1 and v2 with Z
+    v1 = torch.zeros((n, n_covars))
+    v2 = torch.zeros((n, n_covars))
+    for j in range(n_covars):
+        v1[:, j] = (1 - cv1) * v1_raw[:, 0] + cv1 * Z[:, j]
+        v2[:, j] = (1 - cv2) * v2_raw[:, 0] + cv2 * Z[:, j]
+
     # -------------------------------------------------
     # 3. Build X images
     # -------------------------------------------------
@@ -30,32 +37,25 @@ def simulate_traffic_light_data(
     mask2 = circle_mask(h, w, centers[1], circle_radius)
     mask3 = circle_mask(h, w, centers[2], circle_radius)
 
-    # Split confounded masks into vertical strips
+    # For multiple confounders: Split confounded masks into vertical strips.
     mask1_strips = split_mask_into_vertical_strips(mask1, n_covars)
     mask2_strips = split_mask_into_vertical_strips(mask2, n_covars)
     
-    v1 = torch.zeros((n, n_covars))
-    v2 = torch.zeros((n, n_covars))
-
     # Fill images
     for i in range(n):
-
-        # v1 circle: confounded by Z, split into strips
+        # v1 circle: confounded by Zs, split into strips
         for j, strip in enumerate(mask1_strips):
-            v1[i, j] = (1 - cv1) * v1_raw[i] + cv1 * Z[i, j]
             X[i, 0][strip] = v1[i, j]
-
-        # v2 circle: confounded by Z, split into strips
+        # v2 circle: confounded by Zs, split into strips
         for j, strip in enumerate(mask2_strips):
-            v2[i, j] = (1 - cv2) * v2_raw[i] + cv2 * Z[i, j]
             X[i, 0][strip] = v2[i, j]
-
         # v3 circle: unconfounded
         X[i, 0][mask3] = v3[i]
 
     # -------------------------------------------------
-    # 4. Outcome generation (CENTERED effects)
+    # 4. Outcome generation (CENTERED)
     # -------------------------------------------------
+    # Base linear predictor.
     fx = b2 * (v2 - 0.5).mean(dim=1, keepdim=True) / n_covars**0.5 + b3 * (v3 - 0.5)
     fz = bz * (Z - 0.5).sum(dim=1, keepdim=True) / n_covars**0.5
     eta = fx + fz
@@ -69,9 +69,10 @@ def simulate_traffic_light_data(
         raise ValueError("outcome_type must be 'continuous' or 'binary'.")
 
     # -------------------------------------------------
-    # 5. Residual (unconfounded) effect
+    # 5. Residual (unconfounded) effect (CENTERED)
     # -------------------------------------------------
-    fr = b2 * (1 - cv2) * (v2_raw - 0.5) + b3 * (v3 - 0.5)
+    #fr = b2 * (1 - cv2) * (v2_raw - 0.5) + b3 * (v3 - 0.5)
+    fr = fx - (b2 * cv2) * (Z - 0.5).sum(dim=1, keepdim=True) / n_covars**0.5
 
     return X, Z, y, fx, fz, fr
 
