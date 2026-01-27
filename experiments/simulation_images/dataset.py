@@ -15,16 +15,16 @@ def simulate_traffic_light_data(
     # -------------------------------------------------
     # 2. Latent variables
     # -------------------------------------------------
-    v1_raw = torch.rand(n, 1)
-    v2_raw = torch.rand(n, 1)
+    v1_raw = torch.rand(n, n_covars)
+    v2_raw = torch.rand(n, n_covars)
     v3 = torch.rand(n, 1)  # independent
 
     # Correlate v1 and v2 with Z
     v1 = torch.zeros((n, n_covars))
     v2 = torch.zeros((n, n_covars))
     for j in range(n_covars):
-        v1[:, j] = (1 - cv1) * v1_raw[:, 0] + cv1 * Z[:, j]
-        v2[:, j] = (1 - cv2) * v2_raw[:, 0] + cv2 * Z[:, j]
+        v1[:, j] = (1 - cv1) * v1_raw[:, j] + cv1 * Z[:, j]
+        v2[:, j] = (1 - cv2) * v2_raw[:, j] + cv2 * Z[:, j]
 
     # -------------------------------------------------
     # 3. Build X images
@@ -56,8 +56,8 @@ def simulate_traffic_light_data(
     # 4. Outcome generation (NOT CENTERED)
     # -------------------------------------------------
     # Adjust coefficients for number of covariates
-    b2 = b2 / n_covars**2
-    bz = bz / n_covars**2
+    b2 = b2 * n_covars**0.5
+    bz = bz * n_covars**0.5
 
     # Base linear predictor.
     fx = b2 * (v2 - 0.5).mean(dim=1, keepdim=True) + b3 * (v3 - 0.5)
