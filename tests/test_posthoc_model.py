@@ -1,6 +1,9 @@
 import unittest
 import torch
+import tempfile
+import os
 
+import numpy
 from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
 
 from torch import nn
@@ -151,20 +154,68 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(fx_new.mean(dim=0), torch.zeros_like(fx_new.mean(dim=0)), atol=1e-5))
         self.assertTrue(torch.allclose(fz_new.mean(dim=0), torch.zeros_like(fz_new.mean(dim=0)), atol=1e-5))
 
+    @torch.no_grad()
+    def test_posthoc_save_and_reload_linear(self):
+        # Train posthoc model
+        model = PostHocCovarNetwork(
+            model=self.base_model,
+            num_covariates=self.num_covariates,
+            orthogonalize=True
+        )
+        model.fit(self.dataloader)
+
+        y_pred_before = model(self.X, self.Z)
+        fx_before = model.predict_fx(self.X, self.Z)
+        fz_before = model.predict_fz(self.Z)
+
+        # Save posthoc state_dict
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "posthoc_linear.pt")
+            torch.save(model.state_dict(), path)
+
+            # Recreate BaseNetwork EXACTLY as in setUp
+            base_model_reloaded = BaseNetwork(
+                backbone=DummyBackbone,
+                backbone_params={'out_features': self.out_features},
+                num_covariates=self.num_covariates,
+                link=self.link
+            )
+            base_model_reloaded.backbone.linear.weight.data = torch.eye(self.out_features)
+            base_model_reloaded.backbone.linear.bias.data.zero_()
+
+            # Create fresh posthoc model and load state_dict
+            reloaded = PostHocCovarNetwork(
+                model=base_model_reloaded,
+                num_covariates=self.num_covariates,
+                orthogonalize=True
+            )
+            reloaded.load_state_dict(torch.load(path))
+            reloaded.eval()
+
+        # Compare outputs
+        y_pred_after = reloaded(self.X, self.Z)
+        fx_after = reloaded.predict_fx(self.X, self.Z)
+        fz_after = reloaded.predict_fz(self.Z)
+
+        self.assertTrue(torch.allclose(y_pred_before, y_pred_after, atol=1e-4))
+        self.assertTrue(torch.allclose(fx_before, fx_after, atol=1e-4))
+        self.assertTrue(torch.allclose(fz_before, fz_after, atol=1e-4))
+        self.assertTrue(torch.allclose(model.intercept, reloaded.intercept, atol=1e-6))
+
    
 class TestPostHocLogisticCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def setUp(self):
         torch.manual_seed(42)
-        self.n = 4000
+        self.n = 25000
         self.out_features = 3
         self.num_covariates = 2
         self.link = "logit"
         # Data
         self.X = torch.randn(self.n, 3)
         self.Z = torch.randn(self.n, self.num_covariates)
-        self.eta = 2 * self.X[:, 0] + 3 * self.Z[:, 0] + 1.5  # Known linear relation
+        self.eta = 1 * self.X[:, 0] + 2 * self.Z[:, 0] + 0.5 # Known linear relation
         self.p = torch.sigmoid(self.eta.unsqueeze(1))  # (n, 1)
         self.y = torch.bernoulli(self.p) # (n, 1)
         self.dataset = CovarDataset(self.X, self.Z, self.y)
@@ -281,6 +332,54 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         fz_new = model.predict_fz(self.Z)
         self.assertTrue(torch.allclose(fx_new.mean(dim=0), torch.zeros_like(fx_new.mean(dim=0)), atol=1e-5))
         self.assertTrue(torch.allclose(fz_new.mean(dim=0), torch.zeros_like(fz_new.mean(dim=0)), atol=1e-5))
+
+    @torch.no_grad()
+    def test_posthoc_save_and_reload_logistic(self):
+        # Train posthoc model
+        model = PostHocCovarNetwork(
+            model=self.base_model,
+            num_covariates=self.num_covariates,
+            orthogonalize=True
+        )
+        model.fit(self.dataloader)
+
+        y_pred_before = model(self.X, self.Z)
+        fx_before = model.predict_fx(self.X, self.Z)
+        fz_before = model.predict_fz(self.Z)
+
+        # Save posthoc state_dict
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "posthoc_logistic.pt")
+            torch.save(model.state_dict(), path)
+
+            # Recreate BaseNetwork EXACTLY as in setUp
+            base_model_reloaded = BaseNetwork(
+                backbone=DummyBackbone,
+                backbone_params={'out_features': self.out_features},
+                num_covariates=self.num_covariates,
+                link=self.link
+            )
+            base_model_reloaded.backbone.linear.weight.data = torch.eye(self.out_features)
+            base_model_reloaded.backbone.linear.bias.data.zero_()
+
+            # Create fresh posthoc model and load state_dict
+            reloaded = PostHocCovarNetwork(
+                model=base_model_reloaded,
+                num_covariates=self.num_covariates,
+                orthogonalize=True
+            )
+            reloaded.load_state_dict(torch.load(path))
+            reloaded.eval()
+
+        # Compare outputs
+        y_pred_after = reloaded(self.X, self.Z)
+        fx_after = reloaded.predict_fx(self.X, self.Z)
+        fz_after = reloaded.predict_fz(self.Z)
+
+        self.assertTrue(torch.allclose(y_pred_before, y_pred_after, atol=1e-3))
+        self.assertTrue(torch.allclose(fx_before, fx_after, atol=1e-3))
+        self.assertTrue(torch.allclose(fz_before, fz_after, atol=1e-3))
+        self.assertTrue(torch.allclose(model.intercept, reloaded.intercept, atol=1e-6))
 
 
 if __name__ == '__main__':

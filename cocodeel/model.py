@@ -137,10 +137,13 @@ class BaseNetwork(_BaseCovarNetwork):
         eta = self.intercept + self.predict_fx(x)
         return self.output_func(eta)
     
-    def predict_fx(self, x):
+    def predict_fx(self, x, z=None):
         x = self.backbone(x)
         x = self.center_x(x)
         return self.fx(x)
+    
+    def predict_fz(self, z):
+        return torch.zeros(z.size(0), 1)
     
     @torch.no_grad()
     def center_effects(self, dataloader):
