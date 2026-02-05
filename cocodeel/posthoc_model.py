@@ -168,11 +168,11 @@ class PostHocCovarNetwork(BaseNetwork):
             
             # 1. Regress yw on Zw to get residuals.
             # NOTE: Add small ridge for numerical stability.
-            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-8 * torch.eye(Zw.shape[1]), Zw.T @ yw) 
+            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-6 * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ yw) 
         
             # 2. Regress Xw on Zw to get residuals.
             # NOTE: Add small ridge for numerical stability.
-            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-8 * torch.eye(Zw.shape[1]), Zw.T @ Xw)
+            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-6 * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ Xw)
             
             # 3. Use glmnet to fit cross-validated ridge regression of resid_y on resid_X.
             # NOTE: glmnet does not seem to be reliable for refitting. We do CV for lam if not given
@@ -196,7 +196,7 @@ class PostHocCovarNetwork(BaseNetwork):
                 self.lam.copy_(torch.tensor(lam, dtype=torch.float32))
             # 3c. Refit ridge regression with best lam using torch.
             beta_fx = torch.linalg.solve(
-                resid_X.T @ resid_X + self.lam.item() * torch.eye(resid_X.shape[1]),
+                resid_X.T @ resid_X + self.lam.item() * torch.eye(resid_X.shape[1]).to(resid_X.device),
                 resid_X.T @ resid_y
             )
             self.fx.weight.data.copy_(beta_fx.view(1, -1))
@@ -242,7 +242,7 @@ class PostHocCovarNetwork(BaseNetwork):
         )
         best_coefs = ro.r["as.numeric"](glmnet.coef_glmnet(cv_fit, s="lambda.min"))
         coefs_np = np.array(best_coefs)
-        coefs_tensor = torch.tensor(coefs_np, dtype=torch.float32)
+        coefs_tensor = torch.tensor(coefs_np, dtype=torch.float32).to(X.device)
         self.intercept.data = coefs_tensor[0].view(1)
         self.fx.weight.data = coefs_tensor[1:X.shape[1]+1].view(1, -1)
         self.fz.weight.data = coefs_tensor[X.shape[1]+1:].view(1, -1)
