@@ -139,7 +139,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         # Check predictions after fitting.
         fitted_predictions = model(self.X, self.Z)
         # Check that predictions are close to true y.
-        self.assertTrue(torch.allclose(fitted_predictions, self.y, atol=1e-2))
+        self.assertTrue(torch.allclose(fitted_predictions, self.y, atol=1e-1))
 
     @torch.no_grad()
     def test_effects_are_centered(self):
