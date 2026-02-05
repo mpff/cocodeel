@@ -120,6 +120,15 @@ class PostHocCovarNetwork(BaseNetwork):
         X = self.center_x(X)
         Z = self.center_z(Z)
 
+        # Rescale X and Z to have unit variance (helps with stability).
+        X_std = X.std(dim=0, keepdim=True).clamp_min(1e-8)
+        Z_std = Z.std(dim=0, keepdim=True).clamp_min(1e-8)
+        X = X / X_std
+        Z = Z / Z_std
+
+        # Update old fx weights to account for rescaling.
+        self.fx.weight.data = self.fx.weight.data * X_std.view(-1)
+
         # Find starting values for intercept, fx and fz using linear model.
         # TODO: better initialization?
         #self._linear_glmnet_fit(X, Z, y)
@@ -142,9 +151,9 @@ class PostHocCovarNetwork(BaseNetwork):
             mu = self.output_func(eta)
             var = self._variance_function(mu)
             g_prime = self._link_derivative(mu)
-            weights = g_prime**2 / (var + 1e-6)
+            weights = g_prime**2 / (var + 1e-8)
             W = torch.diag(weights.flatten())
-            y_work = eta + (y - mu) / (g_prime + 1e-6)
+            y_work = eta + (y - mu) / (g_prime + 1e-8)
             
             # Update intercept.
             self.intercept.data = y_work.mean().view(1)
@@ -159,11 +168,11 @@ class PostHocCovarNetwork(BaseNetwork):
             
             # 1. Regress yw on Zw to get residuals.
             # NOTE: Add small ridge for numerical stability.
-            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-6 * torch.eye(Zw.shape[1]), Zw.T @ yw) 
+            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-8 * torch.eye(Zw.shape[1]), Zw.T @ yw) 
         
             # 2. Regress Xw on Zw to get residuals.
             # NOTE: Add small ridge for numerical stability.
-            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-6 * torch.eye(Zw.shape[1]), Zw.T @ Xw)
+            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + 1e-8 * torch.eye(Zw.shape[1]), Zw.T @ Xw)
             
             # 3. Use glmnet to fit cross-validated ridge regression of resid_y on resid_X.
             # NOTE: glmnet does not seem to be reliable for refitting. We do CV for lam if not given
@@ -206,6 +215,10 @@ class PostHocCovarNetwork(BaseNetwork):
                 break
             fx_old = self.fx(X).clone()
             fz_old = self.fz(Z).clone()
+        
+        # Unscale fx and fz weights to account for initial standardization.
+        self.fx.weight.data = self.fx.weight.data / X_std.view(-1)
+        self.fz.weight.data = self.fz.weight.data / Z_std.view(-1)
 
         return self
     
