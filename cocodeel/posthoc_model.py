@@ -127,7 +127,7 @@ class PostHocCovarNetwork(BaseNetwork):
         Z = Z / Z_std
 
         # Update old fx weights to account for rescaling.
-        self.fx.weight.data = self.fx.weight.data * X_std.view(-1)
+        self.fx.weight.data.zero_()  # Start with zero weights for fx (will be updated in IRLS)
 
         # Find starting values for intercept, fx and fz using linear model.
         # TODO: better initialization?
