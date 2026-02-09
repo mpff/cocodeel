@@ -126,23 +126,23 @@ class PostHocCovarNetwork(BaseNetwork):
         X = X / X_std
         Z = Z / Z_std
 
-        # Update old fx weights to account for rescaling.
-        self.fx.weight.data.zero_()  # Start with zero weights for fx (will be updated in IRLS)
+        # Initialize intercept as mean of y, fx and fz as zero. This is a common starting point for IRLS.
+        #eta_mean = self.center_y.mean
+        #self.intercept.data = self._link_function(eta_mean).view(1)  # mean defined as shape (1,)!
+        #self.fx.weight.data.zero_()
+        #self.fz.weight.data.zero_()  # Zero from initialization (relevant only when refit a second time).
+        # Alternative: Update old fx weights to account for rescaling.
+        #self.fx.weight.data = self.fx.weight.data * X_std.view(-1)
+        # TODO: better initialization using a first glmnet fit without backfitting?
+        self._linear_glmnet_fit(X, Z, y)
 
-        # Find starting values for intercept, fx and fz using linear model.
-        # TODO: better initialization?
-        #self._linear_glmnet_fit(X, Z, y)
 
-        # Alternative Initialize intercept as mean of y.
-        eta_mean = self.center_y.mean
-        self.intercept.data = self._link_function(eta_mean).view(1)  # mean defined as shape (1,)!
-
-        # Initialize old weights for convergence check.
+        # Initialize old predictors for convergence check.
         fz_old = torch.zeros_like(y)
         fx_old = torch.zeros_like(y)
 
         # Iteratively reweighted least squares until convergence.
-        for i in range(max_iters):
+        for _ in range(max_iters):
             
             # ---- Prepare reweighted data ----
 
