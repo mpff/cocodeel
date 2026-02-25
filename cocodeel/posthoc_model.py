@@ -1,17 +1,9 @@
-from os import link
 import torch
 import torch.nn as nn
 import numpy as np
-import rpy2.robjects as ro
-from rpy2.robjects import numpy2ri
-from rpy2.robjects.conversion import localconverter
-from rpy2.robjects.packages import importr
 
 from cocodeel.model import BaseNetwork
 from cocodeel.transform import Center
-
-# Load glmnet from R
-glmnet = importr("glmnet")
 
 
 class PostHocCovarNetwork(BaseNetwork):
@@ -44,9 +36,6 @@ class PostHocCovarNetwork(BaseNetwork):
         # Optional orthogonalization on fx. (I - Z(Z'Z)^{-1}Z'X)
         self.orth = nn.Linear(num_covariates, 1, bias=False)
         self.orth.weight.data.zero_()
-        # Optional IWLS-weighted orthogonalization on phi(X). (I - Z(Z'WZ)^{-1}Z'WX).
-        self.worth = nn.Linear(num_covariates, self.backbone.out_features, bias=False)
-        self.worth.weight.data.zero_()
 
         # Penalization Paramter for ridge refit.
         self.lam = nn.Parameter(torch.tensor(0.0), requires_grad=False)
@@ -79,12 +68,12 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     # Fitting methods
     # -------------------------------------------------------------------------
-    def fit(self, dataloader, lam=None, max_iters=25, tol=1e-6):
+    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=25, tol=1e-6):
         """Fit post-hoc ridge regression (and optionally orthogonalization)."""
-        self.center_effects(dataloader)
-        self._fit_effects(dataloader, lam=lam, max_iters=max_iters, tol=tol)
+        self.center_effects(train_dataloader)
+        self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol)
         if self.orthogonalize:
-            self._fit_orthogonalization(dataloader)
+            self._fit_orthogonalization(train_dataloader)
         return self
     
     @torch.no_grad()
@@ -111,37 +100,95 @@ class PostHocCovarNetwork(BaseNetwork):
     # Internal methods
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def _fit_effects(self, dataloader, lam, max_iters, tol):
-        """
-        IRLS-based fitting of generalized additive effects with ridge penalty.
-        Model: y = g(fx(x) + fz(z))
-        Using weighted least squares with GLM variance + link derivative.
-        """
-        
-        # Grab data.
-        X, Z, y = self._extract_features_from_loader(dataloader)
-        
-        # Rescale X and Z to have unit variance (helps with stability).
-        Xc = self.center_x(X)
-        Zc = self.center_z(Z)
-        X_std = Xc.std(dim=0, keepdim=True).clamp_min(1e-8)
-        Z_std = Zc.std(dim=0, keepdim=True).clamp_min(1e-8)
-        Xnorm = Xc / X_std
-        Znorm = Zc / Z_std
+    def _fit_effects(self, train_loader, val_loader, lam=None, max_iters=50, tol=1e-6, n_lambdas=50):
 
-        # Preperation
-        Zfull = torch.hstack([Znorm, torch.ones((Znorm.shape[0], 1)).to(Znorm.device)])
-        Xorth = Xnorm - Zfull @ torch.linalg.solve(Zfull.T @ Zfull, Zfull.T @ Xnorm)
-        
-        # Initialize intercept as mean of y, fx and fz as zero. This is a common starting point for IRLS.
-        eta_mean = self.center_y.mean
-        self.intercept.data = self._link_function(eta_mean).view(1)  # mean defined as shape (1,)!
+        # ---- Extract training data ----
+        X_train, Z_train, y_train = self._extract_features_from_loader(train_loader)
+        X_train = self.center_x(X_train)
+        Z_train = self.center_z(Z_train)
+
+        X_std = X_train.std(dim=0, keepdim=True) + 1e-6
+        Z_std = Z_train.std(dim=0, keepdim=True) + 1e-6
+
+        X_train = X_train / X_std
+        Z_train = Z_train / Z_std
+        Zfull_train = torch.cat([Z_train, torch.ones_like(Z_train[:, :1])], dim=1)
+
+        # ---- Extract validation data ----
+        X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
+        X_val = self.center_x(X_val) / X_std
+        Z_val = self.center_z(Z_val) / Z_std
+
+        # ---- Build lambda path ----
+        lambda_max = torch.linalg.norm(X_train, 2)**2
+        lambda_min = 1e-4 * lambda_max  # avoid λ → 0 when p ≥ n
+
+        lambda_path = torch.logspace(
+            torch.log10(lambda_max),
+            torch.log10(lambda_min),
+            steps=n_lambdas,
+            device=X_train.device,
+        )
+        if lam is not None:
+            lambda_path = torch.tensor([lam], device=X_train.device)
+
+        # ---- Initialize parameters (warm start seed) ----
         self.fx.weight.data.zero_()
-        self.fz.weight.data.zero_()  # Zero from initialization (relevant only when refit a second time).
-        # Alternative: Update old fx weights to account for rescaling.
-        #self.fx.weight.data = self.fx.weight.data * X_std.view(-1)
-        # TODO: better initialization using a first glmnet fit without backfitting?
-        #self._linear_glmnet_fit(Xnorm, Znorm, y)
+        self.fz.weight.data.zero_()
+        self.intercept.data.zero_()
+
+        best_val_loss = float("inf")
+        best_state = None
+        best_lambda = None
+
+        for lam in lambda_path:
+
+            # ---- Train at fixed λ ----
+            self._solve_fixed_lambda(
+                X_train,
+                Zfull_train,
+                y_train,
+                lam,
+                max_iters,
+                tol,
+            )
+            # Update fx, fz weights to account for standardization.
+            self.fx.weight.data /= X_std
+            self.fz.weight.data /= Z_std
+
+            # ---- Validation evaluation ----
+            eta_val = self.intercept + self.fx(X_val) + self.fz(Z_val)
+
+            # Use loss function corresponding to the link function for validation evaluation.
+            if self.link == "identity":
+                val_loss = torch.nn.MSELoss()(mu_val, y_val)
+            elif self.link == "logit":
+                val_loss = torch.nn.BCEWithLogitsLoss()(eta_val, y_val)
+            else:
+                raise ValueError(f"Unsupported link function: {self.link}")
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_lambda = lam
+                best_state = {
+                    "fx": self.fx.weight.data.clone(),
+                    "fz": self.fz.weight.data.clone(),
+                    "intercept": self.intercept.data.clone(),
+                }
+
+        # ---- Restore best model ----
+        self.fx.weight.data.copy_(best_state["fx"])
+        self.fz.weight.data.copy_(best_state["fz"])
+        self.intercept.data.copy_(best_state["intercept"])
+
+        self.lam.data.copy_(best_lambda)
+
+        return self
+
+    @torch.no_grad()
+    def _solve_fixed_lambda(self, X, Zfull, y, lam, max_iters, tol):
+
+        eps = 1e-5  # Small constant for numerical stability.
 
         # Initialize old predictors for convergence check.
         fz_old = torch.zeros_like(y)
@@ -149,135 +196,64 @@ class PostHocCovarNetwork(BaseNetwork):
 
         # Iteratively reweighted least squares until convergence.
         for i in range(max_iters):
-
-            # Test using glmnet directly!
-
-            # # Concatenate X and Z
-            # X_np = np.hstack([Xnorm.cpu().numpy(), Znorm.cpu().numpy()])
-            # y_np = y.cpu().numpy()
-            # n, p_total = X_np.shape
-            # # Define penalty factors: 1 for X, 0 for Z
-            # penalty_factor = np.array([1]*X.shape[1] + [0]*Z.shape[1])
-            # with localconverter(ro.default_converter + numpy2ri.converter):
-            #     X_r = ro.conversion.py2rpy(X_np)
-            #     y_r = ro.conversion.py2rpy(y_np)
-            #     pf_r = ro.conversion.py2rpy(penalty_factor)
-            # # 3b. Fit ridge regression in R (glmnet), either with given lam or CV.
-            # cv_fit = glmnet.cv_glmnet(
-            #     X_r, y_r,
-            #     family="binomial",
-            #     alpha=0,
-            #     intercept=True,
-            #     penalty_factor=pf_r,
-            #     standardize=False  # We already standardized X and Z ourselves.
-            # )
-            # best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
-            # self.lam.copy_(torch.tensor(best_lambda, dtype=torch.float32))
-            # best_coefs = ro.r["as.matrix"](glmnet.coef_glmnet(cv_fit, s="lambda.min"))
-            # coefs_np = np.array(best_coefs)
-            # coefs_tensor = torch.tensor(coefs_np, dtype=torch.float32).to(X.device)
-            # self.intercept.data = coefs_tensor[0].view(1)
-            # self.fx.weight.data = coefs_tensor[1:X.shape[1]+1].view(1, -1)
-            # self.fz.weight.data = coefs_tensor[X.shape[1]+1:].view(1, -1)
-            # break  # Skip IRLS iterations since glmnet already does the fitting with the correct weights!
-
-            
+           
             # ---- Prepare reweighted data ----
 
-            # Get current predictions, weight matrix, and working response.
-            eta = self.intercept + self.fx(Xorth) + self.fz(Znorm)
+            eta = self.intercept + self.fx(X) + self.fz(Zfull[:, :-1])
             mu = self.output_func(eta)
             var = self._variance_function(mu)
             g_prime = self._link_derivative(mu)
-            weights = g_prime**2 / (var + 1e-8)
-            # Set any mu within 1e-5 of 0 or 1 to 0 or 1. Set weights to 1e-5 in these cases to avoid instability.
-            close_to_zero = mu < 1e-5
-            close_to_one = mu > 1 - 1e-5
-            mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-            mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-            weights = torch.where(close_to_zero | close_to_one, torch.tensor(1e-5).to(weights.device), weights)
-            # Compute working responses and reweighting matrices.
-            W = torch.diag(weights.flatten())
-            y_work = eta + (y - mu) / (g_prime + 1e-8)
+            weights = g_prime**2 / (var + eps)
 
-            # Update intercept.
-            #self.intercept.data = y_work.mean().view(1)
+            # Clip probabilities for numerical stability in binomial case.
+            if self.link == "logit":
+                close_to_zero = mu < eps
+                close_to_one = mu > 1 - eps
+                mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
+                mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
+                weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
+            
+            y_work = eta + (y - mu) / (g_prime + eps)
 
-            # Centered reweighting. (Note: not equal to demeaning in case of weights!)
-            #yw = torch.sqrt(W) @ (y_work - (W @ y_work).sum() / weights.sum())
-            #Xw = torch.sqrt(W) @ (Xnorm - (W @ Xnorm).sum(dim=0, keepdim=True) / weights.sum())
-            #Zw = torch.sqrt(W) @ (Znorm - (W @ Znorm).sum(dim=0, keepdim=True) / weights.sum())
-            yw = torch.sqrt(W) @ y_work
-            Zw = torch.sqrt(W) @ Zfull
-            Xorth = Xnorm - Zfull @ torch.linalg.solve(Zw.T @ Zw, Zfull.T @ W @ Xnorm)
-            Xw = torch.sqrt(W) @ Xorth  # Residualize X against Z for stability.
+            # Reweight data.
+            sqrt_w = torch.sqrt(weights)
+            yw = sqrt_w * y_work
+            Xw = sqrt_w * X
+            Zw = sqrt_w * Zfull 
 
             # --- Fitting Procedure ---
 
             # 1. Regress yw on Zw to get residuals.
-            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw, Zw.T @ yw)
-            resid_y = yw
+            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ yw)
         
             # 2. Regress Xw on Zw to get residuals.
-            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw, Zw.T @ Xw)
-            resid_X = Xw
+            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ Xw)
             
-            # 3. Use glmnet to fit cross-validated ridge regression of resid_y on resid_X.
-            # NOTE: glmnet does not seem to be reliable for refitting. We do CV for lam if not given
-            # and then refit with the best lam using torch.linalg.lstsq.
-            if lam is None:
-                # 3a. Prepare data for R.
-                resid_X_np = resid_X.cpu().numpy()
-                resid_y_np = resid_y.cpu().numpy()
-                with localconverter(ro.default_converter + numpy2ri.converter):
-                    X_r = ro.conversion.py2rpy(resid_X_np)
-                    y_r = ro.conversion.py2rpy(resid_y_np)
-                    w_r = ro.conversion.py2rpy(weights.cpu().numpy())
-                # 3b. Fit ridge regression in R (glmnet), either with given lam or CV.
-                cv_fit = glmnet.cv_glmnet(
-                    X_r, y_r,
-                    alpha=0,
-                    intercept=True,
-                    #weights=w_r,
-                )
-                best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
-                self.lam.copy_(torch.tensor(best_lambda, dtype=torch.float32))
-            else:
-                self.lam.copy_(torch.tensor(lam, dtype=torch.float32))
-            # 3c. Refit ridge regression with best lam using torch.
             beta_fx = torch.linalg.solve(
-                resid_X.T @ resid_X + self.lam.item() * torch.eye(resid_X.shape[1]).to(resid_X.device),
+                resid_X.T @ resid_X + lam * torch.eye(resid_X.shape[1]).to(resid_X.device),
                 resid_X.T @ resid_y
             )
             self.fx.weight.data.copy_(beta_fx.view(1, -1))
             
             # 4. Compute fz weights.
-            resid_y_new = yw - self.fx(Xorth)
-            beta_fz = torch.linalg.solve(Zw.T @ Zw, Zw.T @ yw)
+            resid_y_new = yw - self.fx(Xw)
+            beta_fz = torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz[:-1].view(1, -1))
-            # Update intercept.
             self.intercept.data.copy_(beta_fz[-1].view(1))
             
             # 5. Check convergence via relative change in fx and fz (TODO)
             if self.link == "identity":
                 break  # No need for IRLS iterations for identity link
-            delta_fx = torch.norm(self.fx(Xnorm) - fx_old) / (torch.norm(fx_old) + 1e-8)
-            delta_fz = torch.norm(self.fz(Znorm) - fz_old) / (torch.norm(fz_old) + 1e-8)
+            delta_fx = torch.norm(self.fx(X) - fx_old) / (torch.norm(fx_old) + eps)
+            delta_fz = torch.norm(self.fz(Zfull[:, :-1]) - fz_old) / (torch.norm(fz_old) + eps)
             if delta_fx < tol and delta_fz < tol:
                 break
-            fx_old = self.fx(Xnorm).clone()
-            fz_old = self.fz(Znorm).clone()
+            fx_old = self.fx(X).clone()
+            fz_old = self.fz(Zfull[:, :-1]).clone()
             if i == max_iters - 1:
-                print(f"IRLS did not converge after {max_iters} iterations (delta_fx={delta_fx:.4e}, delta_fz={delta_fz:.4e}). Consider increasing max_iters or tol.")
+                print(f"IRLS did not converge after {max_iters} iterations (delta_fx={delta_fx:.4e}, delta_fz={delta_fz:.4e}, lambda={lam:.4e}). Consider increasing max_iters or tol.")
         
-        # Unscale fx and fz weights to account for initial standardization.
-        self.fx.weight.data = self.fx.weight.data / X_std.view(-1)
-        self.fz.weight.data = self.fz.weight.data / Z_std.view(-1)
-
-        # Final intercept correction to account for centering and rescaling.
-        self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
-
         return self
     
     @torch.no_grad()
@@ -298,13 +274,14 @@ class PostHocCovarNetwork(BaseNetwork):
             penalty_factor=ro.FloatVector([1.0]*X.shape[1] + [0.0]*Z.shape[1]),
             intercept=True
         )
+        best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
         best_coefs = ro.r["as.numeric"](glmnet.coef_glmnet(cv_fit, s="lambda.min"))
         coefs_np = np.array(best_coefs)
         coefs_tensor = torch.tensor(coefs_np, dtype=torch.float32).to(X.device)
         self.intercept.data = coefs_tensor[0].view(1)
         self.fx.weight.data = coefs_tensor[1:X.shape[1]+1].view(1, -1)
         self.fz.weight.data = coefs_tensor[X.shape[1]+1:].view(1, -1)
-        return self
+        return torch.tensor(best_lambda, dtype=torch.float32).to(X.device)
         
     @torch.no_grad()
     def _fit_orthogonalization(self, dataloader):
