@@ -161,7 +161,7 @@ class PostHocCovarNetwork(BaseNetwork):
 
             # Use loss function corresponding to the link function for validation evaluation.
             if self.link == "identity":
-                val_loss = torch.nn.MSELoss()(mu_val, y_val)
+                val_loss = torch.nn.MSELoss()(eta_val, y_val)
             elif self.link == "logit":
                 val_loss = torch.nn.BCEWithLogitsLoss()(eta_val, y_val)
             else:
@@ -189,6 +189,10 @@ class PostHocCovarNetwork(BaseNetwork):
     def _solve_fixed_lambda(self, X, Zfull, y, lam, max_iters, tol):
 
         eps = 1e-5  # Small constant for numerical stability.
+
+        # Initialize linear predictors as zero. Use old intercept.
+        self.fx.weight.data.zero_()
+        self.fz.weight.data.zero_()
 
         # Initialize old predictors for convergence check.
         fz_old = torch.zeros_like(y)
