@@ -116,8 +116,8 @@ class PostHocCovarNetwork(BaseNetwork):
 
         # ---- Extract validation data ----
         X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
-        X_val = self.center_x(X_val) / X_std
-        Z_val = self.center_z(Z_val) / Z_std
+        X_val = self.center_x(X_val)
+        Z_val = self.center_z(Z_val)
 
         # ---- Build lambda path ----
         lambda_max = torch.linalg.norm(X_train, 2)**2
