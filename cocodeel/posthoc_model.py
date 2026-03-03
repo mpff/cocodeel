@@ -100,7 +100,8 @@ class PostHocCovarNetwork(BaseNetwork):
     # Internal methods
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def _fit_effects(self, train_loader, val_loader, lam=None, max_iters=50, tol=1e-6, n_lambdas=50):
+    def _fit_effects(self, train_loader, val_loader, 
+        lam=None, max_iters=50, tol=1e-6, n_lambdas=100, max_expansions=6):
 
         # ---- Extract training data ----
         X_train, Z_train, y_train = self._extract_features_from_loader(train_loader)
@@ -112,69 +113,93 @@ class PostHocCovarNetwork(BaseNetwork):
 
         X_train = X_train / X_std
         Z_train = Z_train / Z_std
-        Zfull_train = torch.cat([Z_train, torch.ones_like(Z_train[:, :1])], dim=1)
 
         # ---- Extract validation data ----
         X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
         X_val = self.center_x(X_val)
         Z_val = self.center_z(Z_val)
 
-        # ---- Build lambda path ----
-        lambda_max = torch.linalg.norm(X_train, 2)**2
-        lambda_min = 1e-4 * lambda_max  # avoid λ → 0 when p ≥ n
+        # ---- Build lambda path ---- (see glmnet paper)
+        lambda_max = self._get_lambda_max(X_train, Z_train, y_train)
+        if X_train.shape[0] < X_train.shape[1]:
+            lambda_min = 1e-3 * lambda_max  # More aggressive regularization for high-dimensional case.
+        else:
+            lambda_min = 1e-6 * lambda_max  # Default glmnet choice for low-dimensional case.
 
-        lambda_path = torch.logspace(
-            torch.log10(lambda_max),
-            torch.log10(lambda_min),
-            steps=n_lambdas,
-            device=X_train.device,
-        )
-        if lam is not None:
-            lambda_path = torch.tensor([lam], device=X_train.device)
+        for _ in range(max_expansions):
 
-        # ---- Initialize parameters (warm start seed) ----
-        self.fx.weight.data.zero_()
-        self.fz.weight.data.zero_()
-        self.intercept.data.zero_()
-
-        best_val_loss = float("inf")
-        best_state = None
-        best_lambda = None
-
-        for lam in lambda_path:
-
-            # ---- Train at fixed λ ----
-            self._solve_fixed_lambda(
-                X_train,
-                Zfull_train,
-                y_train,
-                lam,
-                max_iters,
-                tol,
+            lambda_path = torch.logspace(
+                torch.log10(lambda_max),
+                torch.log10(lambda_min),
+                steps=n_lambdas,
+                device=X_train.device,
             )
-            # Update fx, fz weights to account for standardization.
-            self.fx.weight.data /= X_std
-            self.fz.weight.data /= Z_std
-
-            # ---- Validation evaluation ----
-            eta_val = self.intercept + self.fx(X_val) + self.fz(Z_val)
-
-            # Use loss function corresponding to the link function for validation evaluation.
-            if self.link == "identity":
-                val_loss = torch.nn.MSELoss()(eta_val, y_val)
-            elif self.link == "logit":
-                val_loss = torch.nn.BCEWithLogitsLoss()(eta_val, y_val)
+            if lam is not None:
+                lambda_path = torch.tensor([lam], device=X_train.device)
             else:
-                raise ValueError(f"Unsupported link function: {self.link}")
+                print("Lambda max: {:.4e}, Lambda min: {:.4e}".format(lambda_max.item(), lambda_min.item()))
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_lambda = lam
-                best_state = {
-                    "fx": self.fx.weight.data.clone(),
-                    "fz": self.fz.weight.data.clone(),
-                    "intercept": self.intercept.data.clone(),
-                }
+            # ---- Initialize parameters ----
+            self.fx.weight.data.zero_()
+            self.fz.weight.data.zero_()
+            self.intercept.data = self._link_function(self.center_y.mean).view(1)  # mean defined as shape (1,)!
+
+            best_val_loss = float("inf")
+            best_state = None
+            best_lambda = None
+
+            for lambd in lambda_path:
+
+                # ---- Train at fixed λ ----
+                self._solve_fixed_lambda(
+                    X_train,
+                    Z_train,
+                    y_train,
+                    lambd,
+                    max_iters,
+                    tol,
+                )
+                # Update fx, fz weights to account for standardization.
+                self.fx.weight.data /= X_std
+                self.fz.weight.data /= Z_std
+
+                # ---- Validation evaluation ----
+                eta_val = self.intercept + self.fx(X_val) + self.fz(Z_val)
+
+                # Use loss function corresponding to the link function for validation evaluation.
+                if self.link == "identity":
+                    val_loss = torch.nn.MSELoss()(eta_val, y_val)
+                elif self.link == "logit":
+                    val_loss = torch.nn.BCEWithLogitsLoss()(eta_val, y_val)
+                else:
+                    raise ValueError(f"Unsupported link function: {self.link}")
+
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_lambda = lambd
+                    best_state = {
+                        "fx": self.fx.weight.data.clone(),
+                        "fz": self.fz.weight.data.clone(),
+                        "intercept": self.intercept.data.clone(),
+                    }
+
+                self.fx.weight.data.zero_()
+                self.fz.weight.data.zero_()
+                self.intercept.data = self._link_function(self.center_y.mean).view(1)  # mean defined as shape (1,)!
+
+            # check if best lambda is at the edge of the path, if so expand the path and repeat.
+            if len(lambda_path) == 1:
+                break
+            if best_lambda == lambda_path[0]:
+                lambda_min = lambda_max + 1e-4 * lambda_max
+                lambda_max *= 100
+                print("Expanding lambda path: new lambda max = {:.4e}".format(lambda_max.item()))
+            elif best_lambda == lambda_path[-1]:
+                lambda_max = lambda_min - 1e-4 * lambda_min
+                lambda_min /= 100
+                print("Expanding lambda path: new lambda min = {:.4e}".format(lambda_min.item()))
+            else:
+                break
 
         # ---- Restore best model ----
         self.fx.weight.data.copy_(best_state["fx"])
@@ -182,17 +207,46 @@ class PostHocCovarNetwork(BaseNetwork):
         self.intercept.data.copy_(best_state["intercept"])
 
         self.lam.data.copy_(best_lambda)
+        print("Best lambda: {:.4e}".format(best_lambda.item()))
 
         return self
 
     @torch.no_grad()
-    def _solve_fixed_lambda(self, X, Zfull, y, lam, max_iters, tol):
+    def _get_lambda_max(self, X, Z, y):
+        """Compute lambda_max for ridge regression."""
+        # See glmnet paper for details on lambda path calculation.
+        # N * alpha * lambda_max = max_p |X_j'y| with centered X and y.
+        # for ridge: alpha = 0.001 in lambda max calculation.
+        # N = X.shape[0]
+        # r_y = self.center_y(y)
+        # r_x = X - Z @ torch.linalg.solve(Z.T @ Z + 1e-6 * torch.eye(Z.shape[1]).to(Z.device), Z.T @ X)
+        # alpha = 0.001
+        # lambda_max = torch.max(torch.abs(r_x.T @ r_y)) / N / alpha
+        if self.link == "identity":
+            lambda_max = 1 * torch.linalg.norm(X, 2)**2
+        elif self.link == "logit":
+            eps = 1e-5  # Small constant for numerical stability.
+            mu = self.center_y.mean
+            var = self._variance_function(mu)
+            g_prime = self._link_derivative(mu)
+            weights = g_prime**2 / (var + eps)
+            # Clip probabilities for numerical stability in binomial case.
+            close_to_zero = mu < eps
+            close_to_one = mu > 1 - eps
+            mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
+            mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
+            weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
+            # Get lambda_max using the weighted design matrix.
+            sqrt_weights = torch.sqrt(weights)
+            lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
+        else:
+            raise ValueError(f"Unsupported link function: {self.link}")        
+        return lambda_max
+
+    @torch.no_grad()
+    def _solve_fixed_lambda(self, X, Z, y, lam, max_iters, tol):
 
         eps = 1e-5  # Small constant for numerical stability.
-
-        # Initialize linear predictors as zero. Use old intercept.
-        self.fx.weight.data.zero_()
-        self.fz.weight.data.zero_()
 
         # Initialize old predictors for convergence check.
         fz_old = torch.zeros_like(y)
@@ -203,7 +257,7 @@ class PostHocCovarNetwork(BaseNetwork):
            
             # ---- Prepare reweighted data ----
 
-            eta = self.intercept + self.fx(X) + self.fz(Zfull[:, :-1])
+            eta = self.intercept + self.fx(X) + self.fz(Z)
             mu = self.output_func(eta)
             var = self._variance_function(mu)
             g_prime = self._link_derivative(mu)
@@ -216,14 +270,18 @@ class PostHocCovarNetwork(BaseNetwork):
                 mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
                 mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
                 weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
-            
+            sqrt_weights = torch.sqrt(weights)
+            W = torch.diag(weights)
+
             y_work = eta + (y - mu) / (g_prime + eps)
 
-            # Reweight data.
-            sqrt_w = torch.sqrt(weights)
-            yw = sqrt_w * y_work
-            Xw = sqrt_w * X
-            Zw = sqrt_w * Zfull 
+            # Update intercept.
+            self.intercept.data = y_work.mean().view(1)
+
+            # Centered reweighting. (Note: not equal to demeaning in case of weights!)
+            yw = sqrt_weights * (y_work - (weights * y_work).sum() / weights.sum())
+            Xw = sqrt_weights * (X - (weights * X).sum(dim=0, keepdim=True) / weights.sum())
+            Zw = sqrt_weights * (Z - (weights * Z).sum(dim=0, keepdim=True) / weights.sum())
 
             # --- Fitting Procedure ---
 
@@ -243,49 +301,21 @@ class PostHocCovarNetwork(BaseNetwork):
             resid_y_new = yw - self.fx(Xw)
             beta_fz = torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
-            self.fz.weight.data.copy_(beta_fz[:-1].view(1, -1))
-            self.intercept.data.copy_(beta_fz[-1].view(1))
+            self.fz.weight.data.copy_(beta_fz.view(1, -1))
             
             # 5. Check convergence via relative change in fx and fz (TODO)
             if self.link == "identity":
                 break  # No need for IRLS iterations for identity link
             delta_fx = torch.norm(self.fx(X) - fx_old) / (torch.norm(fx_old) + eps)
-            delta_fz = torch.norm(self.fz(Zfull[:, :-1]) - fz_old) / (torch.norm(fz_old) + eps)
+            delta_fz = torch.norm(self.fz(Z) - fz_old) / (torch.norm(fz_old) + eps)
             if delta_fx < tol and delta_fz < tol:
                 break
             fx_old = self.fx(X).clone()
-            fz_old = self.fz(Zfull[:, :-1]).clone()
+            fz_old = self.fz(Z).clone()
             if i == max_iters - 1:
                 print(f"IRLS did not converge after {max_iters} iterations (delta_fx={delta_fx:.4e}, delta_fz={delta_fz:.4e}, lambda={lam:.4e}). Consider increasing max_iters or tol.")
         
         return self
-    
-    @torch.no_grad()
-    def _linear_glmnet_fit(self, X, Z, y):
-        """Initial linear fit of fx and fz via least squares glmnet on (X, Z, y)."""
-        # Prepare data for R.
-        X_np = X.cpu().numpy()
-        Z_np = Z.cpu().numpy()
-        y_np = y.cpu().numpy()
-        XZ_np = np.hstack([X_np, Z_np])
-        with localconverter(ro.default_converter + numpy2ri.converter):
-            XZ_r = ro.conversion.py2rpy(XZ_np)
-            y_r = ro.conversion.py2rpy(y_np)
-        # Fit linear model in R (glmnet).
-        cv_fit = glmnet.cv_glmnet(
-            XZ_r, y_r,
-            alpha=0,
-            penalty_factor=ro.FloatVector([1.0]*X.shape[1] + [0.0]*Z.shape[1]),
-            intercept=True
-        )
-        best_lambda = ro.r["as.numeric"](cv_fit.rx2("lambda.min"))[0]
-        best_coefs = ro.r["as.numeric"](glmnet.coef_glmnet(cv_fit, s="lambda.min"))
-        coefs_np = np.array(best_coefs)
-        coefs_tensor = torch.tensor(coefs_np, dtype=torch.float32).to(X.device)
-        self.intercept.data = coefs_tensor[0].view(1)
-        self.fx.weight.data = coefs_tensor[1:X.shape[1]+1].view(1, -1)
-        self.fz.weight.data = coefs_tensor[X.shape[1]+1:].view(1, -1)
-        return torch.tensor(best_lambda, dtype=torch.float32).to(X.device)
         
     @torch.no_grad()
     def _fit_orthogonalization(self, dataloader):
@@ -297,19 +327,7 @@ class PostHocCovarNetwork(BaseNetwork):
         Z = self.center_z(Z)
         fX = self.fx(X)
 
-        # Get IWLS weights for orthogonalization fit.
-        eta = self.intercept + self.fx(X) + self.fz(Z)
-        mu = self.output_func(eta)
-        var = self._variance_function(mu)
-        g_prime = self._link_derivative(mu)
-        weights = g_prime**2 / (var + 1e-8)
-        close_to_zero = mu < 1e-5
-        close_to_one = mu > 1 - 1e-5
-        mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-        mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-        weights = torch.where(close_to_zero | close_to_one, torch.tensor(1e-5).to(weights.device), weights)
-        W = torch.diag(weights.flatten())
-
         # Solve Z * beta = fX
-        solution = torch.linalg.solve(Z.T @ W @ Z, Z.T @ W @ fX)
+        solution = torch.linalg.lstsq(Z, fX).solution
         self.orth.weight.copy_(solution.T)
+        return self

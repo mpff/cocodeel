@@ -89,7 +89,7 @@ class TestLinearTraining(unittest.TestCase):
             model=model,    
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.train_loader)
+        posthoc_model.fit(self.train_loader, self.val_loader)
         self.assertAlmostEqual(posthoc_model.intercept.item(), self.y[:140].mean().item(), places=4)
 
     def test_train_linear_model(self):
@@ -194,7 +194,7 @@ class TestLogisticTraining(unittest.TestCase):
             model=model,    
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.train_loader)
+        posthoc_model.fit(self.train_loader, self.val_loader)
         preds_posthoc = model(self.X, self.Z)
         self.assertEqual(preds_posthoc.shape, self.y.shape)
 
