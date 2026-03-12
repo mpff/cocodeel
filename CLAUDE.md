@@ -3,6 +3,10 @@
 # Project: cocodeel
 **Role:** Core Python package implementing the ovbdnn method. Related paper repo: `controls-paper` (ovbdnn).
 
+## Method Background
+- **Key insight (1):** A neural network component f_i acts as a feature extractor producing a design matrix Φ_i, with f_i = Φ_i β_i. Only f_i — not β_i — is the quantity of scientific interest.
+- **Key insight (2):** When fitting additive models end-to-end with SGD, the full predictor η converges but individual components f_i may not — likely caused by concurvity.
+
 ## Scientific Goal
 PyTorch implementation of post-hoc backfitting with ridge penalization for additive DNNs with control variables. Provides `PostHocCovarNetwork`: takes a pretrained backbone, refits the last layer to include covariate effects, with optional post-hoc orthogonalization.
 
