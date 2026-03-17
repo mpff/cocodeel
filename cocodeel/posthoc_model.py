@@ -100,7 +100,7 @@ class PostHocCovarNetwork(BaseNetwork):
     # Internal methods
     # -------------------------------------------------------------------------
     @torch.no_grad()
-    def _fit_effects(self, train_loader, val_loader, 
+    def _fit_effects(self, train_loader, val_loader,
         lam=None, max_iters=50, tol=1e-6, n_lambdas=100, max_expansions=6):
 
         # ---- Extract training data ----
@@ -126,7 +126,9 @@ class PostHocCovarNetwork(BaseNetwork):
         else:
             lambda_min = 1e-6 * lambda_max  # Default glmnet choice for low-dimensional case.
 
-        for _ in range(max_expansions):
+        records = []
+
+        for expansion_idx in range(max_expansions):
 
             lambda_path = torch.logspace(
                 torch.log10(lambda_max),
@@ -151,7 +153,7 @@ class PostHocCovarNetwork(BaseNetwork):
             for lambd in lambda_path:
 
                 # ---- Train at fixed λ ----
-                self._solve_fixed_lambda(
+                diag = self._solve_fixed_lambda(
                     X_train,
                     Z_train,
                     y_train,
@@ -163,6 +165,9 @@ class PostHocCovarNetwork(BaseNetwork):
                 self.fx.weight.data /= X_std
                 self.fz.weight.data /= Z_std
 
+                beta_fx_norm = float(self.fx.weight.data.norm())
+                beta_fz_norm = float(self.fz.weight.data.norm())
+
                 # ---- Validation evaluation ----
                 eta_val = self.intercept + self.fx(X_val) + self.fz(Z_val)
 
@@ -173,6 +178,18 @@ class PostHocCovarNetwork(BaseNetwork):
                     val_loss = torch.nn.BCEWithLogitsLoss()(eta_val, y_val)
                 else:
                     raise ValueError(f"Unsupported link function: {self.link}")
+
+                records.append({
+                    "expansion":    expansion_idx,
+                    "lambda":       float(lambd),
+                    "val_loss":     float(val_loss),
+                    "converged":    diag["converged"],
+                    "n_iters":      diag["n_iters"],
+                    "delta_fx":     diag["delta_fx"],
+                    "delta_fz":     diag["delta_fz"],
+                    "beta_fx_norm": beta_fx_norm,
+                    "beta_fz_norm": beta_fz_norm,
+                })
 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -207,6 +224,7 @@ class PostHocCovarNetwork(BaseNetwork):
         self.intercept.data.copy_(best_state["intercept"])
 
         self.lam.data.copy_(best_lambda)
+        self.lambda_path_ = records
         print("Best lambda: {:.4e}".format(best_lambda.item()))
 
         return self
@@ -225,20 +243,21 @@ class PostHocCovarNetwork(BaseNetwork):
         if self.link == "identity":
             lambda_max = 1 * torch.linalg.norm(X, 2)**2
         elif self.link == "logit":
-            eps = 1e-5  # Small constant for numerical stability.
-            mu = self.center_y.mean
-            var = self._variance_function(mu)
-            g_prime = self._link_derivative(mu)
-            weights = g_prime**2 / (var + eps)
-            # Clip probabilities for numerical stability in binomial case.
-            close_to_zero = mu < eps
-            close_to_one = mu > 1 - eps
-            mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-            mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-            weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
-            # Get lambda_max using the weighted design matrix.
-            sqrt_weights = torch.sqrt(weights)
-            lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
+            lambda_max = 1 * torch.linalg.norm( X, 2)**2
+            # eps = 1e-5  # Small constant for numerical stability.
+            # mu = self.center_y.mean
+            # var = self._variance_function(mu)
+            # g_prime = self._link_derivative(mu)
+            # weights = g_prime**2 / (var + eps)
+            # # Clip probabilities for numerical stability in binomial case.
+            # close_to_zero = mu < eps
+            # close_to_one = mu > 1 - eps
+            # mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
+            # mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
+            # weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
+            # # Get lambda_max using the weighted design matrix.
+            # sqrt_weights = torch.sqrt(weights)
+            # lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
         else:
             raise ValueError(f"Unsupported link function: {self.link}")        
         return lambda_max
@@ -252,9 +271,13 @@ class PostHocCovarNetwork(BaseNetwork):
         fz_old = torch.zeros_like(y)
         fx_old = torch.zeros_like(y)
 
+        delta_fx = 0.0
+        delta_fz = 0.0
+        converged = False
+
         # Iteratively reweighted least squares until convergence.
         for i in range(max_iters):
-           
+
             # ---- Prepare reweighted data ----
 
             eta = self.intercept + self.fx(X) + self.fz(Z)
@@ -271,7 +294,6 @@ class PostHocCovarNetwork(BaseNetwork):
                 mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
                 weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
             sqrt_weights = torch.sqrt(weights)
-            W = torch.diag(weights)
 
             y_work = eta + (y - mu) / (g_prime + eps)
 
@@ -287,35 +309,42 @@ class PostHocCovarNetwork(BaseNetwork):
 
             # 1. Regress yw on Zw to get residuals.
             resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ yw)
-        
+
             # 2. Regress Xw on Zw to get residuals.
             resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ Xw)
-            
+
             beta_fx = torch.linalg.solve(
                 resid_X.T @ resid_X + lam * torch.eye(resid_X.shape[1]).to(resid_X.device),
                 resid_X.T @ resid_y
             )
             self.fx.weight.data.copy_(beta_fx.view(1, -1))
-            
+
             # 4. Compute fz weights.
             resid_y_new = yw - self.fx(Xw)
             beta_fz = torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
-            
-            # 5. Check convergence via relative change in fx and fz (TODO)
+
+            # 5. Check convergence via relative change in fx and fz.
             if self.link == "identity":
+                converged = True
                 break  # No need for IRLS iterations for identity link
             delta_fx = torch.norm(self.fx(X) - fx_old) / (torch.norm(fx_old) + eps)
             delta_fz = torch.norm(self.fz(Z) - fz_old) / (torch.norm(fz_old) + eps)
             if delta_fx < tol and delta_fz < tol:
+                converged = True
                 break
             fx_old = self.fx(X).clone()
             fz_old = self.fz(Z).clone()
             if i == max_iters - 1:
                 print(f"IRLS did not converge after {max_iters} iterations (delta_fx={delta_fx:.4e}, delta_fz={delta_fz:.4e}, lambda={lam:.4e}). Consider increasing max_iters or tol.")
-        
-        return self
+
+        return {
+            "converged": converged,
+            "n_iters":   i + 1,
+            "delta_fx":  float(delta_fx),
+            "delta_fz":  float(delta_fz),
+        }
         
     @torch.no_grad()
     def _fit_orthogonalization(self, dataloader):
