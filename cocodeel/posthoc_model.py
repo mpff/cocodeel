@@ -68,12 +68,21 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     # Fitting methods
     # -------------------------------------------------------------------------
-    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=50, tol=1e-2):
-        """Fit post-hoc ridge regression (and optionally orthogonalization)."""
+    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=50, tol=1e-2, penalty_z=None):
+        """Fit post-hoc ridge regression (and optionally orthogonalization).
+
+        Args:
+            penalty_z: Optional fixed penalty matrix for fz, shape (num_covariates, num_covariates).
+                Build on the *centered* Z scale (after center_z, before Z_std normalisation).
+                _solve_fixed_lambda applies the Z_std correction internally:
+                    P_z_std = diag(1/Z_std) @ penalty_z @ diag(1/Z_std)
+                _fit_orthogonalization uses penalty_z on the centered scale directly.
+                Typical use: P-spline roughness penalty for spline-expanded covariates.
+        """
         self.center_effects(train_dataloader)
-        self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol)
+        self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z)
         if self.orthogonalize:
-            self._fit_orthogonalization(train_dataloader)
+            self._fit_orthogonalization(train_dataloader, penalty_z=penalty_z)
         return self
     
     @torch.no_grad()
@@ -101,7 +110,7 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     @torch.no_grad()
     def _fit_effects(self, train_loader, val_loader,
-        lam, max_iters, tol, n_lambdas=100, max_expansions=6):
+        lam, max_iters, tol, n_lambdas=100, max_expansions=6, penalty_z=None):
 
         self.max_iters_ = max_iters
         self.tol_ = tol
@@ -164,6 +173,8 @@ class PostHocCovarNetwork(BaseNetwork):
                     lambd,
                     max_iters,
                     tol,
+                    penalty_z=penalty_z,
+                    Z_std=Z_std,
                 )
                 # Update fx, fz weights to account for standardization.
                 self.fx.weight.data /= X_std
@@ -266,7 +277,7 @@ class PostHocCovarNetwork(BaseNetwork):
         return lambda_max
 
     @torch.no_grad()
-    def _solve_fixed_lambda(self, X, Z, y, lam, max_iters, tol):
+    def _solve_fixed_lambda(self, X, Z, y, lam, max_iters, tol, penalty_z=None, Z_std=None):
 
         eps = 1e-5  # Small constant for numerical stability.
 
@@ -324,7 +335,14 @@ class PostHocCovarNetwork(BaseNetwork):
 
             # 4. Compute fz weights.
             resid_y_new = yw - self.fx(Xw)
-            beta_fz = torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
+            if penalty_z is not None:
+                # Transform penalty from centered to standardised scale:
+                # P_std = diag(1/Z_std) @ P_centered @ diag(1/Z_std)
+                z_std_inv = (1.0 / Z_std).squeeze()
+                P_z = z_std_inv.unsqueeze(1) * penalty_z.to(Zw.device) * z_std_inv.unsqueeze(0)
+            else:
+                P_z = torch.zeros(Zw.shape[1], Zw.shape[1], device=Zw.device)
+            beta_fz = torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
 
@@ -350,8 +368,11 @@ class PostHocCovarNetwork(BaseNetwork):
         }
         
     @torch.no_grad()
-    def _fit_orthogonalization(self, dataloader):
-        """Fit linear orthogonalization term via least squares on (Z, fX)."""
+    def _fit_orthogonalization(self, dataloader, penalty_z=None):
+        """Fit linear orthogonalization term via least squares on (Z, fX).
+        penalty_z is on the centered Z scale (no Z_std correction needed here since
+        orthogonalization operates directly on center_z(Z), not standardised Z).
+        """
         self.eval()
         X, Z, _ = self._extract_features_from_loader(dataloader)
 
@@ -359,7 +380,9 @@ class PostHocCovarNetwork(BaseNetwork):
         Z = self.center_z(Z)
         fX = self.fx(X)
 
-        # Solve Z * beta = fX
-        solution = torch.linalg.lstsq(Z, fX).solution
+        eps = 1e-5
+        P = penalty_z.to(Z.device) if penalty_z is not None \
+            else torch.zeros(Z.shape[1], Z.shape[1], device=Z.device)
+        solution = torch.linalg.solve(Z.T @ Z + P + eps * torch.eye(Z.shape[1], device=Z.device), Z.T @ fX)
         self.orth.weight.copy_(solution.T)
         return self
