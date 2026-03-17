@@ -101,7 +101,11 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     @torch.no_grad()
     def _fit_effects(self, train_loader, val_loader,
-        lam=None, max_iters=50, tol=1e-6, n_lambdas=100, max_expansions=6):
+        lam=None, max_iters=50, tol=1e-2, n_lambdas=100, max_expansions=6):
+
+        self.max_iters_ = max_iters
+        self.tol_ = tol
+        self.n_lambdas_ = n_lambdas
 
         # ---- Extract training data ----
         X_train, Z_train, y_train = self._extract_features_from_loader(train_loader)
@@ -243,21 +247,20 @@ class PostHocCovarNetwork(BaseNetwork):
         if self.link == "identity":
             lambda_max = 1 * torch.linalg.norm(X, 2)**2
         elif self.link == "logit":
-            lambda_max = 1 * torch.linalg.norm( X, 2)**2
-            # eps = 1e-5  # Small constant for numerical stability.
-            # mu = self.center_y.mean
-            # var = self._variance_function(mu)
-            # g_prime = self._link_derivative(mu)
-            # weights = g_prime**2 / (var + eps)
-            # # Clip probabilities for numerical stability in binomial case.
-            # close_to_zero = mu < eps
-            # close_to_one = mu > 1 - eps
-            # mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-            # mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-            # weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
-            # # Get lambda_max using the weighted design matrix.
-            # sqrt_weights = torch.sqrt(weights)
-            # lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
+            eps = 1e-5  # Small constant for numerical stability.
+            mu = self.center_y.mean
+            var = self._variance_function(mu)
+            g_prime = self._link_derivative(mu)
+            weights = g_prime**2 / (var + eps)
+            # Clip probabilities for numerical stability in binomial case.
+            close_to_zero = mu < eps
+            close_to_one = mu > 1 - eps
+            mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
+            mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
+            weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
+            # Get lambda_max using the weighted design matrix.
+            sqrt_weights = torch.sqrt(weights)
+            lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
         else:
             raise ValueError(f"Unsupported link function: {self.link}")        
         return lambda_max
