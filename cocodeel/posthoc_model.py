@@ -68,7 +68,7 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     # Fitting methods
     # -------------------------------------------------------------------------
-    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=25, tol=1e-6):
+    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=50, tol=1e-2):
         """Fit post-hoc ridge regression (and optionally orthogonalization)."""
         self.center_effects(train_dataloader)
         self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol)
@@ -101,7 +101,7 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     @torch.no_grad()
     def _fit_effects(self, train_loader, val_loader,
-        lam=None, max_iters=50, tol=1e-2, n_lambdas=100, max_expansions=6):
+        lam, max_iters, tol, n_lambdas=100, max_expansions=6):
 
         self.max_iters_ = max_iters
         self.tol_ = tol
