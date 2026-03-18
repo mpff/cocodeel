@@ -122,10 +122,8 @@ class PostHocCovarNetwork(BaseNetwork):
         Z_train = self.center_z(Z_train)
 
         X_std = X_train.std(dim=0, keepdim=True) + 1e-6
-        Z_std = Z_train.std(dim=0, keepdim=True) + 1e-6
 
         X_train = X_train / X_std
-        Z_train = Z_train / Z_std
 
         # ---- Extract validation data ----
         X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
@@ -174,11 +172,9 @@ class PostHocCovarNetwork(BaseNetwork):
                     max_iters,
                     tol,
                     penalty_z=penalty_z,
-                    Z_std=Z_std,
                 )
-                # Update fx, fz weights to account for standardization.
+                # Update fx weights to account for X standardization.
                 self.fx.weight.data /= X_std
-                self.fz.weight.data /= Z_std
 
                 beta_fx_norm = float(self.fx.weight.data.norm())
                 beta_fz_norm = float(self.fz.weight.data.norm())
@@ -250,34 +246,34 @@ class PostHocCovarNetwork(BaseNetwork):
         # See glmnet paper for details on lambda path calculation.
         # N * alpha * lambda_max = max_p |X_j'y| with centered X and y.
         # for ridge: alpha = 0.001 in lambda max calculation.
-        # N = X.shape[0]
-        # r_y = self.center_y(y)
-        # r_x = X - Z @ torch.linalg.solve(Z.T @ Z + 1e-6 * torch.eye(Z.shape[1]).to(Z.device), Z.T @ X)
-        # alpha = 0.001
-        # lambda_max = torch.max(torch.abs(r_x.T @ r_y)) / N / alpha
-        if self.link == "identity":
-            lambda_max = 1 * torch.linalg.norm(X, 2)**2
-        elif self.link == "logit":
-            eps = 1e-5  # Small constant for numerical stability.
-            mu = self.center_y.mean
-            var = self._variance_function(mu)
-            g_prime = self._link_derivative(mu)
-            weights = g_prime**2 / (var + eps)
-            # Clip probabilities for numerical stability in binomial case.
-            close_to_zero = mu < eps
-            close_to_one = mu > 1 - eps
-            mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-            mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-            weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
-            # Get lambda_max using the weighted design matrix.
-            sqrt_weights = torch.sqrt(weights)
-            lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
-        else:
-            raise ValueError(f"Unsupported link function: {self.link}")        
+        N = X.shape[0]
+        y = self.center_y(y)
+        X = self.center_x(X)
+        alpha = 0.001
+        lambda_max = torch.max(torch.abs(X.T @ y)) / N / alpha
+        # if self.link == "identity":
+        #     lambda_max = 1 * torch.linalg.norm(X, 2)**2
+        # elif self.link == "logit":
+        #     eps = 1e-5  # Small constant for numerical stability.
+        #     mu = self.center_y.mean
+        #     var = self._variance_function(mu)
+        #     g_prime = self._link_derivative(mu)
+        #     weights = g_prime**2 / (var + eps)
+        #     # Clip probabilities for numerical stability in binomial case.
+        #     close_to_zero = mu < eps
+        #     close_to_one = mu > 1 - eps
+        #     mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
+        #     mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
+        #     weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
+        #     # Get lambda_max using the weighted design matrix.
+        #     sqrt_weights = torch.sqrt(weights)
+        #     lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
+        # else:
+        #     raise ValueError(f"Unsupported link function: {self.link}")        
         return lambda_max
 
     @torch.no_grad()
-    def _solve_fixed_lambda(self, X, Z, y, lam, max_iters, tol, penalty_z=None, Z_std=None):
+    def _solve_fixed_lambda(self, X, Z, y, lam, max_iters, tol, penalty_z=None):
 
         eps = 1e-5  # Small constant for numerical stability.
 
@@ -288,6 +284,10 @@ class PostHocCovarNetwork(BaseNetwork):
         delta_fx = 0.0
         delta_fz = 0.0
         converged = False
+
+        # Penalty matrix in centered Z scale (fixed across IRLS iterations).
+        P_z = penalty_z.to(X.device) if penalty_z is not None \
+            else torch.zeros(Z.shape[1], Z.shape[1], device=X.device)
 
         # Iteratively reweighted least squares until convergence.
         for i in range(max_iters):
@@ -322,10 +322,10 @@ class PostHocCovarNetwork(BaseNetwork):
             # --- Fitting Procedure ---
 
             # 1. Regress yw on Zw to get residuals.
-            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ yw)
+            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ yw)
 
             # 2. Regress Xw on Zw to get residuals.
-            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ Xw)
+            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ Xw)
 
             beta_fx = torch.linalg.solve(
                 resid_X.T @ resid_X + lam * torch.eye(resid_X.shape[1]).to(resid_X.device),
@@ -335,13 +335,6 @@ class PostHocCovarNetwork(BaseNetwork):
 
             # 4. Compute fz weights.
             resid_y_new = yw - self.fx(Xw)
-            if penalty_z is not None:
-                # Transform penalty from centered to standardised scale:
-                # P_std = diag(1/Z_std) @ P_centered @ diag(1/Z_std)
-                z_std_inv = (1.0 / Z_std).squeeze()
-                P_z = z_std_inv.unsqueeze(1) * penalty_z.to(Zw.device) * z_std_inv.unsqueeze(0)
-            else:
-                P_z = torch.zeros(Zw.shape[1], Zw.shape[1], device=Zw.device)
             beta_fz = torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
