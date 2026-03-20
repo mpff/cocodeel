@@ -151,6 +151,31 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(fz_new.mean(dim=0), torch.zeros_like(fz_new.mean(dim=0)), atol=1e-5))
 
     @torch.no_grad()
+    def test_posthoc_penalty_z_shrinks_fz(self):
+        # Unpenalized baseline.
+        model_unpen = PostHocCovarNetwork(
+            model=self.base_model,
+            num_covariates=self.num_covariates,
+            orthogonalize=False
+        )
+        model_unpen.fit(self.train_dataloader, self.val_dataloader, lam=0.0)
+        fz_unpen = model_unpen.fz.weight.data[0, 0].item()
+
+        # Large penalty_z: fz should be shrunk towards zero.
+        model_pen = PostHocCovarNetwork(
+            model=self.base_model,
+            num_covariates=self.num_covariates,
+            orthogonalize=False
+        )
+        penalty_z = 1e4 * torch.eye(self.num_covariates)
+        model_pen.fit(self.train_dataloader, self.val_dataloader, lam=0.0, penalty_z=penalty_z)
+        fz_pen = model_pen.fz.weight.data[0, 0].item()
+
+        self.assertFalse(torch.isnan(model_pen.fz.weight.data).any())
+        self.assertFalse(torch.isnan(model_pen.fx.weight.data).any())
+        self.assertGreater(abs(fz_unpen), abs(fz_pen))  # penalty shrinks fz toward zero
+
+    @torch.no_grad()
     def test_posthoc_save_and_reload_linear(self):
         # Train posthoc model
         model = PostHocCovarNetwork(
@@ -312,6 +337,31 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         fz_new = model.predict_fz(self.Z[:2500])
         self.assertTrue(torch.allclose(fx_new.mean(dim=0), torch.zeros_like(fx_new.mean(dim=0)), atol=1e-5))
         self.assertTrue(torch.allclose(fz_new.mean(dim=0), torch.zeros_like(fz_new.mean(dim=0)), atol=1e-5))
+
+    @torch.no_grad()
+    def test_posthoc_penalty_z_shrinks_fz(self):
+        # Unpenalized baseline.
+        model_unpen = PostHocCovarNetwork(
+            model=self.base_model,
+            num_covariates=self.num_covariates,
+            orthogonalize=False
+        )
+        model_unpen.fit(self.train_dataloader, self.val_dataloader, lam=0.0)
+        fz_unpen = model_unpen.fz.weight.data[0, 0].item()
+
+        # Large penalty_z: fz should be shrunk towards zero.
+        model_pen = PostHocCovarNetwork(
+            model=self.base_model,
+            num_covariates=self.num_covariates,
+            orthogonalize=False
+        )
+        penalty_z = 1e4 * torch.eye(self.num_covariates)
+        model_pen.fit(self.train_dataloader, self.val_dataloader, lam=0.0, penalty_z=penalty_z)
+        fz_pen = model_pen.fz.weight.data[0, 0].item()
+
+        self.assertFalse(torch.isnan(model_pen.fz.weight.data).any())
+        self.assertFalse(torch.isnan(model_pen.fx.weight.data).any())
+        self.assertGreater(abs(fz_unpen), abs(fz_pen))  # penalty shrinks fz toward zero
 
     @torch.no_grad()
     def test_posthoc_save_and_reload_logistic(self):
