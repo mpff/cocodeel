@@ -203,13 +203,14 @@ class PostHocCovarNetwork(BaseNetwork):
                 })
 
                 if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    best_lambda = lambd
-                    best_state = {
-                        "fx": self.fx.weight.data.clone(),
-                        "fz": self.fz.weight.data.clone(),
-                        "intercept": self.intercept.data.clone(),
-                    }
+                    if diag["converged"] == True:
+                        best_val_loss = val_loss
+                        best_lambda = lambd
+                        best_state = {
+                            "fx": self.fx.weight.data.clone(),
+                            "fz": self.fz.weight.data.clone(),
+                            "intercept": self.intercept.data.clone(),
+                        }
 
                 self.fx.weight.data.zero_()
                 self.fz.weight.data.zero_()
