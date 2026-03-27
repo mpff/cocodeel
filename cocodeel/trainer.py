@@ -1,4 +1,5 @@
 import copy
+
 import torch
 import torch.nn as nn
 
@@ -14,6 +15,8 @@ def covar_trainer(
     lr=1e-3,
     weight_decay=1e-4,
     patience=12,
+    scheduler=None,
+    scheduler_kwargs=None,
 ):
     """
     Train a covariance model with early stopping.
@@ -28,9 +31,21 @@ def covar_trainer(
         lr (float): Learning rate.
         weight_decay (float): L2 regularization.
         patience (int): Early stopping patience.
+        scheduler (lr_scheduler class, optional): A scheduler class (not
+            instance), e.g. ``torch.optim.lr_scheduler.StepLR``. Instantiated
+            internally against the optimizer using ``scheduler_kwargs``.
+            Stepped once per epoch after validation. ``ReduceLROnPlateau``
+            receives the validation loss automatically; all other schedulers
+            are stepped without arguments.
+            If None (default), uses ReduceLROnPlateau with
+            ``patience=max(1, patience-2)`` and ``factor=0.5``.
+        scheduler_kwargs (dict, optional): Keyword arguments forwarded to the
+            scheduler constructor, e.g. ``{"step_size": 5, "gamma": 0.8}``.
 
     Returns:
-        Trained model (on the specified device).
+        Trained model (on the specified device). Fit history is attached as
+        trailing-underscore attributes: ``val_losses_``, ``lr_history_``,
+        ``best_epoch_``, ``n_epochs_run_``.
     """
     # Default device and loss function
     device = torch.device(device or "cpu")
@@ -40,13 +55,19 @@ def covar_trainer(
     model = model(**model_params).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=max(1, patience - 2), factor=0.5
-    )
+    if scheduler is not None:
+        scheduler = scheduler(optimizer, **(scheduler_kwargs or {}))
+    else:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", patience=max(1, patience - 2), factor=0.5
+        )
 
     best_val_loss = float("inf")
     best_state = copy.deepcopy(model.state_dict())
+    best_epoch = 0
     patience_counter = 0
+    val_losses_ = []
+    lr_history_ = []
 
     for epoch in range(epochs):
         model.train()
@@ -75,12 +96,19 @@ def covar_trainer(
                 n_val += x.size(0)
 
         val_loss /= max(1, n_val)
-        scheduler.step(val_loss)
+        val_losses_.append(val_loss)
+        lr_history_.append(optimizer.param_groups[0]["lr"])
+
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()
 
         # --- Early stopping ---
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = copy.deepcopy(model.state_dict())
+            best_epoch = epoch
             patience_counter = 0
         else:
             patience_counter += 1
@@ -89,4 +117,8 @@ def covar_trainer(
 
     # Restore best weights
     model.load_state_dict(best_state)
+    model.val_losses_ = val_losses_
+    model.lr_history_ = lr_history_
+    model.best_epoch_ = best_epoch
+    model.n_epochs_run_ = epoch + 1
     return model.to(device)
