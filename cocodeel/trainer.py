@@ -59,7 +59,7 @@ def covar_trainer(
         scheduler = scheduler(optimizer, **(scheduler_kwargs or {}))
     else:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", patience=max(1, patience - 2), factor=0.5
+            optimizer, mode="min", patience=max(1, patience // 3), factor=0.5
         )
 
     best_val_loss = float("inf")
