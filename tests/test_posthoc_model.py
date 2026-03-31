@@ -489,5 +489,97 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
 
 
 
+class TestHighDimRegression(unittest.TestCase):
+    """Consistent estimation of β_fx and β_fz when N/d ≈ 1 and confounding is present.
+
+    Scientific question: after FWL residualization (resid_X = X - Z(Z'Z)⁻¹Z'X,
+    resid_y = y - Z(Z'Z)⁻¹Z'y), can we estimate β_fx from resid_X → resid_y and β_fz
+    consistently, even when N < d and corr(Z, X) is substantial?
+
+    DGP: H = 0.3*Z + noise (corr(Z, H_j) ≈ 0.29), y = 2*H[:,0] + 3*Z + eps.
+    Identity backbone (H passes through unchanged), N=2000, d=2048, N/d≈0.73.
+    True β_fz=3, β_fx[0]=2, intercept=0.
+    """
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        rng = numpy.random.default_rng(0)
+        self.n, self.ntrain, self.d = 2000, 1500, 2048
+        Z = torch.tensor(rng.standard_normal((self.n, 1)), dtype=torch.float32)
+        noise = torch.tensor(rng.standard_normal((self.n, self.d)), dtype=torch.float32)
+        H = 0.3 * Z + noise                                          # corr(Z, H_j) ≈ 0.29
+        eps = torch.tensor(rng.standard_normal((self.n, 1)), dtype=torch.float32) * 0.5
+        y = 2.0 * H[:, [0]] + 3.0 * Z + eps                         # true fz=3, fx[0]=2
+        self.Z, self.H, self.y = Z, H, y
+
+        train_ds = CovarDataset(H[:self.ntrain], Z[:self.ntrain], y[:self.ntrain])
+        val_ds   = CovarDataset(H[self.ntrain:], Z[self.ntrain:], y[self.ntrain:])
+        self.train_loader = DataLoader(train_ds, batch_size=64)
+        self.val_loader   = DataLoader(val_ds,   batch_size=64)
+
+        self.base_model = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={'in_features': self.d, 'out_features': self.d},
+            num_covariates=1, link="identity"
+        )
+        self.base_model.backbone.linear.weight.data = torch.eye(self.d)
+        self.base_model.backbone.linear.bias.data.zero_()
+
+    def test_ridge_collapses_fx_when_lambda_dominates_spectrum(self):
+        """Isotropic ridge shrinks β_fx to ~0 when λ >> σ_max²(resid_X).
+
+        With λ=2e5 >> σ_max²(resid_X) ≈ 4096, the shrinkage factor
+        σ_j / (σ_j² + λ) ≈ 0 for every singular direction. β_fx ≈ 0.
+        This motivates restricting regularization to the identifiable subspace.
+        """
+        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model.fit(self.train_loader, self.val_loader, lam=2e5)
+        fx = model.predict_fx(self.H[:self.ntrain], self.Z[:self.ntrain])
+        self.assertLess(fx.std().item(), 0.1,
+            msg=f"fx_std={fx.std().item():.4f}, expected < 0.1 when λ >> σ_max²")
+
+    def test_consistent_fz_under_high_dimensional_confounding(self):
+        """β_fz should recover the true value 3.0 despite N/d ≈ 1 and corr(Z, X) ≈ 0.29.
+
+        Any regularization bias in β_fx propagates to β_fz via the OVB mechanism:
+            bias(β_fz) = (Zw'Zw)⁻¹ Zw'Xw @ (β_fx_true − β_fx_estimated)
+        A consistent estimator for β_fx is required to make β_fz consistent.
+        """
+        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model.fit(self.train_loader, self.val_loader)
+        fz = model.fz.weight.data[0, 0].item()
+        self.assertAlmostEqual(fz, 3.0, delta=0.3,
+            msg=f"fz={fz:.3f}, expected ~3.0 ± 0.3")
+
+    def test_refit_preserves_fx_signal(self):
+        """Post-hoc refit retains fx signal: std(fx) > 0.5 when a real effect exists.
+
+        After FWL residualization and ridge regression, the estimated β_fx should
+        pick up the true signal in H[:,0] and produce non-trivial predictions.
+        """
+        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model.fit(self.train_loader, self.val_loader)
+        fx = model.predict_fx(self.H[:self.ntrain], self.Z[:self.ntrain])
+        self.assertGreater(fx.std().item(), 0.5,
+            msg=f"fx_std={fx.std().item():.4f}, expected > 0.5")
+
+    def test_refit_fx_decorrelated_from_Z(self):
+        """|Corr(Z, fx)| < 0.3 after refit: FWL residualization removes Z from β_fx.
+
+        Regressing Z out of X before estimating β_fx (resid_X = X - Z(Z'Z)⁻¹Z'X)
+        ensures the estimated fx is approximately orthogonal to Z. This holds whenever
+        λ is not so large that fx ≈ 0.
+        """
+        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model.fit(self.train_loader, self.val_loader)
+        fx = model.predict_fx(self.H[:self.ntrain], self.Z[:self.ntrain]).squeeze()
+        z  = self.Z[:self.ntrain].squeeze()
+        corr = ((z - z.mean()) @ (fx - fx.mean())) / (
+            (z - z.mean()).norm() * (fx - fx.mean()).norm() + 1e-8)
+        self.assertLess(abs(corr.item()), 0.3,
+            msg=f"Corr(Z, fx)={corr.item():.3f}, expected |corr| < 0.3")
+
+
 if __name__ == '__main__':
     unittest.main()
