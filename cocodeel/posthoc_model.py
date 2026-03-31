@@ -68,7 +68,7 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     # Fitting methods
     # -------------------------------------------------------------------------
-    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=50, tol=1e-2, penalty_z=None):
+    def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=50, tol=1e-2, penalty_z=None, n_lambdas=100):
         """Fit post-hoc ridge regression (and optionally orthogonalization).
 
         Args:
@@ -80,7 +80,7 @@ class PostHocCovarNetwork(BaseNetwork):
                 Typical use: P-spline roughness penalty for spline-expanded covariates.
         """
         self.center_effects(train_dataloader)
-        self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z)
+        self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z, n_lambdas=n_lambdas)
         if self.orthogonalize:
             self._fit_orthogonalization(train_dataloader, penalty_z=penalty_z)
         return self
