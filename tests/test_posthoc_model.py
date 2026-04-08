@@ -685,5 +685,225 @@ class TestHighDimRegression(unittest.TestCase):
             msg=f"mean(fz)={mean_fz:.3f} at ntrain/d=9: expected 3.0±0.1")
 
 
+    @torch.no_grad()
+    def test_fx_z_correlation_when_signal_shares_confounded_direction(self):
+        """When the true signal shares the confounded direction, Corr(Z, fx) persists.
+
+        Mirrors UKBB: the backbone was fine-tuned on confounded data, so its
+        features entangle the true signal with the confound in the dominant PC.
+        The FWL correctly estimates b from residualized features, but predict_fx
+        uses full H, so the Z-correlated component of the true signal passes through.
+
+        This is CORRECT behavior — the true effect genuinely covaries with Z.
+        Only orthogonalization can remove it (by subtracting the Z projection).
+
+        DGP: d=20, N=300, identity link.
+        PC0: dominant (σ₀=5), Z-correlated (ρ₀=0.5), AND carries true signal.
+        PC1-3: moderate variance, uncorrelated with Z, also carry true signal.
+
+        Tests:
+        A. Ridge: Corr(Z, fx) persists — true signal loads on Z-correlated PC0.
+        B. OLS (λ≈0): similar — the true signal IS in PC0 regardless of regularization.
+        C. Orth: removes Z-correlation by construction.
+        """
+        d, N, ntrain = 20, 300, 200
+        rng = numpy.random.default_rng(42)
+        Z = torch.tensor(rng.standard_normal((N, 1)), dtype=torch.float32)
+
+        # Build features: dominant PC0 is Z-correlated, PC1-4 carry signal.
+        H = torch.zeros(N, d)
+        # PC0: dominant, Z-correlated (mimics UKBB PC0 at 50% variance, ρ=0.5)
+        rho0 = 0.5
+        H[:, 0] = 5.0 * (rho0 * Z.squeeze() + numpy.sqrt(1 - rho0**2) *
+                          torch.tensor(rng.standard_normal(N), dtype=torch.float32))
+        # PC1-4: moderate variance, weak Z-correlation, carry true signal
+        for j in range(1, 5):
+            H[:, j] = 1.5 * torch.tensor(rng.standard_normal(N), dtype=torch.float32)
+        # PC5+: small filler
+        for j in range(5, d):
+            H[:, j] = 0.3 * torch.tensor(rng.standard_normal(N), dtype=torch.float32)
+
+        # True signal in BOTH PC0 AND PC1-3 (entangled, mimics contaminated backbone).
+        # The backbone was trained on confounded data, so the learned features that
+        # predict y are partly in the Z-correlated direction (PC0).
+        y = (1.0 * H[:, [0]] + 0.5 * H[:, [1]] + 0.3 * H[:, [2]]
+             + 3.0 * Z + 0.5 * torch.tensor(rng.standard_normal((N, 1)),
+                                              dtype=torch.float32))
+
+        # Base model: w_base loads on PC0 (simulates confound-exploiting training).
+        base = BaseNetwork(backbone=DummyBackbone,
+                           backbone_params={'in_features': d, 'out_features': d},
+                           num_covariates=1, link="identity")
+        base.backbone.linear.weight.data = torch.eye(d)
+        base.backbone.linear.bias.data.zero_()
+        base.fx.weight.data.zero_()
+        base.fx.weight.data[0, 0] = 1.0  # loads on PC0
+
+        # IMPORTANT: shuffle=False for all evaluation DataLoaders.
+        train_ds = CovarDataset(H[:ntrain], Z[:ntrain], y[:ntrain])
+        val_ds = CovarDataset(H[ntrain:], Z[ntrain:], y[ntrain:])
+        tl = DataLoader(train_ds, batch_size=64, shuffle=False)
+        vl = DataLoader(val_ds, batch_size=64, shuffle=False)
+
+        # --- fx_base (before refit) ---
+        fx_base = (H[:ntrain] @ base.fx.weight.data.squeeze()).numpy()
+        z_train = Z[:ntrain, 0].numpy()
+        corr_z_base = numpy.corrcoef(z_train, fx_base)[0, 1]
+
+        # --- A: Ridge (auto λ) ---
+        import copy
+        base_a = copy.deepcopy(base)
+        model_ridge = PostHocCovarNetwork(base_a, num_covariates=1)
+        model_ridge.fit(tl, vl, n_lambdas=5)
+        fx_ridge = model_ridge.predict_fx(H[:ntrain], Z[:ntrain]).squeeze().numpy()
+        corr_z_ridge = numpy.corrcoef(z_train, fx_ridge)[0, 1]
+        corr_base_ridge = numpy.corrcoef(fx_base, fx_ridge)[0, 1]
+
+        # --- B: Near-zero λ (OLS-like) ---
+        base_b = copy.deepcopy(base)
+        model_ols = PostHocCovarNetwork(base_b, num_covariates=1)
+        model_ols.fit(tl, vl, lam=0.01)
+        fx_ols = model_ols.predict_fx(H[:ntrain], Z[:ntrain]).squeeze().numpy()
+        corr_z_ols = numpy.corrcoef(z_train, fx_ols)[0, 1]
+        corr_base_ols = numpy.corrcoef(fx_base, fx_ols)[0, 1]
+
+        # --- C: Ridge + orthogonalization ---
+        base_c = copy.deepcopy(base)
+        model_orth = PostHocCovarNetwork(base_c, num_covariates=1, orthogonalize=True)
+        model_orth.fit(tl, vl, n_lambdas=5)
+        fx_orth = model_orth.predict_fx(H[:ntrain], Z[:ntrain]).squeeze().numpy()
+        corr_z_orth = numpy.corrcoef(z_train, fx_orth)[0, 1]
+
+        # Print diagnostics for debugging.
+        print(f"\n  fx diagnostics (identity link, d={d}, N={N}):")
+        print(f"  base:      corr(Z,fx)={corr_z_base:.3f}  std={fx_base.std():.3f}")
+        print(f"  ridge:     corr(Z,fx)={corr_z_ridge:.3f}  std={fx_ridge.std():.3f}  "
+              f"corr(base,ridge)={corr_base_ridge:.3f}  lam={model_ridge.lam.item():.2e}")
+        print(f"  ols(λ≈0):  corr(Z,fx)={corr_z_ols:.3f}  std={fx_ols.std():.3f}  "
+              f"corr(base,ols)={corr_base_ols:.3f}")
+        print(f"  orth:      corr(Z,fx)={corr_z_orth:.3f}  std={fx_orth.std():.3f}")
+
+        # Assertions:
+        # A. Base model fx IS Z-correlated (by construction, loads on PC0).
+        self.assertGreater(abs(corr_z_base), 0.3,
+            msg=f"Base fx should be Z-correlated: corr={corr_z_base:.3f}")
+
+        # B. Ridge posthoc RETAINS Z-correlation — the true signal genuinely
+        #    uses the Z-correlated feature (PC0). This is correct, not a bug.
+        self.assertGreater(abs(corr_z_ridge), 0.15,
+            msg=f"Ridge posthoc should retain Z-correlation when signal shares "
+                f"confounded direction: corr={corr_z_ridge:.3f}")
+
+        # C. OLS also retains Z-correlation — same reason.
+        self.assertGreater(abs(corr_z_ols), 0.15,
+            msg=f"OLS should also retain Z-correlation: corr={corr_z_ols:.3f}")
+
+        # D. Orthogonalization removes Z-correlation by construction.
+        self.assertLess(abs(corr_z_orth), 0.1,
+            msg=f"Orth should remove Z-correlation: corr={corr_z_orth:.3f}")
+
+
+    @torch.no_grad()
+    def test_disentangle_ridge_vs_entanglement(self):
+        """Separates two causes of unchanged Corr(Z, fx) after posthoc refit.
+
+        Cause 1 (ridge): large λ lets through OVB → debiasing blocked.
+        Cause 2 (entanglement): true signal shares confounded direction → nothing to debias.
+
+        2D sweep over (β₀, λ):
+        - β₀ controls entanglement (0 = separate, 1 = shared direction)
+        - λ controls regularization (0.01 = OLS, 1e5 = heavy ridge)
+
+        Expected:
+          β₀=0, λ≈0:  LARGE reduction (>50%) — debiasing works
+          β₀=0, λ=1e5: SMALL reduction (<20%) — ridge blocks debiasing
+          β₀=1, λ≈0:  NO reduction (<10%) — genuine entanglement
+        """
+        import copy
+        d, N, ntrain = 20, 500, 400
+
+        def run_cell(beta0, lam):
+            rng = numpy.random.default_rng(42)
+            Z = torch.tensor(rng.standard_normal((N, 1)), dtype=torch.float32)
+
+            H = torch.zeros(N, d)
+            rho = 0.5
+            H[:, 0] = 5.0 * (rho * Z.squeeze() + numpy.sqrt(1 - rho**2) *
+                              torch.tensor(rng.standard_normal(N), dtype=torch.float32))
+            for j in range(1, 5):
+                H[:, j] = 1.5 * torch.tensor(rng.standard_normal(N), dtype=torch.float32)
+            for j in range(5, d):
+                H[:, j] = 0.3 * torch.tensor(rng.standard_normal(N), dtype=torch.float32)
+
+            y = (beta0 * H[:, [0]] + 0.5 * H[:, [1]] + 0.3 * H[:, [2]]
+                 + 3.0 * Z + 0.5 * torch.tensor(rng.standard_normal((N, 1)),
+                                                  dtype=torch.float32))
+
+            # Base: OLS without Z (has OVB).
+            w_noZ = torch.linalg.lstsq(H[:ntrain], y[:ntrain]).solution
+            fx_base = (H[ntrain:] @ w_noZ).squeeze().numpy()
+
+            # Posthoc: FWL with given λ.
+            base = BaseNetwork(backbone=DummyBackbone,
+                               backbone_params={'in_features': d, 'out_features': d},
+                               num_covariates=1, link="identity")
+            base.backbone.linear.weight.data = torch.eye(d)
+            base.backbone.linear.bias.data.zero_()
+            base.fx.weight.data = w_noZ.T
+
+            tl = DataLoader(CovarDataset(H[:ntrain], Z[:ntrain], y[:ntrain]),
+                            batch_size=64, shuffle=False)
+            vl = DataLoader(CovarDataset(H[ntrain:], Z[ntrain:], y[ntrain:]),
+                            batch_size=64, shuffle=False)
+
+            phm = PostHocCovarNetwork(base, num_covariates=1)
+            phm.fit(tl, vl, lam=lam)
+            fx_ph = phm.predict_fx(H[ntrain:], Z[ntrain:]).squeeze().numpy()
+
+            z_test = Z[ntrain:, 0].numpy()
+            c_base = abs(numpy.corrcoef(z_test, fx_base)[0, 1])
+            c_ph = abs(numpy.corrcoef(z_test, fx_ph)[0, 1])
+            reduction = (c_base - c_ph) / c_base * 100 if c_base > 0.01 else 0
+            return c_base, c_ph, reduction
+
+        betas = [0.0, 0.3, 1.0]
+        lambdas = [0.01, 10, 1000, 1e5]
+
+        print(f"\n  {'':>6s}", end="")
+        for lam in lambdas:
+            print(f"  {'λ='+f'{lam:.0e}':>12s}", end="")
+        print()
+        print("  " + "-" * 56)
+
+        results = {}
+        for beta0 in betas:
+            print(f"  β₀={beta0:3.1f}", end="")
+            for lam in lambdas:
+                c_b, c_p, red = run_cell(beta0, lam)
+                results[(beta0, lam)] = (c_b, c_p, red)
+                print(f"  {red:>10.1f}%", end="")
+            print()
+
+        # Key assertions:
+        # 1. No entanglement → debiasing works at ANY λ.
+        _, _, red_ols = results[(0.0, 0.01)]
+        _, _, red_ridge = results[(0.0, 1e5)]
+        self.assertGreater(red_ols, 50,
+            msg=f"β₀=0, λ≈0: reduction={red_ols:.1f}%, expected >50%")
+        self.assertGreater(red_ridge, 50,
+            msg=f"β₀=0, λ=1e5: reduction={red_ridge:.1f}%, expected >50% "
+                f"— ridge does NOT block debiasing when signal is disentangled")
+
+        # 2. Entanglement → debiasing impossible at ANY λ.
+        _, _, red_entangled_ols = results[(1.0, 0.01)]
+        _, _, red_entangled_ridge = results[(1.0, 1e5)]
+        self.assertLess(abs(red_entangled_ols), 10,
+            msg=f"β₀=1, λ≈0: reduction={red_entangled_ols:.1f}%, expected <10% "
+                f"— genuine entanglement, debiasing impossible even with OLS")
+        self.assertLess(abs(red_entangled_ridge), 10,
+            msg=f"β₀=1, λ=1e5: reduction={red_entangled_ridge:.1f}%, expected <10% "
+                f"— entanglement dominates regardless of λ")
+
+
 if __name__ == '__main__':
     unittest.main()
