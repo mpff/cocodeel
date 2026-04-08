@@ -1,0 +1,26 @@
+{
+  "date": "2026-04-08T15:50:17.117424",
+  "num_covariates": 1,
+  "n_seeds": 20,
+  "n_workers": 20,
+  "cv_values": [
+    0.0,
+    0.2,
+    0.4,
+    0.6,
+    0.8
+  ],
+  "N_train": 400,
+  "N_test": 200,
+  "d_in": 20,
+  "d_out": 16,
+  "approaches": [
+    "5_pretrained",
+    "6_posthoc",
+    "2a_nam",
+    "2b_fast_fz",
+    "2c_precond",
+    "2d_formula",
+    "3b_backfit"
+  ]
+}
