@@ -103,6 +103,29 @@ def predict_centered(model, X_test, Z_test):
     return fx_hat.numpy(), fz_hat.numpy()
 
 
+def concurvity(H, Z):
+    """Concurvity of fx w.r.t. fz, following mgcv::concurvity(, type="worst").
+
+    Measures the fraction of H's column space variance explainable by Z.
+    concurvity = tr(P_Z H H' P_Z) / tr(H H')
+              = Σ_j ||P_Z h_j||² / Σ_j ||h_j||²
+              = variance-weighted average R²(h_j ~ Z).
+
+    Args:
+        H: (N, d) backbone features (centered).
+        Z: (N, p) covariates (centered).
+
+    Returns:
+        float in [0, 1]. 0 = no overlap, 1 = H fully representable by Z.
+    """
+    # P_Z H = Z (Z'Z)^{-1} Z' H
+    ZtZ_inv = torch.linalg.inv(Z.T @ Z)
+    P_Z_H = Z @ ZtZ_inv @ Z.T @ H                  # (N, d)
+    num = (P_Z_H ** 2).sum()                         # tr(P_Z H H' P_Z)  = ||P_Z H||_F^2
+    den = (H ** 2).sum()                             # tr(H H')           = ||H||_F^2
+    return float(num / den)
+
+
 def bias_var_decomposition(preds, targets):
     """Bias²/Var decomposition following cocodeel simulation_images/utils.py.
 
@@ -432,6 +455,13 @@ def run_seed(seed, cv_values, nc, N_train=400, N_test=200):
         fz_target = (fz_te - fz_te.mean()).squeeze().numpy()
         z_test = Z_te[:, 0].numpy()
 
+        # Concurvity diagnostic: compute on training data (property of the DGP, not the model).
+        # Use a simple linear backbone to extract raw features for the concurvity measure.
+        H_tr = X_tr  # for raw features; for trained backbone, would need model.backbone(X_tr)
+        Z_tr_c = Z_tr - Z_tr.mean(dim=0, keepdim=True)
+        H_tr_c = H_tr - H_tr.mean(dim=0, keepdim=True)
+        cc = concurvity(H_tr_c, Z_tr_c)
+
         for name, train_fn in APPROACHES.items():
             model = train_fn(X_tr, Z_tr, y_tr, nc)
             fx_hat, fz_hat = predict_centered(model, X_te, Z_te)
@@ -439,6 +469,7 @@ def run_seed(seed, cv_values, nc, N_train=400, N_test=200):
             rows.append({
                 'seed': seed, 'cv': cv, 'approach': name,
                 'fx_hat': fx_hat, 'fz_hat': fz_hat,
+                'concurvity': cc,
                 'fx_target': fx_target, 'fz_target': fz_target,
                 'corr_z_fx': corr_z,
             })
@@ -508,14 +539,19 @@ if __name__ == '__main__':
     print("-" * 80)
 
     for cv in cv_values:
+        # Print concurvity (data property, same for all approaches).
+        cc_vals = [r['concurvity'] for r in all_results
+                   if r['cv'] == cv and r['approach'] == approach_names[0]]
+        cc_mean = np.mean(cc_vals)
+        print(f"  cv={cv:.1f}  concurvity(fx|fz)={cc_mean:.4f}", flush=True)
+
         for name in approach_names:
             subset = [r for r in all_results if r['cv'] == cv and r['approach'] == name]
             n_seeds = len(subset)
 
-            # Stack predictions: (n_test, n_seeds).
             fx_preds = np.stack([r['fx_hat'] for r in subset], axis=1)
             fz_preds = np.stack([r['fz_hat'] for r in subset], axis=1)
-            fx_target = subset[0]['fx_target']  # same across seeds (fixed test set)
+            fx_target = subset[0]['fx_target']
             fz_target = subset[0]['fz_target']
 
             dec_fx = bias_var_decomposition(fx_preds, fx_target)
@@ -530,11 +566,11 @@ if __name__ == '__main__':
             results[name]['corr_z_fx'].append(mean_corr)
 
             if n_seeds > 1:
-                print(f"{name:>15s} {cv:4.1f}  {dec_fx['bias2']:10.4f} {dec_fx['var']:10.4f}  "
+                print(f"    {name:>15s}  {dec_fx['bias2']:10.4f} {dec_fx['var']:10.4f}  "
                       f"{dec_fz['bias2']:10.4f} {dec_fz['var']:10.4f}  "
                       f"{mean_corr:+7.4f}±{np.std(corr_z_vals):.4f}", flush=True)
             else:
-                print(f"{name:>15s} {cv:4.1f}  {dec_fx['bias2']:10.4f} {dec_fx['var']:10.4f}  "
+                print(f"    {name:>15s}  {dec_fx['bias2']:10.4f} {dec_fx['var']:10.4f}  "
                       f"{dec_fz['bias2']:10.4f} {dec_fz['var']:10.4f}  "
                       f"{mean_corr:+10.4f}", flush=True)
         print()
