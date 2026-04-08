@@ -1,8 +1,8 @@
 {
-  "date": "2026-04-08T15:50:17.117424",
+  "date": "2026-04-08T16:19:01.233340",
   "num_covariates": 1,
-  "n_seeds": 20,
-  "n_workers": 20,
+  "n_seeds": 1,
+  "n_workers": 1,
   "cv_values": [
     0.0,
     0.2,
