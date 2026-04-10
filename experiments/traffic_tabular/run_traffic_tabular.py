@@ -304,6 +304,246 @@ def train_nam_precond(mlp_params, train_loader, val_loader, Z_train,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Closed-form OLS oracles (no ridge, no IRLS, no iteration)
+# ═══════════════════════════════════════════════════════════════════════════════
+def train_oracle_ols(X_tr, Z_tr, y_tr, device='cpu'):
+    """Oracle = OLS of y on [v1, v2, v3, Z, 1].
+
+    Closed-form: beta = (A'A)^{-1} A'y with A = [X, Z, 1]. Wraps the result
+    in a CovarNetwork(LinearBackbone) so it plugs into evaluate().
+    """
+    N = X_tr.shape[0]
+    A = torch.cat([X_tr, Z_tr, torch.ones(N, 1)], dim=1)  # (N, 5)
+    beta = torch.linalg.lstsq(A, y_tr).solution          # (5, 1)
+    b_X = beta[:3]                                        # (3, 1)
+    b_Z = beta[3:4]                                       # (1, 1)
+    # beta[4] (intercept) is implicit; OLS passes through (mean X, mean Z, mean y).
+
+    model = CovarNetwork(
+        backbone=LinearBackbone,
+        backbone_params={'in_features': 3},
+        num_covariates=1, link='identity',
+    ).to(device)
+    model.fx.weight.data.copy_(b_X.T)        # Linear weight shape (out, in) = (1, 3)
+    model.fz.weight.data.copy_(b_Z.T)        # (1, 1)
+    model.center_x.mean.copy_(X_tr.mean(dim=0).to(device))
+    model.center_z.mean.copy_(Z_tr.mean(dim=0).to(device))
+    model.intercept.data.fill_(float(y_tr.mean()))  # OLS passes through the mean
+    model.is_centered.data = torch.tensor(True)
+    return model
+
+
+def train_oracle_ovb_ols(X_tr, y_tr, device='cpu'):
+    """Oracle OVB = OLS of y on [v1, v2, v3, 1] (no Z).
+
+    Closed-form. Wraps in BaseNetwork(LinearBackbone).
+    """
+    N = X_tr.shape[0]
+    A = torch.cat([X_tr, torch.ones(N, 1)], dim=1)  # (N, 4)
+    beta = torch.linalg.lstsq(A, y_tr).solution    # (4, 1)
+    b_X = beta[:3]
+
+    model = BaseNetwork(
+        backbone=LinearBackbone,
+        backbone_params={'in_features': 3},
+        num_covariates=0, link='identity',
+    ).to(device)
+    model.fx.weight.data.copy_(b_X.T)
+    model.center_x.mean.copy_(X_tr.mean(dim=0).to(device))
+    model.intercept.data.fill_(float(y_tr.mean()))
+    model.is_centered.data = torch.tensor(True)
+    return model
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Cross-fitted PostHoc (2-fold)
+# ═══════════════════════════════════════════════════════════════════════════════
+class EnsemblePostHoc(nn.Module):
+    """Averages two PostHocCovarNetwork instances from 2-fold cross-fitting.
+
+    Each instance has its own backbone trained on one fold and PostHoc fit
+    performed on the OTHER fold. Predictions are the mean of the two.
+    """
+    def __init__(self, phm_a, phm_b):
+        super().__init__()
+        self.phm_a = phm_a
+        self.phm_b = phm_b
+        self.num_covariates = phm_a.num_covariates
+        self.orthogonalize = getattr(phm_a, 'orthogonalize', False)
+        # Average fz.weight scalar across folds for b_z_hat tracking
+        self.b_z_hat_ = 0.5 * (
+            float(phm_a.fz.weight.data.flatten()[0])
+            + float(phm_b.fz.weight.data.flatten()[0]))
+
+    def predict_fx(self, x, z=None):
+        if self.orthogonalize:
+            fx_a = self.phm_a.predict_fx(x, z)
+            fx_b = self.phm_b.predict_fx(x, z)
+        else:
+            fx_a = self.phm_a.predict_fx(x)
+            fx_b = self.phm_b.predict_fx(x)
+        return 0.5 * (fx_a + fx_b)
+
+    def predict_fz(self, z):
+        return 0.5 * (self.phm_a.predict_fz(z) + self.phm_b.predict_fz(z))
+
+    def forward(self, x, z):
+        return 0.5 * (self.phm_a(x, z) + self.phm_b(x, z))
+
+
+def train_posthoc_cf(mlp_params, X_tr, Z_tr, y_tr, lr, scheduler,
+                     scheduler_kwargs, device, orthogonalize=False,
+                     epochs=500, patience=20):
+    """2-fold cross-fitted PostHoc.
+
+    Fold A: train backbone on X_tr[:half], PostHoc refit on X_tr[half:].
+    Fold B: train backbone on X_tr[half:], PostHoc refit on X_tr[:half].
+    Ensemble both via EnsemblePostHoc.
+    """
+    N = X_tr.shape[0]
+    half = N // 2
+    bs = min(64, max(8, N // 8))
+
+    def _loaders(X, Z, y):
+        n = X.shape[0]; h = n // 2
+        tr_ds = CovarDataset(X[:h], Z[:h], y[:h])
+        va_ds = CovarDataset(X[h:], Z[h:], y[h:])
+        return (DataLoader(tr_ds, batch_size=bs, shuffle=True),
+                DataLoader(va_ds, batch_size=bs, shuffle=False))
+
+    def _fit_fold(tr_X, tr_Z, tr_y, re_X, re_Z, re_y):
+        tr_ld, va_ld = _loaders(tr_X, tr_Z, tr_y)
+        base = covar_trainer(
+            model=BaseNetwork, model_params=mlp_params,
+            train_loader=tr_ld, val_loader=va_ld,
+            epochs=epochs, lr=lr, patience=patience,
+            scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device,
+        ).center_effects(tr_ld)
+        re_tr_ld, re_va_ld = _loaders(re_X, re_Z, re_y)
+        phm = PostHocCovarNetwork(base, num_covariates=1,
+                                  orthogonalize=orthogonalize).to(device)
+        phm.fit(re_tr_ld, re_va_ld, n_lambdas=20)
+        return phm
+
+    phm_ab = _fit_fold(X_tr[:half], Z_tr[:half], y_tr[:half],
+                       X_tr[half:], Z_tr[half:], y_tr[half:])
+    phm_ba = _fit_fold(X_tr[half:], Z_tr[half:], y_tr[half:],
+                       X_tr[:half], Z_tr[:half], y_tr[:half])
+    return EnsemblePostHoc(phm_ab, phm_ba)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Double Machine Learning (Robinson partialling-out)
+# ═══════════════════════════════════════════════════════════════════════════════
+def train_dml(mlp_params, X_tr, Z_tr, y_tr, train_loader, val_loader,
+              lr, scheduler, scheduler_kwargs, device='cpu',
+              epochs=500, patience=20):
+    """Robinson/DML for the partially linear model y = f(X) + Z*b_z + eps.
+
+    2-fold cross-fitting for bias-free b_z_hat:
+      - Fold A: train m_hat, l_hat on first half, residualise second half
+      - Fold B: train m_hat, l_hat on second half, residualise first half
+      - Pool out-of-fold residuals and run scalar OLS for b_z_hat
+      - Stage 3: train f_hat(X) on y - Z*b_z_hat using all data
+
+    Returns a CovarNetwork wrapping the stage-3 backbone+fx and b_z_hat,
+    with the intercept adjusted so forward(X, Z) predicts y (not y').
+    """
+    N = X_tr.shape[0]
+    half = N // 2
+    bs = min(64, max(8, N // 8))
+
+    def _fold_loaders(X, Z, target):
+        """Build 50/50 train/val loaders within a fold. target is the y-slot."""
+        n = X.shape[0]
+        h = n // 2
+        tr_ds = CovarDataset(X[:h], Z[:h], target[:h])
+        va_ds = CovarDataset(X[h:], Z[h:], target[h:])
+        return (DataLoader(tr_ds, batch_size=bs, shuffle=True),
+                DataLoader(va_ds, batch_size=bs, shuffle=False))
+
+    def _train_nuisance(train_ld, val_ld):
+        return covar_trainer(
+            model=BaseNetwork, model_params=mlp_params,
+            train_loader=train_ld, val_loader=val_ld,
+            epochs=epochs, lr=lr, patience=patience,
+            scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device,
+        )
+
+    # 2-fold cross-fitting: each sample is in nuisance-training for one fold
+    # and in residual-eval for the other. Pool out-of-fold residuals.
+    folds = [(slice(0, half),  slice(half, N)),
+             (slice(half, N),  slice(0, half))]
+    tilde_y_list, tilde_z_list = [], []
+    for train_idx, eval_idx in folds:
+        # Nuisance training on this fold's data (internal 50/50 split for ES).
+        X_f, Z_f, y_f = X_tr[train_idx], Z_tr[train_idx], y_tr[train_idx]
+        m_tr_ld, m_va_ld = _fold_loaders(X_f, Z_f, y_f)
+        l_tr_ld, l_va_ld = _fold_loaders(X_f, Z_f, Z_f)
+        m_model_f = _train_nuisance(m_tr_ld, m_va_ld)
+        l_model_f = _train_nuisance(l_tr_ld, l_va_ld)
+
+        # Out-of-fold residuals on the OTHER fold.
+        with torch.no_grad():
+            X_e = X_tr[eval_idx].to(device)
+            Z_e = Z_tr[eval_idx].to(device)
+            y_e = y_tr[eval_idx].to(device)
+            m_hat = m_model_f(X_e)
+            l_hat = l_model_f(X_e)
+            tilde_y_list.append((y_e - m_hat).squeeze(-1))
+            tilde_z_list.append((Z_e - l_hat).squeeze(-1))
+
+    # Stage 2: scalar OLS on pooled out-of-fold residuals
+    tilde_y = torch.cat(tilde_y_list)
+    tilde_z = torch.cat(tilde_z_list)
+    b_z_hat = float((tilde_z * tilde_y).sum() / ((tilde_z ** 2).sum() + 1e-12))
+
+    # Stage 3: f_hat(X) on y' = y - Z*b_z_hat, trained on all data (50/50 ES split)
+    y_prime = y_tr - Z_tr * b_z_hat
+    f_train_ds = CovarDataset(X_tr[:half], Z_tr[:half], y_prime[:half])
+    f_val_ds   = CovarDataset(X_tr[half:], Z_tr[half:], y_prime[half:])
+    f_train_loader = DataLoader(f_train_ds, batch_size=bs, shuffle=True)
+    f_val_loader   = DataLoader(f_val_ds,   batch_size=bs, shuffle=False)
+    f_model = covar_trainer(
+        model=BaseNetwork, model_params=mlp_params,
+        train_loader=f_train_loader, val_loader=f_val_loader,
+        epochs=epochs, lr=lr, patience=patience,
+        scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+        device=device,
+    ).center_effects(f_train_loader)
+
+    # Stage 4: assemble a CovarNetwork reusing stage-3 weights + manual fz
+    dml = CovarNetwork(
+        backbone=mlp_params['backbone'],
+        backbone_params=mlp_params['backbone_params'],
+        num_covariates=1, link='identity',
+    ).to(device)
+    # Copy stage-3 backbone + fx + center_x + center_y (features and y' mean).
+    dml.backbone.load_state_dict(f_model.backbone.state_dict())
+    dml.fx.weight.data.copy_(f_model.fx.weight.data)
+    dml.center_x.mean.copy_(f_model.center_x.mean)
+    dml.center_y.mean.copy_(f_model.center_y.mean)
+    # Stage-3 intercept absorbs E[y'] = E[y] - E[Z]*b_z_hat. The CovarNetwork's
+    # predict_fz already subtracts E[Z] from Z, so we need the intercept to
+    # equal E[y], not E[y']. Add E[Z_train]*b_z_hat back.
+    z_train_mean = Z_tr.mean(dim=0).to(device)  # shape (num_covariates,)
+    dml.intercept.data.copy_(f_model.intercept.data + (z_train_mean * b_z_hat).sum())
+    # Set fz weights and its centering mean.
+    dml.fz.weight.data.fill_(float(b_z_hat))
+    dml.center_z.mean.copy_(z_train_mean)
+    dml.is_centered.data = torch.tensor(True)
+
+    # Expose the stage-2 coefficient for the b_z_hat tracking.
+    dml.b_z_hat_ = b_z_hat
+    # For val_loss logging, reuse stage 3's.
+    dml.val_losses_ = f_model.val_losses_
+    dml.best_epoch_ = f_model.best_epoch_
+    return dml
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Evaluation helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 @torch.no_grad()
@@ -320,7 +560,7 @@ def mspe(pred, true):
 
 @torch.no_grad()
 def evaluate(model, X_te, Z_te, y_te, fx_te, fz_te):
-    """Return {mspe_y, mspe_fx, mspe_fz, corr_fx_z} on the test set.
+    """Return {mspe_y, mspe_fx, mspe_fz, corr_fx_z, b_z_hat} on the test set.
 
     Moves test tensors to the model's device, moves predictions back to CPU
     before MSPE/correlation computation so the metric code stays device-agnostic.
@@ -341,23 +581,40 @@ def evaluate(model, X_te, Z_te, y_te, fx_te, fz_te):
         fx_hat = model.predict_fx(X_te_d).squeeze().cpu()
     fz_hat = (model.predict_fz(Z_te_d).squeeze().cpu()
               if hasattr(model, 'predict_fz') else torch.zeros_like(fx_hat))
+
+    # Extract b_z_hat: scalar coefficient on Z. Methods without Z report NaN.
+    if hasattr(model, 'b_z_hat_'):                       # DML stashed it
+        b_z_hat = float(model.b_z_hat_)
+    elif getattr(model, 'num_covariates', 0) > 0 and hasattr(model, 'fz'):
+        b_z_hat = float(model.fz.weight.data.flatten()[0])
+    else:
+        b_z_hat = float('nan')
+
     return {
         'mspe_y':    mspe(y_hat.squeeze(), y_te.squeeze()),
         'mspe_fx':   mspe(fx_hat, fx_te.squeeze()),
         'mspe_fz':   mspe(fz_hat, fz_te.squeeze()),
         'corr_fx_z': float(np.corrcoef(fx_hat.numpy(),
                                        Z_te.squeeze().numpy())[0, 1]),
+        'b_z_hat':   b_z_hat,
     }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # One training run (baseline + posthoc) for a given (N, seed)
 # ═══════════════════════════════════════════════════════════════════════════════
+def _nan_metrics():
+    """Placeholder metrics for methods that are skipped in a partial sweep."""
+    return {'mspe_y': float('nan'), 'mspe_fx': float('nan'),
+            'mspe_fz': float('nan'), 'corr_fx_z': float('nan'),
+            'b_z_hat': float('nan'), 'val_loss': float('nan')}
+
+
 def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
             hidden=64, out_features=32,
             lr=1e-3, scheduler=None, scheduler_kwargs=None,
-            device='cpu', models_dir=None):
-    """Train all methods on one (N, seed).
+            device='cpu', models_dir=None, methods=None):
+    """Train selected methods on one (N, seed).
 
     Args:
         lr: learning rate for the backbone training step.
@@ -368,11 +625,14 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
             moves test tensors to the model's device automatically.
         models_dir: if not None, save each fitted model to
             ``{models_dir}/{method}_N{N}_seed{seed}.pt``.
+        methods: iterable of method names to run. If None, run all METHODS.
+            Skipped methods return NaN placeholder metrics.
 
     Returns:
         dict method → metrics dict (with 'val_loss' field)
     """
     torch.manual_seed(seed)
+    methods = set(methods) if methods is not None else set(METHODS)
 
     # Generate train and a fixed test set (different seed).
     X_tr, Z_tr, y_tr, _, _ = make_traffic_tabular(N_train, cv1=cv1, cv2=cv2, seed=seed)
@@ -395,97 +655,152 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
     }
 
     # ── Baseline: BaseNetwork with MLP trained without covariates ──
-    base_model = covar_trainer(
-        model=BaseNetwork, model_params=mlp_params,
-        train_loader=train_loader, val_loader=val_loader,
-        epochs=500, lr=lr, patience=20,
-        scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
-        device=device,
-    ).center_effects(train_loader)
-    base_metrics = evaluate(base_model, X_te, Z_te, y_te, fx_te, fz_te)
-    base_val_loss = float(base_model.val_losses_[base_model.best_epoch_])
+    needs_base = bool(methods & {'baseline', 'posthoc', 'posthoc_orth'})
+    if needs_base:
+        base_model = covar_trainer(
+            model=BaseNetwork, model_params=mlp_params,
+            train_loader=train_loader, val_loader=val_loader,
+            epochs=500, lr=lr, patience=20,
+            scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device,
+        ).center_effects(train_loader)
+        base_val_loss = float(base_model.val_losses_[base_model.best_epoch_])
+        base_metrics = (evaluate(base_model, X_te, Z_te, y_te, fx_te, fz_te)
+                        if 'baseline' in methods else _nan_metrics())
+    else:
+        base_model = None
+        base_val_loss = float('nan')
+        base_metrics = _nan_metrics()
 
     # ── NAM: CovarNetwork (MLP + Z), trained end-to-end, single Adam, same lr ──
-    nam_model = covar_trainer(
-        model=CovarNetwork, model_params=mlp_params,
-        train_loader=train_loader, val_loader=val_loader,
-        epochs=500, lr=lr, patience=20,
-        scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
-        device=device,
-    ).center_effects(train_loader)
-    nam_metrics = evaluate(nam_model, X_te, Z_te, y_te, fx_te, fz_te)
-    nam_val_loss = float(nam_model.val_losses_[nam_model.best_epoch_])
+    if 'nam' in methods:
+        nam_model = covar_trainer(
+            model=CovarNetwork, model_params=mlp_params,
+            train_loader=train_loader, val_loader=val_loader,
+            epochs=500, lr=lr, patience=20,
+            scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device,
+        ).center_effects(train_loader)
+        nam_metrics = evaluate(nam_model, X_te, Z_te, y_te, fx_te, fz_te)
+        nam_val_loss = float(nam_model.val_losses_[nam_model.best_epoch_])
+    else:
+        nam_model = None
+        nam_metrics = _nan_metrics()
+        nam_val_loss = float('nan')
 
-    # ── NAM precond: CovarNetwork with per-group lr ──
-    # lr_fx = HP (same as baseline / nam); lr_fz = 1 / λ_max(Z_c^T Z_c / N)
-    nam_precond_model = train_nam_precond(
-        mlp_params=mlp_params,
-        train_loader=train_loader, val_loader=val_loader,
-        Z_train=Z_tr[:half],
-        lr_fx=lr, device=device,
-        epochs=500, patience=20,
-    )
-    nam_precond_model.center_effects(train_loader)
-    nam_precond_metrics = evaluate(nam_precond_model, X_te, Z_te, y_te, fx_te, fz_te)
-    nam_precond_val_loss = float(
-        nam_precond_model.val_losses_[nam_precond_model.best_epoch_])
+    # ── NAM precond + optional refit ──
+    needs_nam_precond = bool(methods & {'nam_precond', 'nam_precond_refit'})
+    if needs_nam_precond:
+        nam_precond_model = train_nam_precond(
+            mlp_params=mlp_params,
+            train_loader=train_loader, val_loader=val_loader,
+            Z_train=Z_tr[:half],
+            lr_fx=lr, device=device,
+            epochs=500, patience=20,
+        )
+        nam_precond_model.center_effects(train_loader)
+        nam_precond_val_loss = float(
+            nam_precond_model.val_losses_[nam_precond_model.best_epoch_])
+        nam_precond_metrics = (
+            evaluate(nam_precond_model, X_te, Z_te, y_te, fx_te, fz_te)
+            if 'nam_precond' in methods else _nan_metrics())
+    else:
+        nam_precond_model = None
+        nam_precond_metrics = _nan_metrics()
+        nam_precond_val_loss = float('nan')
 
-    # ── NAM precond + PostHoc refit: take the nam_precond backbone, wrap in
-    # a fresh BaseNetwork, and refit the last layer via FWL+ridge. Tests
-    # whether the nam_precond-trained backbone features span f_x^true even
-    # after fast-fz training drove it toward f_x^re.
-    refit_base = BaseNetwork(
-        backbone=TabularMLP,
-        backbone_params=mlp_params['backbone_params'],
-        num_covariates=0, link='identity',
-    ).to(device)
-    refit_base.backbone.load_state_dict(nam_precond_model.backbone.state_dict())
-    nam_precond_refit_model = PostHocCovarNetwork(
-        refit_base, num_covariates=1).to(device)
-    nam_precond_refit_model.fit(train_loader, val_loader, n_lambdas=20)
-    nam_precond_refit_metrics = evaluate(
-        nam_precond_refit_model, X_te, Z_te, y_te, fx_te, fz_te)
+    if 'nam_precond_refit' in methods:
+        refit_base = BaseNetwork(
+            backbone=TabularMLP,
+            backbone_params=mlp_params['backbone_params'],
+            num_covariates=0, link='identity',
+        ).to(device)
+        refit_base.backbone.load_state_dict(nam_precond_model.backbone.state_dict())
+        nam_precond_refit_model = PostHocCovarNetwork(
+            refit_base, num_covariates=1).to(device)
+        nam_precond_refit_model.fit(train_loader, val_loader, n_lambdas=20)
+        nam_precond_refit_metrics = evaluate(
+            nam_precond_refit_model, X_te, Z_te, y_te, fx_te, fz_te)
+    else:
+        nam_precond_refit_model = None
+        nam_precond_refit_metrics = _nan_metrics()
 
-    # ── PostHoc: refit last layer of the trained MLP with FWL+ridge ──
-    phm = PostHocCovarNetwork(base_model, num_covariates=1).to(device)
-    phm.fit(train_loader, val_loader, n_lambdas=20)
-    ph_metrics = evaluate(phm, X_te, Z_te, y_te, fx_te, fz_te)
+    # ── PostHoc (same-sample) ──
+    if 'posthoc' in methods:
+        phm = PostHocCovarNetwork(base_model, num_covariates=1).to(device)
+        phm.fit(train_loader, val_loader, n_lambdas=20)
+        ph_metrics = evaluate(phm, X_te, Z_te, y_te, fx_te, fz_te)
+    else:
+        phm = None
+        ph_metrics = _nan_metrics()
 
-    # ── PostHoc + Orth: reuses the same base_model, but the refit fits an
-    # orthogonalisation matrix so fx and fz are rendered orthogonal. This
-    # genuinely targets f_x^re (the Z-residualised effect), so MSPE(fx)
-    # against true f_x has a nonzero floor = b2^2 * c2^2 * Var(Z).
-    phm_orth = PostHocCovarNetwork(base_model, num_covariates=1,
-                                   orthogonalize=True).to(device)
-    phm_orth.fit(train_loader, val_loader, n_lambdas=20)
-    ph_orth_metrics = evaluate(phm_orth, X_te, Z_te, y_te, fx_te, fz_te)
+    # ── PostHoc + Orth (same-sample) ──
+    if 'posthoc_orth' in methods:
+        phm_orth = PostHocCovarNetwork(base_model, num_covariates=1,
+                                       orthogonalize=True).to(device)
+        phm_orth.fit(train_loader, val_loader, n_lambdas=20)
+        ph_orth_metrics = evaluate(phm_orth, X_te, Z_te, y_te, fx_te, fz_te)
+    else:
+        phm_orth = None
+        ph_orth_metrics = _nan_metrics()
 
-    # ── Oracle: linear (identity backbone) + PostHoc FWL+ridge ──
-    # No MLP training; PostHoc.fit does the ridge regression directly on H=X.
-    oracle_base = BaseNetwork(
-        backbone=LinearBackbone,
-        backbone_params={'in_features': 3},
-        num_covariates=0, link='identity',
-    ).to(device)
-    oracle = PostHocCovarNetwork(oracle_base, num_covariates=1).to(device)
-    oracle.fit(train_loader, val_loader, n_lambdas=20)
-    oracle_metrics = evaluate(oracle, X_te, Z_te, y_te, fx_te, fz_te)
+    # ── PostHoc CF: 2-fold cross-fitted ──
+    if 'posthoc_cf' in methods:
+        phm_cf = train_posthoc_cf(
+            mlp_params=mlp_params, X_tr=X_tr, Z_tr=Z_tr, y_tr=y_tr,
+            lr=lr, scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device, orthogonalize=False, epochs=500, patience=20,
+        )
+        phm_cf_metrics = evaluate(phm_cf, X_te, Z_te, y_te, fx_te, fz_te)
+    else:
+        phm_cf = None
+        phm_cf_metrics = _nan_metrics()
 
-    # ── Oracle OVB: linear backbone trained WITHOUT Z ──
-    # Plain OLS-equivalent BaseNetwork on (v1, v2, v3); no FWL.
-    # Should empirically converge to baseline_corr_ols_limit — the analytic OVB
-    # asymptote — verifying the formula.
-    linear_params = {'backbone': LinearBackbone,
-                     'backbone_params': {'in_features': 3}}
-    oracle_ovb = covar_trainer(
-        model=BaseNetwork, model_params=linear_params,
-        train_loader=train_loader, val_loader=val_loader,
-        epochs=500, lr=lr, patience=20,
-        scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
-        device=device,
-    ).center_effects(train_loader)
-    oracle_ovb_metrics = evaluate(oracle_ovb, X_te, Z_te, y_te, fx_te, fz_te)
-    oracle_ovb_val_loss = float(oracle_ovb.val_losses_[oracle_ovb.best_epoch_])
+    # ── PostHoc + Orth CF ──
+    if 'posthoc_orth_cf' in methods:
+        phm_orth_cf = train_posthoc_cf(
+            mlp_params=mlp_params, X_tr=X_tr, Z_tr=Z_tr, y_tr=y_tr,
+            lr=lr, scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device, orthogonalize=True, epochs=500, patience=20,
+        )
+        phm_orth_cf_metrics = evaluate(phm_orth_cf, X_te, Z_te, y_te, fx_te, fz_te)
+    else:
+        phm_orth_cf = None
+        phm_orth_cf_metrics = _nan_metrics()
+
+    # ── Oracle (closed-form OLS on [v1, v2, v3, Z]) ──
+    if 'oracle' in methods:
+        oracle = train_oracle_ols(X_tr, Z_tr, y_tr, device=device)
+        oracle_metrics = evaluate(oracle, X_te, Z_te, y_te, fx_te, fz_te)
+    else:
+        oracle = None
+        oracle_metrics = _nan_metrics()
+
+    # ── Oracle OVB (closed-form OLS on [v1, v2, v3], no Z) ──
+    if 'oracle_ovb' in methods:
+        oracle_ovb = train_oracle_ovb_ols(X_tr, y_tr, device=device)
+        oracle_ovb_metrics = evaluate(oracle_ovb, X_te, Z_te, y_te, fx_te, fz_te)
+        oracle_ovb_val_loss = float('nan')  # no iterative training
+    else:
+        oracle_ovb = None
+        oracle_ovb_metrics = _nan_metrics()
+        oracle_ovb_val_loss = float('nan')
+
+    # ── DML (Robinson partialling-out, 2-fold cross-fit) ──
+    if 'dml' in methods:
+        dml_model = train_dml(
+            mlp_params=mlp_params,
+            X_tr=X_tr, Z_tr=Z_tr, y_tr=y_tr,
+            train_loader=train_loader, val_loader=val_loader,
+            lr=lr, scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+            device=device, epochs=500, patience=20,
+        )
+        dml_metrics = evaluate(dml_model, X_te, Z_te, y_te, fx_te, fz_te)
+        dml_val_loss = float(dml_model.val_losses_[dml_model.best_epoch_])
+    else:
+        dml_model = None
+        dml_metrics = _nan_metrics()
+        dml_val_loss = float('nan')
 
     base_metrics['val_loss']              = base_val_loss
     nam_metrics['val_loss']               = nam_val_loss
@@ -493,6 +808,9 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
     nam_precond_refit_metrics['val_loss'] = nam_precond_val_loss  # reuses nam_precond training
     ph_metrics['val_loss']                = base_val_loss  # posthoc reuses base's training
     ph_orth_metrics['val_loss']           = base_val_loss  # same base_model
+    phm_cf_metrics['val_loss']            = float('nan')   # ensembles two backbones
+    phm_orth_cf_metrics['val_loss']       = float('nan')
+    dml_metrics['val_loss']               = dml_val_loss
     oracle_metrics['val_loss']            = float('nan')   # no MLP training
     oracle_ovb_metrics['val_loss']        = oracle_ovb_val_loss
 
@@ -504,11 +822,16 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
             'nam_precond':       nam_precond_model,
             'nam_precond_refit': nam_precond_refit_model,
             'posthoc':           phm,
+            'posthoc_cf':        phm_cf,
             'posthoc_orth':      phm_orth,
+            'posthoc_orth_cf':   phm_orth_cf,
+            'dml':               dml_model,
             'oracle':            oracle,
             'oracle_ovb':        oracle_ovb,
         }
         for name, m in fitted.items():
+            if m is None:  # skipped in partial sweep
+                continue
             fname = f'{name}_N{N_train}_seed{seed}.pt'
             torch.save(m.state_dict(), os.path.join(models_dir, fname))
 
@@ -517,7 +840,10 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
             'nam_precond':       nam_precond_metrics,
             'nam_precond_refit': nam_precond_refit_metrics,
             'posthoc':           ph_metrics,
+            'posthoc_cf':        phm_cf_metrics,
             'posthoc_orth':      ph_orth_metrics,
+            'posthoc_orth_cf':   phm_orth_cf_metrics,
+            'dml':               dml_metrics,
             'oracle':            oracle_metrics,
             'oracle_ovb':        oracle_ovb_metrics}
 
@@ -538,14 +864,18 @@ def aggregate(results, methods, metrics, N_values):
 
 
 METHODS = ('baseline', 'nam', 'nam_precond', 'nam_precond_refit',
-           'posthoc', 'posthoc_orth',
+           'posthoc', 'posthoc_cf', 'posthoc_orth', 'posthoc_orth_cf',
+           'dml',
            'oracle_ovb', 'oracle')
 COLORS = {'baseline':           '#888888',
           'nam':                '#9467bd',
           'nam_precond':        '#17becf',
           'nam_precond_refit':  '#8c564b',
           'posthoc':            '#1f77b4',
+          'posthoc_cf':         '#08306b',
           'posthoc_orth':       '#e377c2',
+          'posthoc_orth_cf':    '#7a0177',
+          'dml':                '#bcbd22',
           'oracle_ovb':         '#ff7f0e',
           'oracle':             '#2ca02c'}
 LABELS = {'baseline':           'Baseline (MLP, no Z)',
@@ -553,7 +883,10 @@ LABELS = {'baseline':           'Baseline (MLP, no Z)',
           'nam_precond':        r'NAM precond ($\eta_g = 1/\lambda_\mathrm{max}$)',
           'nam_precond_refit':  'NAM precond + PostHoc refit',
           'posthoc':            'PostHoc (MLP + FWL)',
+          'posthoc_cf':         'PostHoc CF (2-fold)',
           'posthoc_orth':       r'PostHoc + Orth ($f_x^\mathrm{re}$)',
+          'posthoc_orth_cf':    'PostHoc + Orth CF (2-fold)',
+          'dml':                'DML (Robinson)',
           'oracle_ovb':         'Oracle OVB (Linear, no Z)',
           'oracle':             'Oracle (Linear + FWL)'}
 
@@ -825,6 +1158,7 @@ def n_sweep(args, device, lr, scheduler_name, run_dir):
                     cv1=args.cv1, cv2=args.cv2,
                     lr=lr, scheduler=sched_cls, scheduler_kwargs=sched_kw,
                     device=device, models_dir=models_dir,
+                    methods=args.methods,
                 )
                 futures_meta[f] = (N, seed)
 
@@ -864,7 +1198,7 @@ def n_sweep(args, device, lr, scheduler_name, run_dir):
     # ── Save raw per-(method, N, seed) results as CSV for later re-plotting ──
     csv_path = os.path.join(run_dir, 'raw_results.csv')
     fieldnames = ['method', 'N', 'seed', 'mspe_y', 'mspe_fx', 'mspe_fz',
-                  'corr_fx_z', 'val_loss']
+                  'corr_fx_z', 'b_z_hat', 'val_loss']
     with open(csv_path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -875,6 +1209,7 @@ def n_sweep(args, device, lr, scheduler_name, run_dir):
                     'N': r['N'], 'seed': r['seed'],
                     'mspe_y': r['mspe_y'], 'mspe_fx': r['mspe_fx'],
                     'mspe_fz': r['mspe_fz'], 'corr_fx_z': r['corr_fx_z'],
+                    'b_z_hat': r.get('b_z_hat', float('nan')),
                     'val_loss': r.get('val_loss', float('nan')),
                 })
     print(f"Raw results saved to {csv_path} "
@@ -908,6 +1243,8 @@ def main():
                         help='"auto" picks cuda if available, else cpu')
     parser.add_argument('--run-name', default=None,
                         help='optional suffix appended to the timestamped run dir')
+    parser.add_argument('--methods', nargs='+', default=None,
+                        help='subset of methods to run; defaults to all of METHODS')
     args = parser.parse_args()
 
     if args.device == 'auto':
@@ -949,7 +1286,7 @@ def main():
         },
         'mlp': {'in_features': 3, 'hidden': 64, 'out_features': 32},
         'training': {'epochs': 500, 'patience': 20, 'batch_size_cap': 64},
-        'methods': list(METHODS),
+        'methods': list(args.methods) if args.methods else list(METHODS),
     }
     write_config_and_manifest(run_dir, config, start_time)
 

@@ -1,0 +1,25 @@
+{
+  "pid": 1534342,
+  "host": "nyx",
+  "git_commit": "c3fdb6a579604a6c1718583970cc7558d0f2f6e8",
+  "start_time": "2026-04-10T19:11:52.364844",
+  "run_dir": "/home/RDC/pfeuffma/Research/proj-orthogonalisation/cocodeel/experiments/traffic_tabular/runs/20260410T191152_cv1-0.8_cv2-0.3_all_methods_N51200",
+  "argv": [
+    "/home/RDC/pfeuffma/Research/proj-orthogonalisation/cocodeel/experiments/traffic_tabular/run_traffic_tabular.py",
+    "--mode",
+    "sweep",
+    "--lr",
+    "3e-3",
+    "--scheduler",
+    "plateau",
+    "--cv1",
+    "0.8",
+    "--cv2",
+    "0.3",
+    "--run-name",
+    "cv1-0.8_cv2-0.3_all_methods_N51200"
+  ],
+  "end_time": "2026-04-10T20:51:12.364680",
+  "status": "completed",
+  "total_seconds": 5960.0
+}

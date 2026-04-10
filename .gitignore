@@ -2,12 +2,14 @@
 **/lightning_logs/*
 **/notebooks
 **/outputs
-**/experiments
 **/results/*/archive/**
 cocodeel.Rproj
 
 # Local research library (PDFs, cloned reference repos — kept locally, not versioned)
 research/papers/
+
+# Trained model weights (can be large; regeneratable from runs)
+*.pt
 
 
 # Byte-compiled / optimized / DLL files
