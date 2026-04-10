@@ -41,6 +41,7 @@ Usage:
         --n-seeds 5 --N-values 100 200 400 800 1600
 """
 import argparse
+import csv
 import multiprocessing as mp
 import os
 import time
@@ -55,7 +56,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
-from cocodeel.model import BaseNetwork
+from cocodeel.model import BaseNetwork, CovarNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
 from cocodeel.trainer import covar_trainer
 
@@ -98,6 +99,70 @@ def true_corr_fx_z(b2, b3, cv2):
     σ_Z cancels.
     """
     return b2 * cv2 / np.sqrt(b2**2 * ((1-cv2)**2 + cv2**2) + b3**2)
+
+
+def _ols_limit_beta(b2, b3, bz, cv1, cv2):
+    """Population β̂_OLS for y ~ v1 + v2 + v3 under the traffic_tabular DGP.
+
+    Returns (beta, Sigma_X_scaled) where quantities are in units of σ_Z² = 1/12
+    (the common variance of U[0,1]). The 1/12 factor cancels in correlations but
+    must be reinstated for MSPEs.
+    """
+    A = (1 - cv1)**2 + cv1**2
+    B = (1 - cv2)**2 + cv2**2
+    C = cv1 * cv2
+    Sigma_X = np.array([[A, C, 0.0],
+                        [C, B, 0.0],
+                        [0.0, 0.0, 1.0]])
+    Sigma_Xy = np.array([
+        cv1 * (b2 * cv2 + bz),   # v1 has no signal loading, only OVB
+        b2 * B + bz * cv2,
+        b3,
+    ])
+    beta = np.linalg.solve(Sigma_X, Sigma_Xy)
+    return beta, Sigma_X
+
+
+def baseline_corr_ols_limit(b2, b3, bz, cv1, cv2):
+    """Asymptotic Corr(f_hat_base, Z) for an OLS baseline y ~ v1 + v2 + v3.
+
+    The MLP baseline (trained without Z) converges in the large-sample limit to
+    the Bayes-optimal predictor E[y | v1, v2, v3]. For this DGP that conditional
+    expectation is essentially linear in (v1, v2, v3), so the MLP converges to
+    the OLS solution on X = (v1, v2, v3).
+
+    Formula (OVB in an OLS linear model):
+        β̂_OLS = Σ_X⁻¹ Σ_Xy  (population)
+        Corr(β̂'X, Z) = β̂'Σ_XZ / sqrt(β̂'Σ_X β̂ · Var(Z))
+
+    The σ_Z² = 1/12 factor cancels in the correlation.
+    """
+    beta, Sigma_X = _ols_limit_beta(b2, b3, bz, cv1, cv2)
+    Sigma_XZ = np.array([cv1, cv2, 0.0])
+    cov_pred_Z = beta @ Sigma_XZ
+    var_pred   = beta @ Sigma_X @ beta
+    return float(cov_pred_Z / np.sqrt(var_pred * 1.0))
+
+
+def baseline_mspe_fx_ols_limit(b2, b3, bz, cv1, cv2):
+    """Asymptotic MSPE(f_hat_base, f_x) for an OLS baseline y ~ v1 + v2 + v3.
+
+    Derivation: in the limit, f_hat_base(X) = β̂_OLS' (X - E[X]). The true
+    population-centred f_x is β_true' (X - E[X]) with
+        β_true = (0, b2, b3)
+    because v1 has no signal loading, only v2 and v3 do.
+
+    Then
+        MSPE(f_hat_base) = E[(β̂ - β_true)' (X - E[X]))²]
+                         = (β̂ - β_true)' Σ_X (β̂ - β_true)
+
+    i.e. a quadratic form in the bias vector.  The overall 1/12 factor (from
+    Var(U[0,1])) is reinstated here.
+    """
+    beta_ols, Sigma_X_scaled = _ols_limit_beta(b2, b3, bz, cv1, cv2)
+    beta_true = np.array([0.0, b2, b3])
+    bias = beta_ols - beta_true
+    return float((bias @ Sigma_X_scaled @ bias) / 12.0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -240,6 +305,17 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
     base_metrics = evaluate(base_model, X_te, Z_te, y_te, fx_te, fz_te)
     base_val_loss = float(base_model.val_losses_[base_model.best_epoch_])
 
+    # ── NAM: CovarNetwork (MLP + Z), trained end-to-end, single Adam, same lr ──
+    nam_model = covar_trainer(
+        model=CovarNetwork, model_params=mlp_params,
+        train_loader=train_loader, val_loader=val_loader,
+        epochs=500, lr=lr, patience=20,
+        scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+        device=device,
+    ).center_effects(train_loader)
+    nam_metrics = evaluate(nam_model, X_te, Z_te, y_te, fx_te, fz_te)
+    nam_val_loss = float(nam_model.val_losses_[nam_model.best_epoch_])
+
     # ── PostHoc: refit last layer of the trained MLP with FWL+ridge ──
     phm = PostHocCovarNetwork(base_model, num_covariates=1).to(device)
     phm.fit(train_loader, val_loader, n_lambdas=20)
@@ -256,10 +332,32 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
     oracle.fit(train_loader, val_loader, n_lambdas=20)
     oracle_metrics = evaluate(oracle, X_te, Z_te, y_te, fx_te, fz_te)
 
-    base_metrics['val_loss']   = base_val_loss
-    ph_metrics['val_loss']     = base_val_loss  # posthoc reuses base's training
-    oracle_metrics['val_loss'] = float('nan')   # no val-loss concept for the oracle
-    return {'baseline': base_metrics, 'posthoc': ph_metrics, 'oracle': oracle_metrics}
+    # ── Oracle OVB: linear backbone trained WITHOUT Z ──
+    # Plain OLS-equivalent BaseNetwork on (v1, v2, v3); no FWL.
+    # Should empirically converge to baseline_corr_ols_limit — the analytic OVB
+    # asymptote — verifying the formula.
+    linear_params = {'backbone': LinearBackbone,
+                     'backbone_params': {'in_features': 3}}
+    oracle_ovb = covar_trainer(
+        model=BaseNetwork, model_params=linear_params,
+        train_loader=train_loader, val_loader=val_loader,
+        epochs=500, lr=lr, patience=20,
+        scheduler=scheduler, scheduler_kwargs=scheduler_kwargs,
+        device=device,
+    ).center_effects(train_loader)
+    oracle_ovb_metrics = evaluate(oracle_ovb, X_te, Z_te, y_te, fx_te, fz_te)
+    oracle_ovb_val_loss = float(oracle_ovb.val_losses_[oracle_ovb.best_epoch_])
+
+    base_metrics['val_loss']       = base_val_loss
+    nam_metrics['val_loss']        = nam_val_loss
+    ph_metrics['val_loss']         = base_val_loss  # posthoc reuses base's training
+    oracle_metrics['val_loss']     = float('nan')   # no MLP training
+    oracle_ovb_metrics['val_loss'] = oracle_ovb_val_loss
+    return {'baseline':   base_metrics,
+            'nam':        nam_metrics,
+            'posthoc':    ph_metrics,
+            'oracle':     oracle_metrics,
+            'oracle_ovb': oracle_ovb_metrics}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -277,42 +375,57 @@ def aggregate(results, methods, metrics, N_values):
     return agg
 
 
-METHODS = ('baseline', 'posthoc', 'oracle')
-COLORS = {'baseline': '#888888', 'posthoc': '#1f77b4', 'oracle': '#2ca02c'}
-LABELS = {'baseline': 'Baseline (MLP)',
-          'posthoc':  'PostHoc (MLP + FWL)',
-          'oracle':   'Oracle (Linear + FWL)'}
+METHODS = ('baseline', 'nam', 'posthoc', 'oracle_ovb', 'oracle')
+COLORS = {'baseline':   '#888888',
+          'nam':        '#9467bd',
+          'posthoc':    '#1f77b4',
+          'oracle_ovb': '#ff7f0e',
+          'oracle':     '#2ca02c'}
+LABELS = {'baseline':   'Baseline (MLP, no Z)',
+          'nam':        'NAM (MLP + Z, joint)',
+          'posthoc':    'PostHoc (MLP + FWL)',
+          'oracle_ovb': 'Oracle OVB (Linear, no Z)',
+          'oracle':     'Oracle (Linear + FWL)'}
 
 
-def plot_convergence(agg, N_values, true_corr, cv1, cv2, sdy, out_dir):
+def plot_convergence(agg, N_values, true_corr, baseline_ovb_corr,
+                     baseline_ovb_mspe_fx, cv1, cv2, sdy, out_dir):
     """1×4 panel figure: MSPE(y), MSPE(fx), MSPE(fz), Corr(fx, Z) vs N.
 
-    Reference lines:
-      MSPE(y)    → sdy² (Bayes-optimal MSPE under the additive DGP)
-      MSPE(fx)   → 0
+    Reference lines (each entry is (value, label, color)):
+      MSPE(y)    → sdy² (population noise variance, Bayes floor)
+      MSPE(fx)   → 0 (target for a consistent estimator)
+                   + baseline_ovb_mspe_fx (OVB asymptote for baseline MLP)
       MSPE(fz)   → 0
-      Corr(fx,Z) → analytic true value (e.g. 0.408 at cv2=0.5, b2=b3=1)
+      Corr(fx,Z) → true_corr (Oracle target) + baseline_ovb_corr (OVB asymptote)
 
     X-axis ticks are set explicitly to the swept N values (no auto log-ticks).
     """
     metrics_cfg = [
-        ('mspe_y',    r'MSPE($y$)',          True,  sdy**2),
-        ('mspe_fx',   r'MSPE($f_x$)',        True,  0.0),
-        ('mspe_fz',   r'MSPE($f_z$)',        True,  0.0),
-        ('corr_fx_z', r'Corr($f_x$, $Z$)',   False, true_corr),
+        ('mspe_y',    r'MSPE($y$)',        True,  [(sdy**2,                fr'$\sigma^2 = {sdy**2:.2f}$', 'red')]),
+        ('mspe_fx',   r'MSPE($f_x$)',      True,  [(0.0,                    None,            'red'),
+                                                   (baseline_ovb_mspe_fx,   'Oracle OVB',    'orange')]),
+        ('mspe_fz',   r'MSPE($f_z$)',      True,  [(0.0,                    None,            'red')]),
+        ('corr_fx_z', r'Corr($f_x$, $Z$)', False, [(true_corr,              'Oracle Corr',   'red'),
+                                                   (baseline_ovb_corr,      'Oracle OVB',    'orange')]),
     ]
 
     fig, axes = plt.subplots(1, 4, figsize=(17, 4.2))
-    for ax, (metric, ylabel, log_y, hline) in zip(axes, metrics_cfg):
+    for ax, (metric, ylabel, log_y, hlines) in zip(axes, metrics_cfg):
         for method in METHODS:
             means = np.array([m for m, _ in agg[method][metric]])
             stds  = np.array([s for _, s in agg[method][metric]])
+            # Clip the lower fill_between bound on log axes to avoid
+            # log(negative) when std > mean at small N with high variance.
+            lower = np.maximum(means - stds, means * 0.1) if log_y else means - stds
+            upper = means + stds
             ax.plot(N_values, means, '-o', color=COLORS[method],
                     label=LABELS[method], linewidth=2, markersize=5)
-            ax.fill_between(N_values, means - stds, means + stds,
+            ax.fill_between(N_values, lower, upper,
                             color=COLORS[method], alpha=0.2)
-        ax.axhline(hline, color='red', linestyle=':', linewidth=1,
-                   label=f'true ({hline:.3f})')
+        for hval, hlabel, hcolor in hlines:
+            lbl = None if hlabel is None else f'{hlabel} ({hval:.3f})'
+            ax.axhline(hval, color=hcolor, linestyle=':', linewidth=1.2, label=lbl)
         ax.set_xlabel(r'$N_\mathrm{train}$')
         ax.set_ylabel(ylabel)
         ax.set_xscale('log')
@@ -322,6 +435,8 @@ def plot_convergence(agg, N_values, true_corr, cv1, cv2, sdy, out_dir):
         if log_y:
             ax.set_yscale('log')
     axes[0].legend(fontsize=8, loc='upper right')
+    axes[1].legend(fontsize=7, loc='upper right')   # show baseline OVB hline on MSPE(fx)
+    axes[-1].legend(fontsize=7, loc='lower right')  # show both hline labels on Corr panel
     fig.suptitle(f'Traffic tabular DGP (cv1={cv1}, cv2={cv2}): '
                  f'baseline vs PostHoc vs Oracle convergence', fontsize=11)
     fig.tight_layout()
@@ -413,9 +528,16 @@ def hp_search(device, N_hp=800, n_seeds=2, cv1=0.8, cv2=0.5):
 # ═══════════════════════════════════════════════════════════════════════════════
 def n_sweep(args, device, lr, scheduler_name, out_dir):
     sdy = 1.0  # DGP noise std; Bayes-optimal MSPE(y) is sdy²
-    true_corr = true_corr_fx_z(b2=1.0, b3=1.0, cv2=args.cv2)
-    print(f"True Corr(fx, Z) = {true_corr:.4f}  "
-          f"Bayes MSPE(y) = sdy² = {sdy**2:.4f}")
+    true_corr            = true_corr_fx_z(b2=1.0, b3=1.0, cv2=args.cv2)
+    baseline_ovb_corr    = baseline_corr_ols_limit(b2=1.0, b3=1.0, bz=1.0,
+                                                   cv1=args.cv1, cv2=args.cv2)
+    baseline_ovb_mspe_fx = baseline_mspe_fx_ols_limit(b2=1.0, b3=1.0, bz=1.0,
+                                                      cv1=args.cv1, cv2=args.cv2)
+    print(f"Analytic references (b2=b3=bz=1, cv1={args.cv1}, cv2={args.cv2}):")
+    print(f"  Oracle Corr (true)                = {true_corr:.4f}")
+    print(f"  Oracle OVB  Corr (OLS limit)      = {baseline_ovb_corr:.4f}")
+    print(f"  Oracle OVB  MSPE(fx) (OLS limit)  = {baseline_ovb_mspe_fx:.4f}")
+    print(f"  Population σ² = sdy²              = {sdy**2:.4f}")
     print(f"N values: {args.N_values}   seeds: {args.n_seeds}   "
           f"device={device}  lr={lr:.0e}  sched={scheduler_name}\n", flush=True)
 
@@ -478,8 +600,29 @@ def n_sweep(args, device, lr, scheduler_name, out_dir):
             print(f"{method:>10s} {N:6d}  {cells}")
         print()
 
-    plot_convergence(agg, args.N_values, true_corr, args.cv1, args.cv2,
-                     sdy=sdy, out_dir=out_dir)
+    # ── Save raw per-(method, N, seed) results as CSV for later re-plotting ──
+    csv_path = os.path.join(out_dir, 'raw_results.csv')
+    fieldnames = ['method', 'N', 'seed', 'mspe_y', 'mspe_fx', 'mspe_fz',
+                  'corr_fx_z', 'val_loss']
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for method in METHODS:
+            for r in results[method]:
+                writer.writerow({
+                    'method': method,
+                    'N': r['N'], 'seed': r['seed'],
+                    'mspe_y': r['mspe_y'], 'mspe_fx': r['mspe_fx'],
+                    'mspe_fz': r['mspe_fz'], 'corr_fx_z': r['corr_fx_z'],
+                    'val_loss': r.get('val_loss', float('nan')),
+                })
+    print(f"Raw results saved to {csv_path} "
+          f"({len(args.N_values) * args.n_seeds * len(METHODS)} rows)\n")
+
+    plot_convergence(agg, args.N_values, true_corr=true_corr,
+                     baseline_ovb_corr=baseline_ovb_corr,
+                     baseline_ovb_mspe_fx=baseline_ovb_mspe_fx,
+                     cv1=args.cv1, cv2=args.cv2, sdy=sdy, out_dir=out_dir)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
