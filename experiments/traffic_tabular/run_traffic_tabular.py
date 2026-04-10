@@ -42,8 +42,13 @@ Usage:
 """
 import argparse
 import csv
+import datetime
+import json
 import multiprocessing as mp
 import os
+import socket
+import subprocess
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -210,6 +215,95 @@ class LinearBackbone(nn.Module):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Custom trainer for NAM with preconditioned lr_fz
+# ═══════════════════════════════════════════════════════════════════════════════
+def train_nam_precond(mlp_params, train_loader, val_loader, Z_train,
+                      lr_fx=3e-3, device='cpu', epochs=500, patience=20):
+    """NAM (CovarNetwork + MLP) with data-driven lr for the fz parameter.
+
+    Sets lr_fz to the theoretically optimal Newton step for the linear fz
+    subproblem:
+
+        lr_fz = 1 / λ_max(Z_c^T Z_c / N)
+
+    where Z_c is the centred Z. For a 1-D U[0, 1] covariate this collapses
+    to 1 / Var(Z) ≈ 12. The fx learning rate is the usual HP-search value.
+    Uses a CosineAnnealingLR schedule with early stopping.
+
+    covar_trainer doesn't support per-parameter-group learning rates, so the
+    training loop is open-coded here.
+    """
+    import copy
+
+    model = CovarNetwork(
+        backbone=mlp_params['backbone'],
+        backbone_params=mlp_params['backbone_params'],
+        num_covariates=1, link='identity',
+    ).to(device)
+
+    # ---- data-driven lr_fz from the curvature of the linear subproblem ----
+    Z = Z_train.to(device)
+    Zc = Z - Z.mean(dim=0, keepdim=True)
+    A = (Zc.T @ Zc) / max(1, Zc.shape[0])
+    lam_max = float(torch.linalg.eigvalsh(A).max())
+    lr_fz = 1.0 / max(lam_max, 1e-12)
+
+    opt = torch.optim.Adam([
+        {'params': [*model.backbone.parameters(), *model.fx.parameters()],
+         'lr': lr_fx, 'weight_decay': 1e-4},
+        {'params': [*model.fz.parameters(), model.intercept],
+         'lr': lr_fz, 'weight_decay': 0.0},
+    ])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    loss_fn = nn.MSELoss()
+
+    best_val = float('inf')
+    best_state = copy.deepcopy(model.state_dict())
+    best_epoch = 0
+    val_losses = []
+    pctr = 0
+
+    for epoch in range(epochs):
+        model.train()
+        for batch in train_loader:
+            x = batch['X'].to(device)
+            z = batch['Z'].to(device)
+            y = batch['y'].to(device)
+            opt.zero_grad()
+            loss = loss_fn(model(x, z), y)
+            loss.backward()
+            opt.step()
+        scheduler.step()
+
+        model.eval()
+        v_sum, v_n = 0.0, 0
+        with torch.no_grad():
+            for batch in val_loader:
+                x = batch['X'].to(device)
+                z = batch['Z'].to(device)
+                y = batch['y'].to(device)
+                v_sum += loss_fn(model(x, z), y).item() * y.size(0)
+                v_n += y.size(0)
+        v_loss = v_sum / max(1, v_n)
+        val_losses.append(v_loss)
+
+        if v_loss < best_val:
+            best_val = v_loss
+            best_state = copy.deepcopy(model.state_dict())
+            best_epoch = epoch
+            pctr = 0
+        else:
+            pctr += 1
+            if pctr >= patience:
+                break
+
+    model.load_state_dict(best_state)
+    model.val_losses_ = val_losses
+    model.best_epoch_ = best_epoch
+    return model
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Evaluation helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 @torch.no_grad()
@@ -240,7 +334,11 @@ def evaluate(model, X_te, Z_te, y_te, fx_te, fz_te):
         y_hat = model(X_te_d, Z_te_d).cpu()
     else:
         y_hat = model(X_te_d).cpu()
-    fx_hat = model.predict_fx(X_te_d).squeeze().cpu()
+    # PostHocCovarNetwork with orthogonalize=True requires z in predict_fx.
+    if getattr(model, 'orthogonalize', False):
+        fx_hat = model.predict_fx(X_te_d, Z_te_d).squeeze().cpu()
+    else:
+        fx_hat = model.predict_fx(X_te_d).squeeze().cpu()
     fz_hat = (model.predict_fz(Z_te_d).squeeze().cpu()
               if hasattr(model, 'predict_fz') else torch.zeros_like(fx_hat))
     return {
@@ -258,8 +356,8 @@ def evaluate(model, X_te, Z_te, y_te, fx_te, fz_te):
 def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
             hidden=64, out_features=32,
             lr=1e-3, scheduler=None, scheduler_kwargs=None,
-            device='cpu'):
-    """Train BaseNetwork + PostHocCovarNetwork on one (N, seed).
+            device='cpu', models_dir=None):
+    """Train all methods on one (N, seed).
 
     Args:
         lr: learning rate for the backbone training step.
@@ -268,9 +366,11 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
         scheduler_kwargs: kwargs dict for the scheduler class.
         device: 'cpu' or 'cuda'. Passed through to covar_trainer; evaluate()
             moves test tensors to the model's device automatically.
+        models_dir: if not None, save each fitted model to
+            ``{models_dir}/{method}_N{N}_seed{seed}.pt``.
 
     Returns:
-        {'baseline': metrics, 'posthoc': metrics}
+        dict method → metrics dict (with 'val_loss' field)
     """
     torch.manual_seed(seed)
 
@@ -316,10 +416,49 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
     nam_metrics = evaluate(nam_model, X_te, Z_te, y_te, fx_te, fz_te)
     nam_val_loss = float(nam_model.val_losses_[nam_model.best_epoch_])
 
+    # ── NAM precond: CovarNetwork with per-group lr ──
+    # lr_fx = HP (same as baseline / nam); lr_fz = 1 / λ_max(Z_c^T Z_c / N)
+    nam_precond_model = train_nam_precond(
+        mlp_params=mlp_params,
+        train_loader=train_loader, val_loader=val_loader,
+        Z_train=Z_tr[:half],
+        lr_fx=lr, device=device,
+        epochs=500, patience=20,
+    )
+    nam_precond_model.center_effects(train_loader)
+    nam_precond_metrics = evaluate(nam_precond_model, X_te, Z_te, y_te, fx_te, fz_te)
+    nam_precond_val_loss = float(
+        nam_precond_model.val_losses_[nam_precond_model.best_epoch_])
+
+    # ── NAM precond + PostHoc refit: take the nam_precond backbone, wrap in
+    # a fresh BaseNetwork, and refit the last layer via FWL+ridge. Tests
+    # whether the nam_precond-trained backbone features span f_x^true even
+    # after fast-fz training drove it toward f_x^re.
+    refit_base = BaseNetwork(
+        backbone=TabularMLP,
+        backbone_params=mlp_params['backbone_params'],
+        num_covariates=0, link='identity',
+    ).to(device)
+    refit_base.backbone.load_state_dict(nam_precond_model.backbone.state_dict())
+    nam_precond_refit_model = PostHocCovarNetwork(
+        refit_base, num_covariates=1).to(device)
+    nam_precond_refit_model.fit(train_loader, val_loader, n_lambdas=20)
+    nam_precond_refit_metrics = evaluate(
+        nam_precond_refit_model, X_te, Z_te, y_te, fx_te, fz_te)
+
     # ── PostHoc: refit last layer of the trained MLP with FWL+ridge ──
     phm = PostHocCovarNetwork(base_model, num_covariates=1).to(device)
     phm.fit(train_loader, val_loader, n_lambdas=20)
     ph_metrics = evaluate(phm, X_te, Z_te, y_te, fx_te, fz_te)
+
+    # ── PostHoc + Orth: reuses the same base_model, but the refit fits an
+    # orthogonalisation matrix so fx and fz are rendered orthogonal. This
+    # genuinely targets f_x^re (the Z-residualised effect), so MSPE(fx)
+    # against true f_x has a nonzero floor = b2^2 * c2^2 * Var(Z).
+    phm_orth = PostHocCovarNetwork(base_model, num_covariates=1,
+                                   orthogonalize=True).to(device)
+    phm_orth.fit(train_loader, val_loader, n_lambdas=20)
+    ph_orth_metrics = evaluate(phm_orth, X_te, Z_te, y_te, fx_te, fz_te)
 
     # ── Oracle: linear (identity backbone) + PostHoc FWL+ridge ──
     # No MLP training; PostHoc.fit does the ridge regression directly on H=X.
@@ -348,16 +487,39 @@ def run_one(N_train, seed, cv1=0.8, cv2=0.5, N_test=2000,
     oracle_ovb_metrics = evaluate(oracle_ovb, X_te, Z_te, y_te, fx_te, fz_te)
     oracle_ovb_val_loss = float(oracle_ovb.val_losses_[oracle_ovb.best_epoch_])
 
-    base_metrics['val_loss']       = base_val_loss
-    nam_metrics['val_loss']        = nam_val_loss
-    ph_metrics['val_loss']         = base_val_loss  # posthoc reuses base's training
-    oracle_metrics['val_loss']     = float('nan')   # no MLP training
-    oracle_ovb_metrics['val_loss'] = oracle_ovb_val_loss
-    return {'baseline':   base_metrics,
-            'nam':        nam_metrics,
-            'posthoc':    ph_metrics,
-            'oracle':     oracle_metrics,
-            'oracle_ovb': oracle_ovb_metrics}
+    base_metrics['val_loss']              = base_val_loss
+    nam_metrics['val_loss']               = nam_val_loss
+    nam_precond_metrics['val_loss']       = nam_precond_val_loss
+    nam_precond_refit_metrics['val_loss'] = nam_precond_val_loss  # reuses nam_precond training
+    ph_metrics['val_loss']                = base_val_loss  # posthoc reuses base's training
+    ph_orth_metrics['val_loss']           = base_val_loss  # same base_model
+    oracle_metrics['val_loss']            = float('nan')   # no MLP training
+    oracle_ovb_metrics['val_loss']        = oracle_ovb_val_loss
+
+    # ── Persist fitted models for post-hoc re-plotting and diagnosis ──
+    if models_dir is not None:
+        fitted = {
+            'baseline':          base_model,
+            'nam':               nam_model,
+            'nam_precond':       nam_precond_model,
+            'nam_precond_refit': nam_precond_refit_model,
+            'posthoc':           phm,
+            'posthoc_orth':      phm_orth,
+            'oracle':            oracle,
+            'oracle_ovb':        oracle_ovb,
+        }
+        for name, m in fitted.items():
+            fname = f'{name}_N{N_train}_seed{seed}.pt'
+            torch.save(m.state_dict(), os.path.join(models_dir, fname))
+
+    return {'baseline':          base_metrics,
+            'nam':               nam_metrics,
+            'nam_precond':       nam_precond_metrics,
+            'nam_precond_refit': nam_precond_refit_metrics,
+            'posthoc':           ph_metrics,
+            'posthoc_orth':      ph_orth_metrics,
+            'oracle':            oracle_metrics,
+            'oracle_ovb':        oracle_ovb_metrics}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -375,17 +537,25 @@ def aggregate(results, methods, metrics, N_values):
     return agg
 
 
-METHODS = ('baseline', 'nam', 'posthoc', 'oracle_ovb', 'oracle')
-COLORS = {'baseline':   '#888888',
-          'nam':        '#9467bd',
-          'posthoc':    '#1f77b4',
-          'oracle_ovb': '#ff7f0e',
-          'oracle':     '#2ca02c'}
-LABELS = {'baseline':   'Baseline (MLP, no Z)',
-          'nam':        'NAM (MLP + Z, joint)',
-          'posthoc':    'PostHoc (MLP + FWL)',
-          'oracle_ovb': 'Oracle OVB (Linear, no Z)',
-          'oracle':     'Oracle (Linear + FWL)'}
+METHODS = ('baseline', 'nam', 'nam_precond', 'nam_precond_refit',
+           'posthoc', 'posthoc_orth',
+           'oracle_ovb', 'oracle')
+COLORS = {'baseline':           '#888888',
+          'nam':                '#9467bd',
+          'nam_precond':        '#17becf',
+          'nam_precond_refit':  '#8c564b',
+          'posthoc':            '#1f77b4',
+          'posthoc_orth':       '#e377c2',
+          'oracle_ovb':         '#ff7f0e',
+          'oracle':             '#2ca02c'}
+LABELS = {'baseline':           'Baseline (MLP, no Z)',
+          'nam':                'NAM (MLP + Z, joint)',
+          'nam_precond':        r'NAM precond ($\eta_g = 1/\lambda_\mathrm{max}$)',
+          'nam_precond_refit':  'NAM precond + PostHoc refit',
+          'posthoc':            'PostHoc (MLP + FWL)',
+          'posthoc_orth':       r'PostHoc + Orth ($f_x^\mathrm{re}$)',
+          'oracle_ovb':         'Oracle OVB (Linear, no Z)',
+          'oracle':             'Oracle (Linear + FWL)'}
 
 
 def plot_convergence(agg, N_values, true_corr, baseline_ovb_corr,
@@ -434,16 +604,102 @@ def plot_convergence(agg, N_values, true_corr, baseline_ovb_corr,
         ax.minorticks_off()  # suppress default minor log ticks between our explicit ones
         if log_y:
             ax.set_yscale('log')
+            # Prevent matplotlib from auto-scaling the y-axis to absurd ranges
+            # (e.g. 10^-15) when fill_between regions are narrow.
+            if metric in ('mspe_fx', 'mspe_fz'):
+                ax.set_ylim(bottom=1e-4)
+            elif metric == 'mspe_y':
+                ax.set_ylim(0.95, 1.30)
     axes[0].legend(fontsize=8, loc='upper right')
-    axes[1].legend(fontsize=7, loc='upper right')   # show baseline OVB hline on MSPE(fx)
-    axes[-1].legend(fontsize=7, loc='lower right')  # show both hline labels on Corr panel
     fig.suptitle(f'Traffic tabular DGP (cv1={cv1}, cv2={cv2}): '
-                 f'baseline vs PostHoc vs Oracle convergence', fontsize=11)
+                 f'method comparison across N', fontsize=11)
     fig.tight_layout()
     for ext in ('pdf', 'png'):
         fig.savefig(os.path.join(out_dir, f'n_sweep.{ext}'),
                     bbox_inches='tight', dpi=150)
     print(f"Plot saved to {out_dir}/n_sweep.{{pdf,png}}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Run directory infrastructure (immutable, timestamped, self-contained)
+# ═══════════════════════════════════════════════════════════════════════════════
+class TeeStream:
+    """Duplicate writes to two streams (e.g. stdout + a log file)."""
+    def __init__(self, primary, secondary):
+        self.primary = primary
+        self.secondary = secondary
+
+    def write(self, data):
+        self.primary.write(data)
+        self.secondary.write(data)
+        self.secondary.flush()
+
+    def flush(self):
+        self.primary.flush()
+        self.secondary.flush()
+
+
+def _git_commit():
+    """Return current git HEAD hash, or 'unknown' if not in a repo."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        out = subprocess.check_output(
+            ['git', '-C', here, 'rev-parse', 'HEAD'],
+            stderr=subprocess.DEVNULL,
+        )
+        return out.decode().strip()
+    except Exception:
+        return 'unknown'
+
+
+def setup_run_dir(out_root, run_name=None):
+    """Create a timestamped run directory under ``out_root/runs/``.
+
+    Returns the run_dir path. Never overwrites: if ``run_name`` collides it
+    appends a suffix. Creates ``models/`` subdirectory.
+    """
+    timestamp = datetime.datetime.now().strftime('%Y%m%dT%H%M%S')
+    base = timestamp if run_name is None else f'{timestamp}_{run_name}'
+    runs_root = os.path.join(out_root, 'runs')
+    os.makedirs(runs_root, exist_ok=True)
+    run_dir = os.path.join(runs_root, base)
+    suffix = 0
+    while os.path.exists(run_dir):
+        suffix += 1
+        run_dir = os.path.join(runs_root, f'{base}_{suffix}')
+    os.makedirs(run_dir)
+    os.makedirs(os.path.join(run_dir, 'models'))
+    return run_dir
+
+
+def write_config_and_manifest(run_dir, config, start_time):
+    """Write config.json (hyperparameters, DGP params, CLI args) and
+    manifest.json (PID, host, git commit, start time)."""
+    with open(os.path.join(run_dir, 'config.json'), 'w') as f:
+        json.dump(config, f, indent=2)
+    manifest = {
+        'pid':        os.getpid(),
+        'host':       socket.gethostname(),
+        'git_commit': _git_commit(),
+        'start_time': start_time,
+        'run_dir':    run_dir,
+        'argv':       sys.argv,
+    }
+    with open(os.path.join(run_dir, 'manifest.json'), 'w') as f:
+        json.dump(manifest, f, indent=2)
+    return manifest
+
+
+def finalize_manifest(run_dir, status, total_seconds):
+    """Update manifest.json with end_time, status, and total runtime."""
+    manifest_path = os.path.join(run_dir, 'manifest.json')
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+    manifest['end_time'] = datetime.datetime.now().isoformat()
+    manifest['status'] = status
+    manifest['total_seconds'] = round(total_seconds, 1)
+    with open(manifest_path, 'w') as f:
+        json.dump(manifest, f, indent=2)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -526,13 +782,14 @@ def hp_search(device, N_hp=800, n_seeds=2, cv1=0.8, cv2=0.5):
 # ═══════════════════════════════════════════════════════════════════════════════
 # N sweep (main experiment)
 # ═══════════════════════════════════════════════════════════════════════════════
-def n_sweep(args, device, lr, scheduler_name, out_dir):
+def n_sweep(args, device, lr, scheduler_name, run_dir):
     sdy = 1.0  # DGP noise std; Bayes-optimal MSPE(y) is sdy²
     true_corr            = true_corr_fx_z(b2=1.0, b3=1.0, cv2=args.cv2)
     baseline_ovb_corr    = baseline_corr_ols_limit(b2=1.0, b3=1.0, bz=1.0,
                                                    cv1=args.cv1, cv2=args.cv2)
     baseline_ovb_mspe_fx = baseline_mspe_fx_ols_limit(b2=1.0, b3=1.0, bz=1.0,
                                                       cv1=args.cv1, cv2=args.cv2)
+    print(f"Run dir: {run_dir}")
     print(f"Analytic references (b2=b3=bz=1, cv1={args.cv1}, cv2={args.cv2}):")
     print(f"  Oracle Corr (true)                = {true_corr:.4f}")
     print(f"  Oracle OVB  Corr (OLS limit)      = {baseline_ovb_corr:.4f}")
@@ -542,6 +799,10 @@ def n_sweep(args, device, lr, scheduler_name, out_dir):
           f"device={device}  lr={lr:.0e}  sched={scheduler_name}\n", flush=True)
 
     sched_cls, sched_kw = resolve_scheduler(scheduler_name)
+
+    # Models directory (created already by setup_run_dir, but be defensive).
+    models_dir = os.path.join(run_dir, 'models')
+    os.makedirs(models_dir, exist_ok=True)
 
     t0 = time.time()
     results = {m: [] for m in METHODS}
@@ -563,7 +824,7 @@ def n_sweep(args, device, lr, scheduler_name, out_dir):
                     run_one, N, seed,
                     cv1=args.cv1, cv2=args.cv2,
                     lr=lr, scheduler=sched_cls, scheduler_kwargs=sched_kw,
-                    device=device,
+                    device=device, models_dir=models_dir,
                 )
                 futures_meta[f] = (N, seed)
 
@@ -601,7 +862,7 @@ def n_sweep(args, device, lr, scheduler_name, out_dir):
         print()
 
     # ── Save raw per-(method, N, seed) results as CSV for later re-plotting ──
-    csv_path = os.path.join(out_dir, 'raw_results.csv')
+    csv_path = os.path.join(run_dir, 'raw_results.csv')
     fieldnames = ['method', 'N', 'seed', 'mspe_y', 'mspe_fx', 'mspe_fz',
                   'corr_fx_z', 'val_loss']
     with open(csv_path, 'w', newline='') as f:
@@ -622,7 +883,7 @@ def n_sweep(args, device, lr, scheduler_name, out_dir):
     plot_convergence(agg, args.N_values, true_corr=true_corr,
                      baseline_ovb_corr=baseline_ovb_corr,
                      baseline_ovb_mspe_fx=baseline_ovb_mspe_fx,
-                     cv1=args.cv1, cv2=args.cv2, sdy=sdy, out_dir=out_dir)
+                     cv1=args.cv1, cv2=args.cv2, sdy=sdy, out_dir=run_dir)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -636,7 +897,8 @@ def main():
                         help='number of parallel subprocesses for the sweep '
                              '(set to 1 to run sequentially)')
     parser.add_argument('--N-values', type=int, nargs='+',
-                        default=[100, 200, 400, 800, 1600, 3200, 6400, 12800])
+                        default=[100, 200, 400, 800, 1600, 3200, 6400, 12800,
+                                 25600, 51200])
     parser.add_argument('--cv1', type=float, default=0.8)
     parser.add_argument('--cv2', type=float, default=0.5)
     parser.add_argument('--lr', type=float, default=1e-3)
@@ -644,6 +906,8 @@ def main():
                         default='plateau')
     parser.add_argument('--device', default='auto',
                         help='"auto" picks cuda if available, else cpu')
+    parser.add_argument('--run-name', default=None,
+                        help='optional suffix appended to the timestamped run dir')
     args = parser.parse_args()
 
     if args.device == 'auto':
@@ -651,14 +915,64 @@ def main():
     else:
         device = args.device
 
-    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output')
-    os.makedirs(out_dir, exist_ok=True)
+    out_root = os.path.dirname(os.path.abspath(__file__))
 
     if args.mode == 'hp_search':
+        # HP search is quick and doesn't need a run dir.
         hp_search(device=device, cv1=args.cv1, cv2=args.cv2)
-    else:
+        return
+
+    # ── Create a fresh run directory for this sweep ──
+    run_dir = setup_run_dir(out_root, run_name=args.run_name)
+    start_time = datetime.datetime.now().isoformat()
+
+    # Redirect stdout/stderr into progress.log in addition to the terminal so
+    # background runs can be monitored via `tail -f progress.log`.
+    log_path = os.path.join(run_dir, 'progress.log')
+    log_file = open(log_path, 'w', buffering=1)  # line-buffered
+    sys.stdout = TeeStream(sys.stdout, log_file)
+    sys.stderr = TeeStream(sys.stderr, log_file)
+
+    config = {
+        'mode':        args.mode,
+        'cv1':         args.cv1,
+        'cv2':         args.cv2,
+        'N_values':    list(args.N_values),
+        'n_seeds':     args.n_seeds,
+        'n_workers':   args.n_workers,
+        'lr':          args.lr,
+        'scheduler':   args.scheduler,
+        'device':      device,
+        'dgp': {
+            'b2': 1.0, 'b3': 1.0, 'bz': 1.0, 'sdy': 1.0,
+            'N_test': 2000, 'seed_test': 9999,
+        },
+        'mlp': {'in_features': 3, 'hidden': 64, 'out_features': 32},
+        'training': {'epochs': 500, 'patience': 20, 'batch_size_cap': 64},
+        'methods': list(METHODS),
+    }
+    write_config_and_manifest(run_dir, config, start_time)
+
+    t_start = time.time()
+    status = 'unknown'
+    try:
         n_sweep(args, device=device, lr=args.lr, scheduler_name=args.scheduler,
-                out_dir=out_dir)
+                run_dir=run_dir)
+        status = 'completed'
+    except KeyboardInterrupt:
+        status = 'interrupted'
+        raise
+    except Exception as e:
+        status = f'failed: {type(e).__name__}: {e}'
+        raise
+    finally:
+        finalize_manifest(run_dir, status, time.time() - t_start)
+        # Restore stdout/stderr BEFORE closing the log file, otherwise
+        # interpreter shutdown tries to flush via TeeStream into a closed file.
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        log_file.flush()
+        log_file.close()
 
 
 if __name__ == '__main__':
