@@ -1,4 +1,3 @@
-import copy
 import torch
 import torch.nn as nn
 
@@ -14,6 +13,8 @@ def covar_trainer(
     lr=1e-3,
     weight_decay=1e-4,
     patience=12,
+    use_amp=False,
+    amp_dtype=torch.bfloat16,
 ):
     """
     Train a covariance model with early stopping.
@@ -28,6 +29,12 @@ def covar_trainer(
         lr (float): Learning rate.
         weight_decay (float): L2 regularization.
         patience (int): Early stopping patience.
+        use_amp (bool): Enable mixed-precision autocast. Disabled by default
+            because the optimal dtype is hardware-dependent (bf16 on
+            Ampere+, fp16+GradScaler on older GPUs). The caller must opt in.
+        amp_dtype: dtype for autocast. Default `torch.bfloat16` (A100+).
+            For older GPUs pass `torch.float16` — but note: fp16 requires
+            GradScaler, which is NOT handled here. Use bf16 or no-AMP.
 
     Returns:
         Trained model (on the specified device).
@@ -44,18 +51,25 @@ def covar_trainer(
         optimizer, mode="min", patience=max(1, patience - 2), factor=0.5
     )
 
+    # Autocast only if caller asks and we are on CUDA. bf16 has fp32
+    # dynamic range → no GradScaler needed. fp16 would — not supported here.
+    amp_enabled = use_amp and device.type == "cuda"
+
     best_val_loss = float("inf")
-    best_state = copy.deepcopy(model.state_dict())
+    best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     patience_counter = 0
 
     for epoch in range(epochs):
         model.train()
         for batch in train_loader:
-            x, z, y = batch["X"].to(device), batch["Z"].to(device), batch["y"].to(device)
+            x = batch["X"].to(device, non_blocking=True)
+            z = batch["Z"].to(device, non_blocking=True)
+            y = batch["y"].to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            preds = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
-            loss = loss_fn(preds, y)
+            with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
+                preds = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
+                loss = loss_fn(preds, y)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -63,24 +77,26 @@ def covar_trainer(
 
         # --- Validation ---
         model.eval()
-        val_loss = 0.0
+        val_loss_sum = torch.zeros((), device=device)
         n_val = 0
 
         with torch.no_grad():
             for batch in val_loader:
-                x, z, y = batch["X"].to(device), batch["Z"].to(device), batch["y"].to(device)
-                preds = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
-                loss = loss_fn(preds, y)
-                val_loss += loss.item() * x.size(0)
+                x = batch["X"].to(device, non_blocking=True)
+                z = batch["Z"].to(device, non_blocking=True)
+                y = batch["y"].to(device, non_blocking=True)
+                with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
+                    preds = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
+                    val_loss_sum += loss_fn(preds, y) * x.size(0)
                 n_val += x.size(0)
 
-        val_loss /= max(1, n_val)
+        val_loss = (val_loss_sum / max(1, n_val)).item()
         scheduler.step(val_loss)
 
         # --- Early stopping ---
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_state = copy.deepcopy(model.state_dict())
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1
