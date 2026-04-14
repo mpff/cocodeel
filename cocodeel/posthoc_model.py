@@ -161,8 +161,11 @@ class PostHocCovarNetwork(BaseNetwork):
             self.intercept.data = self._link_function(self.center_y.mean).view(1)  # mean defined as shape (1,)!
 
             best_val_loss = float("inf")
+            best_val_loss_any = float("inf")  # fallback: best val loss ignoring convergence
             best_state = None
+            best_state_any = None
             best_lambda = None
+            best_lambda_any = None
 
             for lambd in lambda_path:
 
@@ -206,19 +209,34 @@ class PostHocCovarNetwork(BaseNetwork):
                     "beta_fz_norm": beta_fz_norm,
                 })
 
-                if val_loss < best_val_loss:
-                    if diag["converged"] == True:
-                        best_val_loss = val_loss
-                        best_lambda = lambd
-                        best_state = {
-                            "fx": self.fx.weight.data.clone(),
-                            "fz": self.fz.weight.data.clone(),
-                            "intercept": self.intercept.data.clone(),
-                        }
+                if val_loss < best_val_loss and diag["converged"] == True:
+                    best_val_loss = val_loss
+                    best_lambda = lambd
+                    best_state = {
+                        "fx": self.fx.weight.data.clone(),
+                        "fz": self.fz.weight.data.clone(),
+                        "intercept": self.intercept.data.clone(),
+                    }
+
+                # Unconditional fallback — used if no lambda converges.
+                if val_loss < best_val_loss_any:
+                    best_val_loss_any = val_loss
+                    best_lambda_any = lambd
+                    best_state_any = {
+                        "fx": self.fx.weight.data.clone(),
+                        "fz": self.fz.weight.data.clone(),
+                        "intercept": self.intercept.data.clone(),
+                    }
 
                 self.fx.weight.data.zero_()
                 self.fz.weight.data.zero_()
                 self.intercept.data = self._link_function(self.center_y.mean).view(1)  # mean defined as shape (1,)!
+
+            # If no lambda converged, fall back to best unconverged state.
+            if best_state is None:
+                print("Warning: no converged solution found across lambda path — using best unconverged state.")
+                best_state = best_state_any
+                best_lambda = best_lambda_any
 
             # check if best lambda is at the edge of the path, if so expand the path and repeat.
             if len(lambda_path) == 1:
