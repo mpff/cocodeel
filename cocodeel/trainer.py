@@ -56,6 +56,7 @@ def covar_trainer(
     # Default device and loss function
     device = torch.device(device or "cpu")
     loss_fn = loss_fn or nn.MSELoss()
+    loss_fn = loss_fn.to(device)  # move buffers (e.g. pos_weight) to device
 
     # Initialize and move model to device
     model = model(**model_params).to(device)
