@@ -73,10 +73,10 @@ class PostHocCovarNetwork(BaseNetwork):
 
         Args:
             penalty_z: Optional fixed penalty matrix for fz, shape (num_covariates, num_covariates).
-                Build on the *centered* Z scale (after center_z, before Z_std normalisation).
-                _solve_fixed_lambda applies the Z_std correction internally:
-                    P_z_std = diag(1/Z_std) @ penalty_z @ diag(1/Z_std)
-                _fit_orthogonalization uses penalty_z on the centered scale directly.
+                Build on the *standardized* Z scale (after center_z and Z_std division).
+                _solve_fixed_lambda receives already-standardized Z, so penalty_z is applied
+                in that scale directly.
+                _fit_orthogonalization still operates on the centered (not standardized) scale.
                 Typical use: P-spline roughness penalty for spline-expanded covariates.
         """
         self.center_effects(train_dataloader)
@@ -122,13 +122,16 @@ class PostHocCovarNetwork(BaseNetwork):
         Z_train = self.center_z(Z_train)
 
         X_std = X_train.std(dim=0, keepdim=True) + 1e-6
+        Z_std = Z_train.std(dim=0, keepdim=True) + 1e-6
 
         X_train = X_train / X_std
+        Z_train = Z_train / Z_std
 
         # ---- Extract validation data ----
         X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
         X_val = self.center_x(X_val)
         Z_val = self.center_z(Z_val)
+        Z_val = Z_val / Z_std
 
         # ---- Build lambda path ---- (see glmnet paper)
         lambda_max = self._get_lambda_max(X_train, Z_train, y_train)
@@ -173,8 +176,9 @@ class PostHocCovarNetwork(BaseNetwork):
                     tol,
                     penalty_z=penalty_z,
                 )
-                # Update fx weights to account for X standardization.
+                # Update fx/fz weights to account for X/Z standardization.
                 self.fx.weight.data /= X_std
+                self.fz.weight.data /= Z_std
 
                 beta_fx_norm = float(self.fx.weight.data.norm())
                 beta_fz_norm = float(self.fz.weight.data.norm())
