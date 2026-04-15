@@ -6,6 +6,9 @@
 **/results/*/archive/**
 cocodeel.Rproj
 
+# Local research library (PDFs, cloned reference repos — kept locally, not versioned)
+research/papers/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
