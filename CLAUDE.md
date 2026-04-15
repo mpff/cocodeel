@@ -64,11 +64,30 @@ model = covar_trainer(CovarNetwork, model_params, train_loader, val_loader, pati
 model = model.center_effects(train_loader)
 ```
 
-**Post-hoc:**
+**Post-hoc (sample-split, recommended):**
 ```python
+# Two disjoint samples: A trains the backbone, B refits the posthoc.
+base = covar_trainer(BaseNetwork, model_params, train_loader_A, val_loader_A)
+posthoc = PostHocCovarNetwork(base, num_covariates=1, orthogonalize=False)
+posthoc = posthoc.fit(train_loader_B, val_loader_B)  # centers on B internally
+```
+
+**Why sample-splitting.** The posthoc features `H = phi(X; theta*)` are a
+generated regressor: `theta*` depends on `y`, so fitting on the backbone's
+training sample violates exogeneity (`E[Hᵀε] ≠ 0`) and biases the FWL+ridge
+refit (Pagan 1984). On a sample disjoint from the backbone's training set,
+`H` is a deterministic function of `X` and FWL+ridge regain unbiasedness.
+See `research/session-B-endogeneity-notes.md` and `research/session-D-synthesis.md`
+for the full derivation and UKBB evidence. The
+`experiments/simulation_images/utils.py:simulate_dataloaders_split` helper
+builds three disjoint partitions (`full`, `half_A`, `half_B`) from one draw.
+
+**Post-hoc (same-sample, legacy — biased):**
+```python
+# Only use for comparison against the split recipe. Biased under endogeneity.
 base = covar_trainer(BaseNetwork, model_params, train_loader, val_loader)
 posthoc = PostHocCovarNetwork(base, num_covariates=1, orthogonalize=False)
-posthoc = posthoc.fit(train_loader, val_loader)  # centers internally
+posthoc = posthoc.fit(train_loader, val_loader)
 ```
 
 ### Testing Conventions
@@ -77,14 +96,15 @@ posthoc = posthoc.fit(train_loader, val_loader)  # centers internally
 
 ## Experiments (`experiments/`)
 - `simulation_images/` — simulation study with synthetic image data (notebooks + R scripts for figures)
-- `simulation_linear/` — linear simulation baseline
 
 ### Key Files
-- `experiments/simulation_images/1-simulation.ipynb` — runs simulation
+- `experiments/simulation_images/1-simulation.ipynb` — runs simulation using the sample-split recipe (see `simulate_and_fit`)
 - `experiments/simulation_images/2-evaluation.ipynb` — evaluates results
+- `experiments/simulation_images/3-smoke_test_sample_splitting.py` — contrasts same-sample vs. split recipes on paper settings
 - `experiments/simulation_images/4-Figure*.R` — final paper figures (R/ggplot2)
+- `experiments/simulation_images/utils.py` — `simulate_dataloader` and `simulate_dataloaders_split` helpers
 - `results/simulation_images/` — CSV results per simulation setting
-- `graphics/` — output figures (PDFs) for the paper
+- `graphics/` — output figures (PDFs) produced by the R scripts
 
 ## Experiment Management
 
