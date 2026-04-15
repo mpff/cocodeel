@@ -100,7 +100,6 @@ posthoc = posthoc.fit(train_loader, val_loader)
 ### Key Files
 - `experiments/simulation_images/1-simulation.ipynb` — runs simulation using the sample-split recipe (see `simulate_and_fit`)
 - `experiments/simulation_images/2-evaluation.ipynb` — evaluates results
-- `experiments/simulation_images/3-smoke_test_sample_splitting.py` — contrasts same-sample vs. split recipes on paper settings
 - `experiments/simulation_images/4-Figure*.R` — final paper figures (R/ggplot2)
 - `experiments/simulation_images/utils.py` — `simulate_dataloader` and `simulate_dataloaders_split` helpers
 - `results/simulation_images/` — CSV results per simulation setting
