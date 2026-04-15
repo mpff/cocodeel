@@ -30,25 +30,43 @@ def fmt(x, d=4):
 
 
 def main():
-    if not CSV.exists():
-        print(f"Expected {CSV} — run 3-smoke_test_sample_splitting.py first.", file=sys.stderr)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", type=str, default=str(CSV))
+    ap.add_argument("--out", type=str, default=str(OUT))
+    args = ap.parse_args()
+    csv_path = Path(args.csv).resolve()
+    out_path = Path(args.out).resolve()
+
+    if not csv_path.exists():
+        print(f"Expected {csv_path} — run 3-smoke_test_sample_splitting.py first.", file=sys.stderr)
         sys.exit(1)
 
-    df = pd.read_csv(CSV)
-    settings = df["setting"].unique().tolist()
+    df = pd.read_csv(csv_path)
     methods = ["base_full", "base_half", "posthoc", "posthoc_same_sample"]
+    # Group by (setting, n_total) so we can scan N-scaling within the same setting.
+    df["setting_N"] = df["setting"] + "@N=" + df["n_total"].astype(str)
+    settings = df["setting_N"].unique().tolist()
 
     lines = [
         "# Smoke-test report — sample-splitting vs. same-sample posthoc",
         "",
-        f"Source: `{CSV.relative_to(ROOT)}`  ({len(df)} rows, "
-        f"{df['sim_id'].nunique()} sims per setting, {len(settings)} settings).",
+        f"Source: `{csv_path.relative_to(ROOT)}`  ({len(df)} rows, "
+        f"{df['sim_id'].nunique()} sims per (setting, N), {len(settings)} (setting, N) pairs).",
         "",
         "## Methods",
         "- `base_full`: backbone on full N observations (paper's reference).",
-        "- `base_half`: backbone on first N/2 observations (new-recipe backbone).",
-        "- `posthoc`: PostHocCovarNetwork(base_half).fit(half_B) — **new, split recipe**.",
-        "- `posthoc_same_sample`: PostHocCovarNetwork(base_full).fit(full) — **old, same-sample recipe**.",
+        "- `base_half`: backbone on first N/2 observations (split-recipe backbone).",
+        "- `posthoc`: PostHocCovarNetwork(base_half).fit(half_B) — **mathematically correct (split) recipe**.",
+        "- `posthoc_same_sample`: PostHocCovarNetwork(base_full).fit(full) — **biased same-sample recipe** (kept only as a reference).",
+        "",
+        "Note on framing: `posthoc_same_sample` is a biased estimator (Pagan 1984",
+        "generated regressors — the refit reuses the backbone's training sample,",
+        "so H = phi(X; theta*) is endogenous w.r.t. y). At finite N its MSPE to",
+        "ground truth can happen to be lower than the split's, not because it's",
+        "closer to the truth in expectation but because both estimators are",
+        "noisy and the biased one may variance-regularise toward its own sample",
+        "noise. As N → infinity, only the split recipe is consistent.",
         "",
         "## Per-setting MSPE(f̂_X): mean ± std across sims",
         "",
@@ -56,7 +74,7 @@ def main():
         "|---" + "|---" * len(methods) + "|",
     ]
     for s in settings:
-        sub = df[df["setting"] == s]
+        sub = df[df["setting_N"] == s]
         cells = []
         for m in methods:
             x = sub[sub["method"] == m]["mspe_fx"]
@@ -75,7 +93,7 @@ def main():
         "|---|---|---|",
     ]
     for s in settings:
-        sub = df[df["setting"] == s]
+        sub = df[df["setting_N"] == s]
         # pivot to (sim_id, method)
         piv = sub.pivot_table(index="sim_id", columns="method", values="mspe_fx")
         if "posthoc" in piv.columns and "posthoc_same_sample" in piv.columns:
@@ -95,7 +113,7 @@ def main():
         "|---|---|---|",
     ]
     for s in settings:
-        sub = df[df["setting"] == s]
+        sub = df[df["setting_N"] == s]
         v_split = sub[sub["method"] == "posthoc"]["mean_fx_hat"].std()
         v_same  = sub[sub["method"] == "posthoc_same_sample"]["mean_fx_hat"].std()
         lines.append(f"| {s} | {fmt(v_split)} | {fmt(v_same)} |")
@@ -120,9 +138,12 @@ def main():
         "",
     ]
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("\n".join(lines))
-    print(f"Wrote {OUT.relative_to(ROOT)}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines))
+    try:
+        print(f"Wrote {out_path.relative_to(ROOT)}")
+    except ValueError:
+        print(f"Wrote {out_path}")
 
 
 if __name__ == "__main__":

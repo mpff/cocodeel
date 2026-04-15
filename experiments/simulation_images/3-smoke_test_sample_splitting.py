@@ -60,17 +60,19 @@ SETTINGS = {
         dict(bz=0.0,  b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
     "fig1b_gauss_bz1":
         dict(bz=1.0,  b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
+    # Fig 3: Bernoulli (concurvity setting).
+    "fig3_binary":
+        dict(bz=1.0,  b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="binary",    q=32),
     # Fig 4a: q-sweep at default cv1=0.8.
     "fig4a_q4":    dict(bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=4),
     "fig4a_q32":   dict(bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
     "fig4a_q256":  dict(bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=256),
     "fig4a_q1024": dict(bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=1024),
-    # Fig 4b: cv1-sweep at default q=32.
-    "fig4b_cv0":   dict(bz=1.0, b2=1., b3=1., cv1=0.0, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
-    "fig4b_cv4":   dict(bz=1.0, b2=1., b3=1., cv1=0.4, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
-    "fig4b_cv8":   dict(bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
-    # Note: Fig 3 (Bernoulli concurvity) deferred — IRLS is unstable at N=400.
-    # A separate run at paper-scale N (~25k) is needed for that setting.
+    # Fig 4b: cv1-sweep at default q=32. cv1=0.95 is the "nearly perfect correlation" stress test.
+    "fig4b_cv0":   dict(bz=1.0, b2=1., b3=1., cv1=0.0,  cv2=0.5, sdy=1., outcome_type="continuous", q=32),
+    "fig4b_cv4":   dict(bz=1.0, b2=1., b3=1., cv1=0.4,  cv2=0.5, sdy=1., outcome_type="continuous", q=32),
+    "fig4b_cv8":   dict(bz=1.0, b2=1., b3=1., cv1=0.8,  cv2=0.5, sdy=1., outcome_type="continuous", q=32),
+    "fig4b_cv95":  dict(bz=1.0, b2=1., b3=1., cv1=0.95, cv2=0.5, sdy=1., outcome_type="continuous", q=32),
 }
 
 
