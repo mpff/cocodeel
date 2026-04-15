@@ -17,6 +17,44 @@ def simulate_dataloader(simulation_params, seed=0):
     return train_loader, val_loader
 
 
+def simulate_dataloaders_split(simulation_params, seed=0):
+    """Draw one dataset and return three disjoint-partition loader pairs.
+
+    Returns ``(full, half_A, half_B)`` where each element is
+    ``(train_loader, val_loader)``. ``full`` covers all N observations;
+    ``half_A`` and ``half_B`` partition them 50/50 by observation index so
+    their observations are disjoint. Within each partition, a 50/50 train/val
+    subsplit is used for the trainer's early stopping and the posthoc's
+    lambda-path validation.
+
+    Use ``full`` and ``half_A`` to train baseline backbones; use ``half_B`` for
+    the ``PostHocCovarNetwork`` refit. Observation-level disjointness makes the
+    posthoc features ``H = phi(X_B; theta*)`` a deterministic function of
+    ``X_B`` (not of ``y_B``), which restores exogeneity for the FWL+ridge
+    refit (Pagan 1984).
+    """
+    torch.manual_seed(seed)
+    X, Z, y, fx, fz, fr = simulate_traffic_light_data(**simulation_params, seed=seed)
+    N = X.shape[0]
+    half = N // 2
+    base_batch = 200 if N >= 200 else N
+
+    def _make_pair(X_, Z_, y_):
+        n = X_.shape[0]
+        tr = CovarDataset(X_[:n // 2], Z_[:n // 2], y_[:n // 2])
+        va = CovarDataset(X_[n // 2:], Z_[n // 2:], y_[n // 2:])
+        bs = min(base_batch, n)
+        return (
+            DataLoader(tr, batch_size=bs, shuffle=True),
+            DataLoader(va, batch_size=bs, shuffle=False),
+        )
+
+    full   = _make_pair(X, Z, y)
+    half_A = _make_pair(X[:half], Z[:half], y[:half])
+    half_B = _make_pair(X[half:], Z[half:], y[half:])
+    return full, half_A, half_B
+
+
 def predict(model, test_loader, device='cpu'):
     model.to(device)
     model.eval()
