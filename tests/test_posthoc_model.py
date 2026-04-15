@@ -439,5 +439,91 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
 
 
 
+class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
+    """Regression test: PostHocCovarNetwork.fit works when the refit loader's
+    observations are disjoint from the sample used to pretrain the backbone.
+
+    This is the `sample-split` recipe — the backbone was fit on sample A; the
+    posthoc is refitted on sample B. Exogeneity of H = phi(X_B; theta*) is then
+    restored (Pagan 1984 generated regressors). The test verifies the API runs
+    cleanly and recovers centered effects on a disjoint sample.
+    """
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(123)
+        self.out_features = 3
+        self.num_covariates = 1
+
+        # Two independent draws from the same DGP — A is for the backbone, B for the refit.
+        n = 200
+        self.X_A = torch.randn(n, 3)
+        self.Z_A = torch.randn(n, self.num_covariates)
+        self.y_A = (2 * self.X_A[:, 0] + 3 * self.Z_A[:, 0] + 1.5).unsqueeze(1)
+        self.X_B = torch.randn(n, 3)
+        self.Z_B = torch.randn(n, self.num_covariates)
+        self.y_B = (2 * self.X_B[:, 0] + 3 * self.Z_B[:, 0] + 1.5).unsqueeze(1)
+
+        # DataLoaders: use half of each sample for train, half for val.
+        def _make(X, Z, y, bs=25):
+            tr = CovarDataset(X[:n // 2], Z[:n // 2], y[:n // 2])
+            va = CovarDataset(X[n // 2:], Z[n // 2:], y[n // 2:])
+            return DataLoader(tr, batch_size=bs), DataLoader(va, batch_size=bs)
+
+        self.tr_A, self.va_A = _make(self.X_A, self.Z_A, self.y_A)
+        self.tr_B, self.va_B = _make(self.X_B, self.Z_B, self.y_B)
+
+        # Base model with an identity backbone (simulates a pretrained feature map).
+        self.base = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={"in_features": 3, "out_features": self.out_features},
+            num_covariates=self.num_covariates,
+            link="identity",
+        )
+        self.base.backbone.linear.weight.data = torch.eye(self.out_features, 3)
+        self.base.backbone.linear.bias.data.zero_()
+        self.base = self.base.center_effects(self.tr_A)  # center on the A-sample
+
+    @torch.no_grad()
+    def test_posthoc_runs_on_disjoint_refit_sample(self):
+        """Split recipe: backbone on A, posthoc refit on B. Must run and
+        recover effects close to truth."""
+        model = PostHocCovarNetwork(
+            model=self.base,
+            num_covariates=self.num_covariates,
+            orthogonalize=False,
+        )
+        # Refit on B (disjoint from A).
+        model.fit(self.tr_B, self.va_B, lam=0.0)
+
+        # Basic invariants.
+        self.assertEqual(model.is_centered, True)
+        # Effects should recover truth within tolerance.
+        torch.testing.assert_close(
+            model.fz.weight.data[0, 0], torch.tensor(3.0).float(),
+            rtol=rtol, atol=atol,
+        )
+        torch.testing.assert_close(
+            model.fx.weight.data[0, 0], torch.tensor(2.0).float(),
+            rtol=rtol, atol=atol,
+        )
+
+    @torch.no_grad()
+    def test_posthoc_fx_centered_on_refit_sample(self):
+        """After refit on B, f̂_X and f̂_Z should be mean-zero on B (the refit
+        sample's centering), not on A."""
+        model = PostHocCovarNetwork(
+            model=self.base,
+            num_covariates=self.num_covariates,
+            orthogonalize=False,
+        )
+        model.fit(self.tr_B, self.va_B, lam=0.0)
+
+        fx_B = model.predict_fx(self.X_B[:100], self.Z_B[:100])
+        fz_B = model.predict_fz(self.Z_B[:100])
+        self.assertTrue(torch.allclose(fx_B.mean(dim=0), torch.zeros_like(fx_B.mean(dim=0)), atol=1e-4))
+        self.assertTrue(torch.allclose(fz_B.mean(dim=0), torch.zeros_like(fz_B.mean(dim=0)), atol=1e-4))
+
+
 if __name__ == '__main__':
     unittest.main()
