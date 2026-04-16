@@ -128,10 +128,16 @@ class PostHocCovarNetwork(BaseNetwork):
         Z_train = Z_train / Z_std
 
         # ---- Extract validation data ----
+        # Keep X_val and Z_val on the *centered-raw* scale: fx.weight and
+        # fz.weight are de-standardised before each val eval (see below),
+        # so val inputs must match the raw scale the weights now expect.
+        # Standardising Z_val (as a stray line once did) biases val loss
+        # by 1/Z_std and distorts lambda selection — especially for
+        # orthogonalisation, where a wrong lambda gives a wrong fx.weight
+        # which then miscalibrates the orth OLS fit.
         X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
         X_val = self.center_x(X_val)
         Z_val = self.center_z(Z_val)
-        Z_val = Z_val / Z_std
 
         # ---- Build lambda path ---- (see glmnet paper)
         lambda_max = self._get_lambda_max(X_train, Z_train, y_train)
