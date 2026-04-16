@@ -119,8 +119,8 @@ def _fit_one(task):
         lr=lr,
         weight_decay=wd,
         patience=early_pat,
-        scheduler_patience=sched_pat,
-        scheduler_factor=0.5,
+        scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
+        scheduler_kwargs={"mode": "min", "patience": sched_pat, "factor": 0.5},
         use_amp=(outcome_type != "binary"),
     )
 

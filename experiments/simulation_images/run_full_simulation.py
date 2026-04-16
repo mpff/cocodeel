@@ -203,8 +203,8 @@ def _trainer_params(outcome_type: str, hp: dict) -> dict:
         lr=h["lr"],
         weight_decay=h["wd"],
         patience=h["early_pat"],
-        scheduler_patience=h["sched_pat"],
-        scheduler_factor=0.5,
+        scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
+        scheduler_kwargs={"mode": "min", "patience": h["sched_pat"], "factor": 0.5},
         use_amp=(outcome_type != "binary"),
     )
 
