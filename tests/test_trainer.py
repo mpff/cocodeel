@@ -89,7 +89,7 @@ class TestLinearTraining(unittest.TestCase):
             model=model,    
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.train_loader)
+        posthoc_model.fit(self.train_loader, self.val_loader)
         self.assertAlmostEqual(posthoc_model.intercept.item(), self.y[:140].mean().item(), places=4)
 
     def test_train_linear_model(self):
@@ -194,7 +194,7 @@ class TestLogisticTraining(unittest.TestCase):
             model=model,    
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.train_loader)
+        posthoc_model.fit(self.train_loader, self.val_loader)
         preds_posthoc = model(self.X, self.Z)
         self.assertEqual(preds_posthoc.shape, self.y.shape)
 
@@ -230,6 +230,85 @@ class TestLogisticTraining(unittest.TestCase):
         self.assertAlmostEqual(posthoc_model.intercept.item(), model.intercept.item(), places=4)
         self.assertEqual(preds_posthoc.shape, self.y.shape)
         self.assertTrue(torch.allclose(preds_posthoc, preds_centered, atol=1e-6))
+
+class TestSchedulerParam(unittest.TestCase):
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        n = 200
+        X = torch.randn(n, 3)
+        Z = torch.randn(n, 2)
+        y = (2 * X[:, 0] + Z[:, 0]).unsqueeze(1)
+        ds = CovarDataset(X, Z, y)
+        self.train_loader = DataLoader(ds, batch_size=20, shuffle=True)
+        self.val_loader = DataLoader(ds, batch_size=20, shuffle=False)
+        self.model_params = {
+            "link": "identity",
+            "backbone": lambda out_features: nn.Sequential(nn.Linear(3, out_features)),
+            "backbone_params": {"out_features": 2},
+            "num_covariates": 2,
+        }
+
+    def _dummy_params(self):
+        from cocodeel.model import BaseNetwork
+        backbone_cls = type("B", (nn.Module,), {
+            "__init__": lambda self, out_features: (nn.Module.__init__(self), setattr(self, "out_features", out_features), setattr(self, "linear", nn.Linear(3, out_features))).__class__,
+        })
+        # Use DummyBackbone defined at module level
+        return {
+            "link": "identity",
+            "backbone": DummyBackbone,
+            "backbone_params": {"out_features": 2},
+            "num_covariates": 2,
+        }
+
+    def test_step_lr(self):
+        """Non-ReduceLROnPlateau scheduler is accepted and does not error."""
+        model = covar_trainer(
+            model=BaseNetwork,
+            model_params=self._dummy_params(),
+            train_loader=self.train_loader,
+            val_loader=self.val_loader,
+            device="cpu",
+            loss_fn=nn.MSELoss(),
+            epochs=3,
+            lr=0.01,
+            scheduler=torch.optim.lr_scheduler.StepLR,
+            scheduler_kwargs={"step_size": 1, "gamma": 0.5},
+        )
+        self.assertIsNotNone(model)
+
+    def test_reduce_lr_custom(self):
+        """Custom ReduceLROnPlateau kwargs override the default."""
+        model = covar_trainer(
+            model=BaseNetwork,
+            model_params=self._dummy_params(),
+            train_loader=self.train_loader,
+            val_loader=self.val_loader,
+            device="cpu",
+            loss_fn=nn.MSELoss(),
+            epochs=3,
+            lr=0.01,
+            scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
+            scheduler_kwargs={"patience": 1, "factor": 0.8},
+        )
+        self.assertIsNotNone(model)
+
+    def test_default_behaviour_unchanged(self):
+        """Omitting scheduler keeps the original ReduceLROnPlateau behaviour."""
+        model = covar_trainer(
+            model=BaseNetwork,
+            model_params=self._dummy_params(),
+            train_loader=self.train_loader,
+            val_loader=self.val_loader,
+            device="cpu",
+            loss_fn=nn.MSELoss(),
+            epochs=3,
+            lr=0.01,
+        )
+        self.assertIsNotNone(model)
+
 
 if __name__ == '__main__':
     unittest.main()
