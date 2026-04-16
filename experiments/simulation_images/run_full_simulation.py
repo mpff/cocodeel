@@ -76,7 +76,7 @@ BLOCKS = {
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"max_iters": 25}),
             "posthoc_orth": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True},  fit_kwargs={"max_iters": 25}),
-            "posthoc_web":  dict(cls=PostHocOrthNetwork),
+            "posthoc_web":  dict(cls=PostHocOrthNetwork, recipe="full"),
         },
         "settings": [dict(n=n, bz=bz) for n in N_GRID for bz in BZ_GRID],
         "sweep_key_fn": lambda s: f"n={s['n']}_bz={s['bz']}",
@@ -89,7 +89,7 @@ BLOCKS = {
             "posthoc_lam0":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"lam": 0.0}),
             "posthoc_orth":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True}),
             "posthoc_orth_lam0": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True},  fit_kwargs={"lam": 0.0}),
-            "posthoc_web":       dict(cls=PostHocOrthNetwork),
+            "posthoc_web":       dict(cls=PostHocOrthNetwork, recipe="full"),
         },
         "settings": [dict(n=n, bz=bz) for n in N_GRID for bz in BZ_GRID],
         "sweep_key_fn": lambda s: f"n={s['n']}_bz={s['bz']}",
@@ -296,14 +296,23 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
         init_kwargs = cfg.get("init_kwargs", {})
         fit_kwargs  = cfg.get("fit_kwargs", {})
         model_cls   = cfg["cls"]
-        m = model_cls(base_half, num_covariates=model_params["num_covariates"], **init_kwargs).to(device)
+        # recipe="split" (default): backbone from half_A, refit on half_B.
+        # recipe="full":            backbone from full sample, refit on full.
+        # The Weber baseline (PostHocOrthNetwork / "posthoc_web") uses full —
+        # cocodeel's posthoc refit is the only method whose unbiasedness
+        # argument requires splitting; full-sample fit is the published
+        # Weber recipe and the fair apples-to-apples baseline for it.
+        recipe = cfg.get("recipe", "split")
+        backbone = base_full if recipe == "full" else base_half
+        fit_tr, fit_va = (full_tr, full_va) if recipe == "full" else (hB_tr, hB_va)
+        m = model_cls(backbone, num_covariates=model_params["num_covariates"], **init_kwargs).to(device)
         if hasattr(m, "fit"):
             # PostHocOrthNetwork.fit takes (train) only; PostHocCovarNetwork.fit takes (train, val).
             params = inspect.signature(m.fit).parameters
             if len(params) == 1:  # train only
-                m = m.fit(hB_tr, **fit_kwargs)
+                m = m.fit(fit_tr, **fit_kwargs)
             else:
-                m = m.fit(hB_tr, hB_va, **fit_kwargs)
+                m = m.fit(fit_tr, fit_va, **fit_kwargs)
         posthoc_models[name] = m
 
     # End-to-end (no-refit) SGD-style fits: train on full N (not split).
