@@ -16,9 +16,9 @@ effect_names <- c(
   'fz' = 'Covariate Effect'
 )
 
-df_bz <- read_csv("results/simulation_images/increasing_bz.csv") %>%
+df_bz <- read_csv("results/simulation_images/binary_increasing_bz.csv") %>%
   mutate(model = factor(
-    model,
+    model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
     labels = c(
       "DNN w. Controls",
@@ -26,7 +26,6 @@ df_bz <- read_csv("results/simulation_images/increasing_bz.csv") %>%
       "DNN",
       "DNN + Orth. [17]")
   )) %>%
-  filter(n < 50000, !is.na(model)) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
 
@@ -70,9 +69,7 @@ shared_theme <- theme_bw() +
   )
 
 # Reusable plotting function
-  make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE,
-                        ylim = c(.4 * 1e-4, 1.25), xlim = c(100, 100 * 2^7.05),
-                        vertical = TRUE, legend.pos = c(0.5, 0.9)) {
+  make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE) {
     p <- ggplot(
       data,
       aes(x = n * 0.5, y = value, group = bz)
@@ -94,17 +91,11 @@ shared_theme <- theme_bw() +
         name = TeX("$\\beta_Z$")
       ) +
       coord_cartesian(
-        xlim = xlim,
-        ylim = ylim
+        xlim = c(100, 100 * 2^7.05),
+        ylim = c(.4 * 1e-3, 1.25)
       ) +
       shared_theme +
-      theme(legend.position = legend.pos)
-    
-    if (vertical) {
-      p <- p + facet_grid(model ~ .)
-    } else {
-      p <- p + facet_grid(. ~ model)
-    }
+      facet_grid(model ~ .)
     
     if (!show_legend) {
       p <- p + theme(legend.position = "none")
@@ -140,9 +131,6 @@ c1 <- make_plot(
   show_legend = TRUE,
   strip_labels = FALSE
   )
-
-
-
 b2 <- make_plot(
   df_bz %>% filter(
     effect == "fx",
@@ -167,34 +155,6 @@ c2 <- make_plot(
   strip_labels = FALSE
 )
 
-
-b3 <- make_plot(
-  df_bz %>% filter(
-    effect == "fx",
-    metric == "mspe",
-    model %in% c("DNN", "DNN w. Controls")
-  ),
-  ylab = TeX("$MSPE^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "viridis",
-  show_legend = TRUE,
-  strip_labels = FALSE,
-  ylim = c(.4 * 1e-3, 1.25)
-)
-
-c3 <- make_plot(
-  df_bz %>% filter(
-    effect == "fr",
-    metric == "mspe",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
-  ),
-  ylab = TeX("$MSPE(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "inferno",
-  show_legend = FALSE,
-  strip_labels = FALSE,
-  ylim = c(.4 * 1e-3, 1.25)
-)
-
-
 b <- b1 + c1 
 #+ plot_annotation(
 #  title = "b. Estimation of the direct X-effect", 
@@ -205,96 +165,22 @@ c <- b2 + c2
 #  title = "c. Estimation of the residual X-effect",
 #  theme = theme(plot.title = element_text(size = 9, family = "serif"))
 #)
-d <- b3 + c3
 
-d/b/c
+b/c
 
-ggsave("graphics/Fig1b_bz_mspe.pdf", d, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig1b_bz_bias2.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig1b_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig3a_binary_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig3b_binary_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
 
 
-fxBias <- make_plot(
-  df_bz %>% filter(
-    effect == "fx",
-    metric == "bias2",
-    model %in% c("DNN", "DNN w. Controls")
-  ),
-  ylab = TeX("$Bias^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "viridis",
-  show_legend = TRUE,
-  strip_labels = FALSE,
-  vertical = FALSE,
-  legend.pos = c(0.3, 0.8)
-)
-
-fxVar <- make_plot(
-  df_bz %>% filter(
-    effect == "fx",
-    metric == "var",
-    model %in% c("DNN", "DNN w. Controls")
-  ),
-  ylab = TeX("$Var(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "viridis",
-  show_legend = FALSE,
-  strip_labels = FALSE,
-  vertical = FALSE
-)
-
-S1a <- fxBias / fxVar
-
-ggsave("graphics/FigS1a_bz_bias2.pdf", S1a, width = 3.5, height = 3.5, units = "in", dpi=600, device = cairo_pdf)
-
-
-frBias <- make_plot(
-  df_bz %>% filter(
-    effect == "fr",
-    metric == "bias2",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
-  ),
-  ylab = TeX("$Bias^2(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "inferno",
-  show_legend = TRUE,
-  strip_labels = FALSE,
-  vertical = FALSE,
-  legend.pos = c(0.3, 0.8)
-)
-
-frVar <- make_plot(
-  df_bz %>% filter(
-    effect == "fr",
-    metric == "var",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
-  ),
-  ylab = TeX("$Var(\\hat{f}^{re}_X)$$  ($\\log_{10}$ scale)"),
-  color_option = "inferno",
-  show_legend = FALSE,
-  strip_labels = FALSE,
-  vertical = FALSE
-)
-
-S1b <- frBias / frVar
-
-ggsave("graphics/FigS1b_bz_var.pdf", S1b, width = 3.5, height = 3.5, units = "in", dpi=600, device = cairo_pdf)
-
-
-
-### PLOT ###
-
-# a.    | b. DE | 
-# Graph | ----- |
-#       | c. RE |
-
-
-# Shared theme
-shared_theme <- theme_bw() +
+# Shared theme 2
+shared_theme2 <- theme_bw() +
   theme(
     legend.title.position = "left",
     legend.key.height = unit(0.06, 'in'),
     legend.key.width = unit(0.15, 'in'),
     legend.ticks.length = unit(c(-.05, 0), 'in'),
     legend.ticks = element_line(color='black'),
-    legend.position = c(0.5, 0.9),
+    legend.position = c(0.3, 0.8),
     legend.direction = "horizontal",
     legend.margin = margin(0, unit="inch"),
     legend.background = element_rect(color = NA, fill = NA),
@@ -308,7 +194,7 @@ shared_theme <- theme_bw() +
   )
 
 # Reusable plotting function
-make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE) {
+make_plot2 <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE) {
   p <- ggplot(
     data,
     aes(x = n * 0.5, y = value, group = bz)
@@ -330,11 +216,11 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels
       name = TeX("$\\beta_Z$")
     ) +
     coord_cartesian(
-      xlim = c(100, 100 * 2^7.5),
-      ylim = c(.4 * 1e-4, 1.25)
+      xlim = c(100, 100 * 2^7.05),
+      ylim = c(.4 * 1e-3, 1.25)
     ) +
-    shared_theme +
-    facet_grid(model ~ .)
+    shared_theme2 +
+    facet_grid(. ~ model)
   
   if (!show_legend) {
     p <- p + theme(legend.position = "none")
@@ -346,68 +232,42 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels
   p
 }
 
+
 # Build plots
-b1 <- make_plot(
+a <- make_plot2(
   df_bz %>% filter(
-    effect == "fz",
-    metric == "bias2",
+    effect == "fx",
+    metric == "mspe",
     model %in% c("DNN", "DNN w. Controls")
   ),
-  ylab = TeX("$Bias^2(\\hat{f}_Z)$  ($\\log_{10}$ scale)"),
+  ylab = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
   show_legend = TRUE,
   strip_labels = FALSE
 )
 
-c1 <- make_plot(
+a
+
+ggsave("graphics/Fig3_binary_bz.pdf", a, width = 3.5, height = 1.8, units = "in", dpi=600, device = cairo_pdf)
+
+
+# Build plots
+b <- make_plot2(
   df_bz %>% filter(
-    effect == "fz",
-    metric == "bias2",
+    effect == "fr",
+    metric == "mspe",
     model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
   ),
-  ylab = TeX("$Bias^2(\\hat{f}^{tot}_Z)$  ($\\log_{10}$ scale)"),
+  ylab = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
   show_legend = TRUE,
   strip_labels = FALSE
 )
-b2 <- make_plot(
-  df_bz %>% filter(
-    effect == "fz",
-    metric == "var",
-    model %in% c("DNN", "DNN w. Controls")
-  ),
-  ylab = TeX("$Var(\\hat{f}_Z)$  ($\\log_{10}$ scale)"),
-  color_option = "viridis",
-  show_legend = FALSE,
-  strip_labels = FALSE
-)
 
-c2 <- make_plot(
-  df_bz %>% filter(
-    effect == "fz",
-    metric == "var",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
-  ),
-  ylab = TeX("$Var(\\hat{f}^{tot}_Z)$  ($\\log_{10}$ scale)"),
-  color_option = "inferno",
-  show_legend = FALSE,
-  strip_labels = FALSE
-)
+b
 
-b <- b1 + c1 
-#+ plot_annotation(
-#  title = "b. Estimation of the direct X-effect", 
-#  theme = theme(plot.title = element_text(size = 9, family = "serif"))
-#  )
-c <- b2 + c2
-#+ plot_annotation(
-#  title = "c. Estimation of the residual X-effect",
-#  theme = theme(plot.title = element_text(size = 9, family = "serif"))
-#)
+a/b
 
-b/c
-
-ggsave("graphics/FigS1b_fz_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/FigS1c_fz_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig3_binary_bz_full.pdf", a/b, width = 3.5, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
 
 
