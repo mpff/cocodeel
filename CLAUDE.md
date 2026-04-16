@@ -36,20 +36,26 @@ No build or lint step — pure Python package, no pyproject.toml/setup.py.
 
 ### Package (`cocodeel/`)
 - `model.py` — `_BaseCovarNetwork` (base class with centering logic, GLM utilities), `BaseNetwork` (no covariates), `CovarNetwork` (end-to-end training with covariates)
-- `posthoc_model.py` — `PostHocCovarNetwork`: the main contribution. Post-hoc IRLS backfitting with ridge penalty and validation-based λ selection. Pure PyTorch (no R dependency).
+- `posthoc_model.py` — `PostHocCovarNetwork`: the main contribution. Post-hoc IRLS backfitting with ridge penalty, X/Z internal standardization, glmnet-style λ path with adaptive expansion, coefficient-change convergence, and validation-based λ selection. Pure PyTorch.
 - `benchmarking/posthoc_model.py` — `PostHocOrthNetwork`, `SemiStructuredNetwork`: older comparison baselines used in simulation experiments.
 - `transform.py` — `Center` (centering module stored as buffer), `LinearRegressOut` (regresses out Z from fX)
 - `dataset.py` — `CovarDataset`: returns batches as `{"X": ..., "Z": ..., "y": ...}`
-- `trainer.py` — `covar_trainer`: training loop with Adam, ReduceLROnPlateau, early stopping
+- `trainer.py` — `covar_trainer`: training loop with Adam, configurable LR scheduler, early stopping, optional bf16 autocast
 
 ### Key Design Decisions
 - Batches are always dicts with keys `"X"`, `"Z"`, `"y"` — every model and trainer assumes this
 - Centering is handled by `Center` modules stored as buffers (travels with model state dict)
 - `is_centered` is a buffer (not parameter) — guards against double-centering; `center_effects()` is idempotent
-- `PostHocCovarNetwork.fit(train_loader, val_loader)` — takes separate train/val loaders; calls `center_effects` internally, so do not call it separately beforehand
-- λ path: log-spaced from `lambda_max` to `lambda_min` (following glmnet convention), with adaptive path expansion if optimum is at boundary
-- IRLS loop exits after one iteration for identity link (Gaussian case)
+- `PostHocCovarNetwork.fit(train_loader, val_loader, lam=None, max_iters=50, tol=1e-2, penalty_z=None, n_lambdas=100)` — takes separate train/val loaders; calls `center_effects` internally
+- X and Z are internally centered and standardized before the ridge solve; `fx.weight` and `fz.weight` are de-standardized at the end so coefficients are returned in the centered-raw scale
+- λ path: log-spaced from glmnet-style `lambda_max = max|Xᵀy| / (N·α)` down to `1e-6 · lambda_max` (or `1e-3 · lambda_max` in the high-dimensional regime `N < d`), with adaptive expansion if the optimum lands at the boundary
+- IRLS convergence is checked on coefficient change (`Δβ_fx`, `Δβ_fz`), not on prediction change. Unconverged solutions are rejected unless no λ converges — then the best-loss unconverged state is used with a warning.
+- `covar_trainer(..., scheduler=None, scheduler_kwargs=None, use_amp=False)` — pass a scheduler *class* (e.g. `torch.optim.lr_scheduler.StepLR`) and its kwargs; defaults to `ReduceLROnPlateau(patience=max(1, patience // 3), factor=0.5)` if `None`. bf16 autocast is opt-in via `use_amp=True` (requires Ampere+); fp16 not supported (no GradScaler).
 - Orthogonalization in `PostHocCovarNetwork`: stored in `self.orth` (Linear layer). `predict_fx(x, z)` subtracts `orth(z)`; `predict_fz(z)` adds it back — so total η is unchanged.
+
+### Attributes available after `.fit()`
+- `PostHocCovarNetwork`: `lam` (selected λ), `lambda_path_` (list of per-λ diagnostics: val_loss, converged, n_iters, Δβ, β-norms), `max_iters_`, `tol_`, `n_lambdas_`.
+- `covar_trainer`-returned model: `val_losses_`, `lr_history_`, `best_epoch_`, `n_epochs_run_`.
 
 ### Supported Link Functions
 - `"identity"` — Gaussian/linear
@@ -98,13 +104,15 @@ posthoc = posthoc.fit(train_loader, val_loader)
 - `simulation_images/` — simulation study with synthetic image data (notebooks + R scripts for figures)
 
 ### Key Files
-- `experiments/simulation_images/1-simulation.ipynb` — runs simulation using the sample-split recipe (see `simulate_and_fit`)
-- `experiments/simulation_images/2-evaluation.ipynb` — evaluates results
-- `experiments/simulation_images/3-smoke_test_sample_splitting.py` — contrasts same-sample vs. split recipes on paper settings
-- `experiments/simulation_images/4-Figure*.R` — final paper figures (R/ggplot2)
-- `experiments/simulation_images/utils.py` — `simulate_dataloader` and `simulate_dataloaders_split` helpers
-- `results/simulation_images/` — CSV results per simulation setting
-- `graphics/` — output figures (PDFs) produced by the R scripts
+- `experiments/simulation_images/1-simulation.ipynb` — exploratory notebook for the sample-split recipe (`simulate_and_fit`).
+- `experiments/simulation_images/hp_search.py` — HP search over `lr × wd × early_patience × sched_patience` on two N anchors per outcome type. Writes `results/simulation_images/hp_search/chosen_hps.json`.
+- `experiments/simulation_images/run_full_simulation.py` — resumable nsim=50 runner across six blocks (binary_increasing_bz, increasing_bz, increasing_cv, increasing_q, increasing_p, concurvity) on 4 workers. Saves per-sim NPZ predictions and a JSONL progress log.
+- `experiments/simulation_images/aggregate_full_simulation.py` — NPZ → long-form CSV (`model, effect, metric, value, n, <sweep>`), one CSV per block; consumed by the R figure scripts.
+- `experiments/simulation_images/4-Figure{1,2,3,4}_*.R` — paper figures. Fig 1 (continuous bz + appendix S1), Fig 2 (concurvity; deferred), Fig 3 (binary/IRLS), Fig 4 (adversarial q + p + cv1). `4-Rfunctions.R` holds shared theme/helper.
+- `experiments/simulation_images/utils.py` — `simulate_dataloader` and `simulate_dataloaders_split` (three disjoint partitions from one draw).
+- `experiments/simulation_images/2-evaluation.ipynb` — legacy evaluator (from the timestamped-CSV pipeline); superseded by `aggregate_full_simulation.py`. Kept for reference.
+- `results/simulation_images/` — CSV results per simulation setting + `hp_search/chosen_hps.json` + `runs/<timestamp>/` per-sim NPZs (not tracked).
+- `graphics/` — output figures (PDFs) produced by the R scripts (not tracked — regenerate by rerunning the R scripts).
 
 ## Experiment Management
 
@@ -120,8 +128,7 @@ Results in `results/simulation_images/<setting>.csv`. Notebooks in `experiments/
 A result is final when CSV is committed to `results/`, figures are committed to `graphics/`, and the notebook that produced them is committed. Config (simulation parameters) must be recoverable from the committed notebook.
 
 ## Environment
-Python 3.13, conda env `dl-mri`. Key dependencies: PyTorch, numpy, pandas, scikit-learn, nibabel, nilearn, matplotlib, scipy, seaborn, pytest, opencv.
-Note: `environment.yml` still lists `rpy2/r-base/r-glmnet` but these are no longer used in the main branch — environment.yml needs updating.
+Python 3.13, conda env `dl-mri`. Key dependencies: PyTorch, numpy, pandas, scikit-learn, nibabel, nilearn, matplotlib, scipy, seaborn, pytest, opencv. The R figure scripts require `readr, dplyr, ggplot2, tikzDevice, latex2exp, png, grid, patchwork`.
 
 ## Coding Conventions
 - Python, PyTorch; all models inherit from `nn.Module`
