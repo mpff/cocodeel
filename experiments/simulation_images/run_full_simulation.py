@@ -72,7 +72,7 @@ P_GRID      = [1, 2, 4, 8, 16]
 BLOCKS = {
     "binary_increasing_bz": {
         "outcome_type": "binary",
-        "sim_defaults": dict(b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
+        "sim_defaults": dict(b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"max_iters": 25}),
             "posthoc_orth": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True},  fit_kwargs={"max_iters": 25}),
@@ -83,7 +83,7 @@ BLOCKS = {
     },
     "increasing_bz": {
         "outcome_type": "continuous",
-        "sim_defaults": dict(b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
+        "sim_defaults": dict(b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
             "posthoc":           dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
             "posthoc_lam0":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"lam": 0.0}),
@@ -106,7 +106,7 @@ BLOCKS = {
     },
     "increasing_q": {
         "outcome_type": "continuous",
-        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
+        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
             "posthoc_orth": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True}),
@@ -116,7 +116,7 @@ BLOCKS = {
     },
     "increasing_p": {
         "outcome_type": "continuous",
-        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
+        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
             "posthoc_orth": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True}),
@@ -126,7 +126,7 @@ BLOCKS = {
     },
     "concurvity": {
         "outcome_type": "continuous",
-        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
+        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
             "posthoc_orth": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True}),

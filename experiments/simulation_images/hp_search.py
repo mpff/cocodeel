@@ -75,10 +75,10 @@ SCHED_PATS    = [3, 5]
 
 # Anchors: 4 points that span the full-run regime.
 ANCHORS = [
-    dict(outcome_type="continuous", n=1600,  bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
-    dict(outcome_type="continuous", n=25600, bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
-    dict(outcome_type="binary",     n=1600,  bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
-    dict(outcome_type="binary",     n=25600, bz=1.0, b2=1., b3=1., cv1=0.8, cv2=0.5, sdy=1.),
+    dict(outcome_type="continuous", n=1600,  bz=1.0, b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
+    dict(outcome_type="continuous", n=25600, bz=1.0, b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
+    dict(outcome_type="binary",     n=1600,  bz=1.0, b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
+    dict(outcome_type="binary",     n=25600, bz=1.0, b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
 ]
 
 TEST_SEED = 1234
