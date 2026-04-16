@@ -13,8 +13,6 @@ def covar_trainer(
     lr=1e-3,
     weight_decay=1e-4,
     patience=12,
-    scheduler_patience=None,
-    scheduler_factor=0.5,
     use_amp=False,
     amp_dtype=torch.bfloat16,
 ):
@@ -49,9 +47,8 @@ def covar_trainer(
     model = model(**model_params).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    sched_pat = scheduler_patience if scheduler_patience is not None else max(1, patience - 2)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=sched_pat, factor=scheduler_factor
+        optimizer, mode="min", patience=max(1, patience - 2), factor=0.5
     )
 
     # Autocast only if caller asks and we are on CUDA. bf16 has fp32
