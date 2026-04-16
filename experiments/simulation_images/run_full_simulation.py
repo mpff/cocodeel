@@ -129,7 +129,16 @@ BLOCKS = {
         "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
-            "posthoc_orth": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True}),
+            "posthoc_lam0": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"lam": 0.0}),
+        },
+        # End-to-end NAM-style methods trained on the full sample. Fig 2
+        # contrasts these "concurvity-exposed" fits with the split-recipe
+        # posthoc refit.
+        "sgd_configs": {
+            "covar":          dict(lam_reg=0.0),    # plain NAM (CovarNetwork, no reg)
+            "covar_conc_0.1": dict(lam_reg=0.1),    # Siems reg, weak
+            "covar_conc_1":   dict(lam_reg=1.0),    # Siems reg, medium
+            "covar_conc_10":  dict(lam_reg=10.0),   # Siems reg, strong
         },
         "settings": [dict(n=n) for n in N_GRID],
         "sweep_key_fn": lambda s: f"n={s['n']}",
@@ -297,6 +306,24 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
                 m = m.fit(hB_tr, hB_va, **fit_kwargs)
         posthoc_models[name] = m
 
+    # End-to-end (no-refit) SGD-style fits: train on full N (not split).
+    # Currently only used by the concurvity block to expose NAM/Siems
+    # benchmarks alongside the posthoc refit.
+    sgd_models = {}
+    sgd_configs = block_cfg.get("sgd_configs", {})
+    if sgd_configs:
+        from cocodeel.model import CovarNetwork
+        from experiments.simulation_images.concurvity_methods import (
+            train_covar_with_concurvity_reg,
+        )
+        for name, cfg in sgd_configs.items():
+            m = train_covar_with_concurvity_reg(
+                CovarNetwork, model_params, full_tr, full_va,
+                lam_reg=cfg["lam_reg"], **tp,
+            )
+            m = m.center_effects(full_tr)
+            sgd_models[name] = m
+
     # --- evaluate on shared test draw ---
     # For the multi-covariate p-sweep, the test draw must use n_covars=p too
     # (otherwise Z dims mismatch). Keep everything else at defaults.
@@ -311,7 +338,8 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
         "fr": fr_te.view(-1).numpy().astype(np.float32),
         "fz": fz_te.view(-1).numpy().astype(np.float32),
     }
-    for name, m in [("base_full", base_full), ("base_half", base_half), *posthoc_models.items()]:
+    for name, m in [("base_full", base_full), ("base_half", base_half),
+                    *sgd_models.items(), *posthoc_models.items()]:
         arrays[name] = _gather_predictions(m, loader, device)
 
     # Save one NPZ: per-method predictions + truths + metadata.
@@ -325,7 +353,7 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
     )
 
     # Clean up GPU memory between sims.
-    del base_full, base_half, posthoc_models
+    del base_full, base_half, posthoc_models, sgd_models
     torch.cuda.empty_cache()
     gc.collect()
 
