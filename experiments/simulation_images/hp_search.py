@@ -26,8 +26,8 @@ Usage
 
 Outputs
 -------
+    experiments/simulation_images/chosen_hps.json   (config — tracked)
     results/simulation_images/hp_search/hp_search.csv
-    results/simulation_images/hp_search/chosen_hps.json
     results/simulation_images/hp_search/manifest.json
 """
 from __future__ import annotations
@@ -265,7 +265,10 @@ def main():
     print(f"[{datetime.datetime.now():%H:%M:%S}] wrote hp_search.csv", flush=True)
 
     winners = _choose_winners([r for r in rows if "error" not in r])
-    (out / "chosen_hps.json").write_text(json.dumps(winners, indent=2))
+    # chosen_hps.json lives next to the experiment scripts so it travels with
+    # the code (run_full_simulation.py reads it from this location).
+    chosen_path = Path(__file__).resolve().parent / "chosen_hps.json"
+    chosen_path.write_text(json.dumps(winners, indent=2))
     print(f"[{datetime.datetime.now():%H:%M:%S}] wrote chosen_hps.json:\n"
           + json.dumps(winners, indent=2), flush=True)
     print(f"Total wall: {(time.time() - t0)/60:.1f} min")

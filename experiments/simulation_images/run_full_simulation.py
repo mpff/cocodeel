@@ -59,7 +59,7 @@ Q_DEFAULT = 32
 TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000
-HP_PATH = ROOT / "results/simulation_images/hp_search/chosen_hps.json"
+HP_PATH = Path(__file__).resolve().parent / "chosen_hps.json"
 
 N_GRID      = [400, 800, 1600, 3200, 6400, 12800, 25600]
 BZ_GRID     = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]

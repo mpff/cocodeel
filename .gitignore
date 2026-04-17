@@ -2,7 +2,6 @@
 **/lightning_logs/*
 **/notebooks
 **/outputs
-**/experiments
 **/results/*/archive/**
 cocodeel.Rproj
 

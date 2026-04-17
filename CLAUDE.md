@@ -105,13 +105,13 @@ posthoc = posthoc.fit(train_loader, val_loader)
 
 ### Key Files
 - `experiments/simulation_images/1-simulation.ipynb` — exploratory notebook for the sample-split recipe (`simulate_and_fit`).
-- `experiments/simulation_images/hp_search.py` — HP search over `lr × wd × early_patience × sched_patience` on two N anchors per outcome type. Writes `results/simulation_images/hp_search/chosen_hps.json`.
+- `experiments/simulation_images/hp_search.py` — HP search over `lr × wd × early_patience × sched_patience` on two N anchors per outcome type. Writes the chosen combo to `experiments/simulation_images/chosen_hps.json` (tracked, used by `run_full_simulation.py`); diagnostics (`hp_search.csv`, `manifest.json`) go to `results/simulation_images/hp_search/` (ignored).
 - `experiments/simulation_images/run_full_simulation.py` — resumable nsim=50 runner across six blocks (binary_increasing_bz, increasing_bz, increasing_cv, increasing_q, increasing_p, concurvity) on 4 workers. Saves per-sim NPZ predictions and a JSONL progress log.
 - `experiments/simulation_images/aggregate_full_simulation.py` — NPZ → long-form CSV (`model, effect, metric, value, n, <sweep>`), one CSV per block; consumed by the R figure scripts.
 - `experiments/simulation_images/4-Figure{1,2,3,4}_*.R` — paper figures. Fig 1 (continuous bz + appendix S1), Fig 2 (concurvity; deferred), Fig 3 (binary/IRLS), Fig 4 (adversarial q + p + cv1). `4-Rfunctions.R` holds shared theme/helper.
 - `experiments/simulation_images/utils.py` — `simulate_dataloader` and `simulate_dataloaders_split` (three disjoint partitions from one draw).
 - `experiments/simulation_images/2-evaluation.ipynb` — legacy evaluator (from the timestamped-CSV pipeline); superseded by `aggregate_full_simulation.py`. Kept for reference.
-- `results/simulation_images/` — CSV results per simulation setting + `hp_search/chosen_hps.json` + `runs/<timestamp>/` per-sim NPZs (not tracked).
+- `results/simulation_images/` — CSV results per simulation setting (tracked). `hp_search/` (HP search diagnostics) and `runs/<timestamp>/` (per-sim NPZs) are not tracked.
 - `graphics/` — output figures (PDFs) produced by the R scripts (not tracked — regenerate by rerunning the R scripts).
 
 ## Experiment Management
