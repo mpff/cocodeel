@@ -83,7 +83,8 @@ generated regressor: `theta*` depends on `y`, so fitting on the backbone's
 training sample violates exogeneity (`E[Hᵀε] ≠ 0`) and biases the FWL+ridge
 refit (Pagan 1984). On a sample disjoint from the backbone's training set,
 `H` is a deterministic function of `X` and FWL+ridge regain unbiasedness.
-See `research/session-B-endogeneity-notes.md` and `research/session-D-synthesis.md`
+See `.claude/research/session-B-endogeneity-notes.md` and
+`.claude/research/session-D-synthesis.md` (local notes, not versioned)
 for the full derivation and UKBB evidence. The
 `experiments/simulation_images/utils.py:simulate_dataloaders_split` helper
 builds three disjoint partitions (`full`, `half_A`, `half_B`) from one draw.
