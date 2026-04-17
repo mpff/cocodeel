@@ -9,6 +9,16 @@ cocodeel.Rproj
 # Local research library (PDFs, cloned reference repos — kept locally, not versioned)
 research/papers/
 
+# Claude Code local dir (working notes, scheduled tasks, research summaries)
+.claude/
+
+# Default R output (e.g. when running R scripts interactively)
+Rplots.pdf
+
+# Per-sim simulation outputs (regenerate via run_full_simulation.py)
+results/simulation_images/runs/
+results/simulation_images/hp_search/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
