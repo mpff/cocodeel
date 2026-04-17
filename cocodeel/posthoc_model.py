@@ -121,8 +121,8 @@ class PostHocCovarNetwork(BaseNetwork):
         X_train = self.center_x(X_train)
         Z_train = self.center_z(Z_train)
 
-        X_std = X_train.std(dim=0, keepdim=True) + 1e-6
-        Z_std = Z_train.std(dim=0, keepdim=True) + 1e-6
+        X_std = X_train.std(dim=0, keepdim=True)
+        Z_std = Z_train.std(dim=0, keepdim=True)
 
         X_train = X_train / X_std
         Z_train = Z_train / Z_std
