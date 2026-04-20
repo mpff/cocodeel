@@ -1037,5 +1037,278 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         )
 
 
+class TestIRLSConvergenceCriterion(unittest.TestCase):
+    """Verify the fitted-values convergence criterion in _solve_fixed_lambda.
+
+    The old criterion measured relative *coefficient* change:
+        delta_fx = ||β_new - β_old|| / (||β_old|| + ε),  ε = 1e-5.
+
+    Pathology: at iteration 0, β_old = 0 (zero init), so the denominator is
+    1e-5 and delta_fx = ||β_1|| / 1e-5 is huge even when β_1 is already close
+    to the solution.  This causes the loop to run all max_iters iterations for
+    the (common) case where fx ≈ 0.
+
+    The new criterion measures relative change in *fitted values*:
+        delta_fx = mean|η_fx_new - η_fx_old| / (mean|η_fx_old| + 0.1)
+
+    The 0.1 offset (mgcv convention) bounds the denominator away from zero
+    regardless of the coefficient scale, so the first-iteration delta is
+    proportional to the actual change in the predictor contribution.
+    """
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        self.n, self.n_train = 400, 200
+        self.out_features = 3
+        self.num_covariates = 1
+
+        self.X = torch.randn(self.n, 3)
+        self.Z = torch.randn(self.n, 1)
+
+        # DGP 1: Z has effect, X has no effect (pathological for old criterion).
+        eta_no_x = 2.0 * self.Z[:, 0] + 0.5
+        self.y_no_x = torch.bernoulli(torch.sigmoid(eta_no_x.unsqueeze(1)))
+
+        # DGP 2: both X and Z have effects (standard case).
+        eta_both = 1.0 * self.X[:, 0] + 2.0 * self.Z[:, 0] + 0.5
+        self.y_both = torch.bernoulli(torch.sigmoid(eta_both.unsqueeze(1)))
+
+        # DGP 3: null — no X or Z effect.  Both true coefficients are 0.
+        # This is the pathological DGP for the old criterion: with high penalties,
+        # both ||beta_fx|| and ||beta_fz|| end up near eps = 1e-5, making the old
+        # coefficient-change denominator dominated by eps even at convergence.
+        self.y_null = torch.bernoulli(torch.full((self.n, 1), torch.sigmoid(torch.tensor(0.5)).item()))
+
+        self.base_model = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={"in_features": 3, "out_features": self.out_features},
+            num_covariates=self.num_covariates,
+            link="logit",
+        )
+        self.base_model.backbone.linear.weight.data = torch.eye(self.out_features, 3)
+        self.base_model.backbone.linear.bias.data.zero_()
+
+    def _make_loaders(self, y):
+        train_ds = CovarDataset(self.X[:self.n_train], self.Z[:self.n_train], y[:self.n_train])
+        val_ds   = CovarDataset(self.X[self.n_train:], self.Z[self.n_train:], y[self.n_train:])
+        return DataLoader(train_ds, batch_size=64), DataLoader(val_ds, batch_size=64)
+
+    @staticmethod
+    @torch.no_grad()
+    def _n_iters_coeff_criterion(model, X_std, Z_std, y, lam, max_iters=50, tol=1e-2, penalty_z=None):
+        """Run IRLS with the OLD coefficient-change criterion; return (n_iters, converged).
+
+        Replicates _solve_fixed_lambda exactly except the delta lines are swapped back
+        to the coefficient-change formula.  Used purely for comparison.
+        """
+        import copy
+        m = copy.deepcopy(model)
+        eps = 1e-5
+        m.fx.weight.data.zero_()
+        m.fz.weight.data.zero_()
+        m.intercept.data = m._link_function(y.mean()).view(1)
+
+        fx_old = m.fx.weight.data.clone()
+        fz_old = m.fz.weight.data.clone()
+        P_z = penalty_z.to(X_std.device) if penalty_z is not None \
+            else torch.zeros(Z_std.shape[1], Z_std.shape[1])
+
+        for i in range(max_iters):
+            eta = m.intercept + m.fx(X_std) + m.fz(Z_std)
+            mu = m.output_func(eta)
+            var = m._variance_function(mu)
+            g_p = m._link_derivative(mu)
+            w   = g_p**2 / (var + eps)
+
+            close0, close1 = mu < eps, mu > 1 - eps
+            mu = torch.where(close0, torch.zeros_like(mu), mu)
+            mu = torch.where(close1, torch.ones_like(mu), mu)
+            w  = torch.where(close0 | close1, torch.full_like(w, eps), w)
+            sw = w.sqrt()
+
+            y_work = eta + (y - mu) / (g_p + eps)
+            m.intercept.data = y_work.mean().view(1)
+
+            yw = sw * (y_work - (w * y_work).sum() / w.sum())
+            Xw = sw * (X_std - (w * X_std).sum(0, keepdim=True) / w.sum())
+            Zw = sw * (Z_std - (w * Z_std).sum(0, keepdim=True) / w.sum())
+            I1 = eps * torch.eye(Z_std.shape[1])
+
+            ry = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ yw)
+            rX = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ Xw)
+
+            bfx = torch.linalg.solve(rX.T @ rX + lam * torch.eye(rX.shape[1]), rX.T @ ry)
+            m.fx.weight.data.copy_(bfx.view(1, -1))
+            ry2 = yw - m.fx(Xw)
+            bfz = torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ ry2)
+            m.fz.weight.data.copy_(bfz.view(1, -1))
+
+            # OLD stopping criterion: relative coefficient change.
+            dfx = torch.norm(m.fx.weight.data - fx_old) / (torch.norm(fx_old) + eps)
+            dfz = torch.norm(m.fz.weight.data - fz_old) / (torch.norm(fz_old) + eps)
+            if dfx < tol and dfz < tol:
+                return i + 1, True
+            fx_old = m.fx.weight.data.clone()
+            fz_old = m.fz.weight.data.clone()
+
+        return max_iters, False
+
+    @torch.no_grad()
+    def test_converges_near_zero_fx(self):
+        """New criterion converges when fx ≈ 0 at solution.
+
+        Old pathology: delta_fx at iter 0 = ||β_1 - 0|| / (||0|| + 1e-5)
+        = ||β_1|| / 1e-5, which is O(1e3) even for small β_1.
+        New criterion: delta_fx = |η_fx_new|.mean() / 0.1, which is O(tol) once
+        fx has settled near its small-but-finite solution.
+        """
+        import copy
+        train_dl, val_dl = self._make_loaders(self.y_no_x)
+        model = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model.fit(train_dl, val_dl, lam=0.1, max_iters=50, tol=1e-2)
+        rec = model.lambda_path_[0]
+
+        self.assertTrue(rec["converged"],
+            f"Should converge: n_iters={rec['n_iters']}, "
+            f"delta_fx={rec['delta_fx']:.3e}, delta_fz={rec['delta_fz']:.3e}")
+        self.assertLess(rec["delta_fx"], 1e-2,
+            f"delta_fx={rec['delta_fx']:.3e} should be < tol=1e-2 at convergence")
+        self.assertLess(rec["delta_fz"], 1e-2,
+            f"delta_fz={rec['delta_fz']:.3e} should be < tol=1e-2 at convergence")
+
+    @torch.no_grad()
+    def test_converges_both_effects_nonzero(self):
+        """New criterion converges on standard logistic problem with both effects."""
+        import copy
+        train_dl, val_dl = self._make_loaders(self.y_both)
+        model = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model.fit(train_dl, val_dl, lam=0.1, max_iters=50, tol=1e-2)
+        rec = model.lambda_path_[0]
+
+        self.assertTrue(rec["converged"])
+        self.assertLess(rec["delta_fx"], 1e-2)
+        self.assertLess(rec["delta_fz"], 1e-2)
+
+    @torch.no_grad()
+    def test_first_iter_delta_is_bounded_vs_coeff_criterion(self):
+        """The old criterion's first-iteration delta is pathologically large.
+
+        Setup: null DGP (true fx=fz=0), lam=1e4 on X, lam_z=1e4 on Z.
+        Both true coefficients converge to near zero.  With ||beta|| ~ 1e-5 at
+        convergence, the old denominator (||0|| + 1e-5 = 1e-5) makes
+            delta_old = ||beta_1|| / 1e-5 >> tol = 0.01.
+        The new denominator (|eta_fx_0|.mean() + 0.1 ≈ 0.1) keeps delta_new small:
+            delta_new = |eta_fx_1|.mean() / 0.1 = O(||beta_1||) << tol.
+
+        This test runs a single IRLS step from the zero-init state and compares both
+        deltas directly, with the weights properly zeroed as _fit_effects does.
+        """
+        import copy
+        lam, penalty_z, tol, eps = 1e4, torch.tensor([[1e4]]), 1e-2, 1e-5
+
+        train_dl, _ = self._make_loaders(self.y_null)
+        model = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model.center_effects(train_dl)
+        X_raw, Z_raw, y_raw = model._extract_features_from_loader(train_dl)
+        X_c = model.center_x(X_raw)
+        Z_c = model.center_z(Z_raw)
+        X_std = X_c / X_c.std(0, keepdim=True)
+        Z_std = Z_c / Z_c.std(0, keepdim=True)
+
+        # Replicate the zero-init state of _fit_effects.
+        model.fx.weight.data.zero_()
+        model.fz.weight.data.zero_()
+        model.intercept.data = model._link_function(model.center_y.mean).view(1)
+
+        # Capture the pre-step state (all zeros).
+        eta_fx_0 = model.fx(X_std).clone()    # = 0
+        beta_fx_0 = model.fx.weight.data.clone()  # = 0
+
+        # One IRLS step to get beta_fx_1.
+        P_z = penalty_z
+        eta = model.intercept + model.fx(X_std) + model.fz(Z_std)
+        mu = model.output_func(eta)
+        var = model._variance_function(mu)
+        g_p = model._link_derivative(mu)
+        w   = g_p**2 / (var + eps)
+        sw  = w.sqrt()
+        y_work = eta + (y_raw - mu) / (g_p + eps)
+        yw = sw * (y_work - (w * y_work).sum() / w.sum())
+        Xw = sw * (X_std - (w * X_std).sum(0, keepdim=True) / w.sum())
+        Zw = sw * (Z_std - (w * Z_std).sum(0, keepdim=True) / w.sum())
+        I1 = eps * torch.eye(1)
+        ry = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ yw)
+        rX = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ Xw)
+        b1 = torch.linalg.solve(rX.T @ rX + lam * torch.eye(rX.shape[1]), rX.T @ ry)
+        model.fx.weight.data.copy_(b1.view(1, -1))
+
+        # Old criterion: delta = ||beta_1 - 0|| / (||0|| + eps).
+        delta_old = float(torch.norm(model.fx.weight.data - beta_fx_0) / (torch.norm(beta_fx_0) + eps))
+
+        # New criterion: delta = |eta_fx_1 - eta_fx_0|.mean() / (|eta_fx_0|.mean() + 0.1).
+        delta_new = float((model.fx(X_std) - eta_fx_0).abs().mean() / (eta_fx_0.abs().mean() + 0.1))
+
+        print(f"\n  [first-iter delta, null DGP, zero init, lam={lam:.0e}]")
+        print(f"  ||beta_1||      = {model.fx.weight.data.norm():.3e}")
+        print(f"  old coeff-chg   : delta_fx = {delta_old:.2e}  >> tol={tol}")
+        print(f"  new fitted-vals : delta_fx = {delta_new:.2e}  compare tol={tol}")
+
+        # Old criterion blows up: ||beta_1|| / eps >> tol.
+        self.assertGreater(delta_old, 10.0,
+            f"Old criterion first-iter delta should be >> tol (got {delta_old:.2e}). "
+            f"||beta_1||={model.fx.weight.data.norm():.3e}")
+
+        # New criterion is bounded: |eta_fx_1|.mean() / 0.1 << 1.
+        self.assertLess(delta_new, tol,
+            f"New criterion first-iter delta should be < tol={tol} (got {delta_new:.2e})")
+
+    @torch.no_grad()
+    def test_n_iters_comparison(self):
+        """New criterion needs strictly fewer iterations on the null DGP.
+
+        Null DGP + high penalties force both true coefficients to near zero.
+        With lam_fx=lam_fz=1e4, ||beta_converged|| ~ 1e-5 = eps:
+
+        - Old criterion: first-iter delta = ||beta_1||/eps >> tol, so it always
+          needs at least 2 iterations regardless of how close beta_1 is to the
+          solution.
+        - New criterion: first-iter delta = |eta_fx_1|.mean()/0.1 << tol when
+          ||beta|| is small, so it can converge in a single iteration.
+
+        n_new < n_old strictly in this regime.
+        """
+        import copy
+        lam, penalty_z, max_iters, tol = 1e4, torch.tensor([[1e4]]), 50, 1e-2
+
+        train_dl, val_dl = self._make_loaders(self.y_null)
+
+        # ---- New criterion (via fit) ----
+        model_new = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model_new.fit(train_dl, val_dl, lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z)
+        n_new = model_new.lambda_path_[0]["n_iters"]
+
+        # ---- Old criterion (direct call, same standardized data) ----
+        model_old = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model_old.center_effects(train_dl)
+        X_raw, Z_raw, y_raw = model_old._extract_features_from_loader(train_dl)
+        X_c = model_old.center_x(X_raw)
+        Z_c = model_old.center_z(Z_raw)
+        X_std = X_c / X_c.std(0, keepdim=True)
+        Z_std = Z_c / Z_c.std(0, keepdim=True)
+        n_old, _ = self._n_iters_coeff_criterion(
+            model_old, X_std, Z_std, y_raw,
+            lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z,
+        )
+
+        print(f"\n  [iteration count comparison, null DGP, lam={lam:.0e}, tol={tol}]")
+        print(f"  fitted-values criterion : {n_new:3d} iters")
+        print(f"  coeff-change criterion  : {n_old:3d} iters")
+
+        self.assertLess(n_new, n_old,
+            f"New criterion ({n_new} iters) should converge faster than "
+            f"old criterion ({n_old} iters) when true coefficients are near zero.")
+
+
 if __name__ == '__main__':
     unittest.main()

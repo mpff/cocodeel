@@ -276,10 +276,6 @@ class PostHocCovarNetwork(BaseNetwork):
 
         eps = 1e-5  # Small constant for numerical stability.
 
-        # Initialize old coefficients for convergence check.
-        fx_weight_old = self.fx.weight.data.clone()
-        fz_weight_old = self.fz.weight.data.clone()
-
         delta_fx = 0.0
         delta_fz = 0.0
         converged = False
@@ -290,6 +286,10 @@ class PostHocCovarNetwork(BaseNetwork):
 
         # Iteratively reweighted least squares until convergence.
         for i in range(max_iters):
+
+            # ---- Track fitted values before update (for convergence criterion) ----
+            eta_fx_old = self.fx(X).clone()
+            eta_fz_old = self.fz(Z).clone()
 
             # ---- Prepare reweighted data ----
 
@@ -339,17 +339,17 @@ class PostHocCovarNetwork(BaseNetwork):
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
 
-            # 5. Check convergence via relative change in coefficients.
+            # 5. Check convergence via relative change in fitted values (linear predictor).
+            # mgcv-style: mean|Δη_fx| / (mean|η_fx_old| + 0.1). The 0.1 offset prevents
+            # blow-up when fx ≈ 0 (the pathological case for coefficient-change criteria).
             if self.link == "identity":
                 converged = True
                 break  # No need for IRLS iterations for identity link
-            delta_fx = torch.norm(self.fx.weight.data - fx_weight_old) / (torch.norm(fx_weight_old) + eps)
-            delta_fz = torch.norm(self.fz.weight.data - fz_weight_old) / (torch.norm(fz_weight_old) + eps)
+            delta_fx = (self.fx(X) - eta_fx_old).abs().mean() / (eta_fx_old.abs().mean() + 0.1)
+            delta_fz = (self.fz(Z) - eta_fz_old).abs().mean() / (eta_fz_old.abs().mean() + 0.1)
             if delta_fx < tol and delta_fz < tol:
                 converged = True
                 break
-            fx_weight_old = self.fx.weight.data.clone()
-            fz_weight_old = self.fz.weight.data.clone()
             if i == max_iters - 1:
                 print(f"IRLS did not converge after {max_iters} iterations (delta_fx={delta_fx:.4e}, delta_fz={delta_fz:.4e}, lambda={lam:.4e}). Consider increasing max_iters or tol.")
 
