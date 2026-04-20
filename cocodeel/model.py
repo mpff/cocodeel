@@ -158,7 +158,7 @@ class BaseNetwork(_BaseCovarNetwork):
         self.center_y.fit(y)
 
         self.intercept.data += self.fx(self.center_x.mean)
-        self.is_centered.data = torch.tensor(True)
+        self.is_centered.fill_(True)
         return self
 
 
@@ -200,5 +200,5 @@ class CovarNetwork(_BaseCovarNetwork):
         self.center_y.fit(y)
 
         self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
-        self.is_centered.data = torch.tensor(True)
+        self.is_centered.fill_(True)
         return self
