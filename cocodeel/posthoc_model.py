@@ -37,8 +37,9 @@ class PostHocCovarNetwork(BaseNetwork):
         self.orth = nn.Linear(num_covariates, 1, bias=False)
         self.orth.weight.data.zero_()
 
-        # Penalization Paramter for ridge refit.
-        self.lam = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        # Selected ridge penalty (set by _fit_effects). Buffer, not parameter —
+        # it's a hyperparameter, not a learnable.
+        self.register_buffer("lam", torch.tensor(0.0))
 
     # -------------------------------------------------------------------------
     # Forward & prediction methods
@@ -252,7 +253,7 @@ class PostHocCovarNetwork(BaseNetwork):
         self.fz.weight.data.copy_(best_state["fz"])
         self.intercept.data.copy_(best_state["intercept"])
 
-        self.lam.data.copy_(best_lambda)
+        self.lam.copy_(best_lambda)
         self.lambda_path_ = records
         print("Best lambda: {:.4e}".format(best_lambda.item()))
 
