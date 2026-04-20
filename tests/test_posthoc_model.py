@@ -990,6 +990,52 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         self.assertTrue(torch.allclose(fx_B.mean(dim=0), torch.zeros_like(fx_B.mean(dim=0)), atol=1e-4))
         self.assertTrue(torch.allclose(fz_B.mean(dim=0), torch.zeros_like(fz_B.mean(dim=0)), atol=1e-4))
 
+    @torch.no_grad()
+    def test_center_effects_after_fit_is_idempotent(self):
+        """After `.fit(B)`, calling `center_effects(B)` again must not change
+        predictions.
+
+        Bug under the current `is_centered=True` branch: `intercept += fz(μ_z)`
+        fires on every call. Once IRLS has set `fz.weight ≠ 0`, this silently
+        shifts the intercept by `fz.weight · μ_z_B` — corrupting predictions.
+        """
+        posthoc = PostHocCovarNetwork(
+            model=self.base,
+            num_covariates=self.num_covariates,
+            orthogonalize=False,
+        )
+        posthoc.fit(self.tr_B, self.va_B, lam=0.0)
+
+        intercept_before = posthoc.intercept.clone()
+        pred_before = posthoc(self.X_B[:20], self.Z_B[:20]).clone()
+
+        posthoc.center_effects(self.tr_B)  # re-center on the same loader
+
+        torch.testing.assert_close(posthoc.intercept, intercept_before, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(
+            posthoc(self.X_B[:20], self.Z_B[:20]), pred_before, rtol=1e-5, atol=1e-5
+        )
+
+    @torch.no_grad()
+    def test_fit_on_B_uses_B_centered_means(self):
+        """Invariant: after `.fit(B)` with `base.center_effects(A)`, the
+        posthoc's centering means must reflect B — not A. Intercept is fit on
+        B (by IRLS), so the centers have to match B as well."""
+        posthoc = PostHocCovarNetwork(
+            model=self.base,
+            num_covariates=self.num_covariates,
+            orthogonalize=False,
+        )
+        posthoc.fit(self.tr_B, self.va_B, lam=0.0)
+
+        X_B_feat, Z_B_feat, _ = posthoc._extract_features_from_loader(self.tr_B)
+        torch.testing.assert_close(
+            posthoc.center_x.mean, X_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
+        )
+        torch.testing.assert_close(
+            posthoc.center_z.mean, Z_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()
