@@ -128,13 +128,6 @@ class PostHocCovarNetwork(BaseNetwork):
         Z_train = Z_train / Z_std
 
         # ---- Extract validation data ----
-        # Keep X_val and Z_val on the *centered-raw* scale: fx.weight and
-        # fz.weight are de-standardised before each val eval (see below),
-        # so val inputs must match the raw scale the weights now expect.
-        # Standardising Z_val (as a stray line once did) biases val loss
-        # by 1/Z_std and distorts lambda selection — especially for
-        # orthogonalisation, where a wrong lambda gives a wrong fx.weight
-        # which then miscalibrates the orth OLS fit.
         X_val, Z_val, y_val = self._extract_features_from_loader(val_loader)
         X_val = self.center_x(X_val)
         Z_val = self.center_z(Z_val)
@@ -277,28 +270,8 @@ class PostHocCovarNetwork(BaseNetwork):
         # for ridge: alpha = 0.001 in lambda max calculation.
         N = X.shape[0]
         y = self.center_y(y)
-        X = self.center_x(X)
         alpha = 0.001
-        lambda_max = torch.max(torch.abs(X.T @ y)) / N / alpha
-        # if self.link == "identity":
-        #     lambda_max = 1 * torch.linalg.norm(X, 2)**2
-        # elif self.link == "logit":
-        #     eps = 1e-5  # Small constant for numerical stability.
-        #     mu = self.center_y.mean
-        #     var = self._variance_function(mu)
-        #     g_prime = self._link_derivative(mu)
-        #     weights = g_prime**2 / (var + eps)
-        #     # Clip probabilities for numerical stability in binomial case.
-        #     close_to_zero = mu < eps
-        #     close_to_one = mu > 1 - eps
-        #     mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-        #     mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-        #     weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
-        #     # Get lambda_max using the weighted design matrix.
-        #     sqrt_weights = torch.sqrt(weights)
-        #     lambda_max = 10 * torch.linalg.norm(sqrt_weights * X, 2)**2
-        # else:
-        #     raise ValueError(f"Unsupported link function: {self.link}")        
+        lambda_max = torch.max(torch.abs(X.T @ y)) / N / alpha 
         return lambda_max
 
     @torch.no_grad()
