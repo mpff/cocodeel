@@ -303,9 +303,10 @@ class PostHocCovarNetwork(BaseNetwork):
             if self.link == "logit":
                 close_to_zero = mu < eps
                 close_to_one = mu > 1 - eps
-                mu = torch.where(close_to_zero, torch.tensor(0).to(mu.device), mu)
-                mu = torch.where(close_to_one, torch.tensor(1).to(mu.device), mu)
-                weights = torch.where(close_to_zero | close_to_one, torch.tensor(eps).to(weights.device), weights)
+                mu = torch.where(close_to_zero, torch.zeros_like(mu), mu)
+                mu = torch.where(close_to_one,  torch.ones_like(mu),  mu)
+                weights = torch.where(close_to_zero | close_to_one,
+                                      torch.full_like(weights, eps), weights)
             sqrt_weights = torch.sqrt(weights)
 
             y_work = eta + (y - mu) / (g_prime + eps)
