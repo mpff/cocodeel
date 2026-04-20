@@ -1,3 +1,4 @@
+pdf(NULL)  # suppress automatic Rplots.pdf when run non-interactively
 library(readr)
 library(dplyr)
 library(ggplot2)
@@ -16,15 +17,27 @@ effect_names <- c(
 
 df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
   mutate(model = factor(
-    model, 
-    levels= c("covar", "posthoc_lam0", "posthoc"),
+    model,
+    levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10", "posthoc"),
     labels = c(
-      "SGD",
-      "Refit",
+      "NAM",
+      "NAM + Reg. (0.1)",
+      "NAM + Reg. (1)",
+      "NAM + Reg. (10)",
       "Pen. Refit")
   )) %>%
+  filter(!is.na(model)) %>%
   filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
+
+# Manual color scale: NAM=viridis purple, conc group=sequential blues, Pen. Refit=viridis yellow
+method_colors <- c(
+  "NAM"              = "#440154",
+  "NAM + Reg. (0.1)" = "#9ECAE1",
+  "NAM + Reg. (1)"   = "#2171B5",
+  "NAM + Reg. (10)"  = "#084594",
+  "Pen. Refit"       = "#FDE725"
+)
 
 
 
@@ -37,22 +50,20 @@ shared_theme <- theme_bw() +
     legend.key.width = unit(0.15, 'in'),
     legend.ticks.length = unit(c(-.05, 0), 'in'),
     legend.ticks = element_line(color='black'),
-    legend.position = c(0.4, 0.3),
+    legend.position = c(0.44, 0.22),
     legend.direction = "vertical",
-    #legend.margin = margin(-10, 0, 0, 0),   
     legend.background = element_rect(color = NA, fill = NA),
-    legend.text = element_text(size = 7, family = "serif"),
+    legend.text = element_text(size = 6, family = "serif", margin = margin(l = 2)),
+    legend.margin = margin(0, 0, 0, 0),
+    legend.spacing.x = unit(4, "pt"),
     axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1.2, size=6),
     axis.text.y = element_text(hjust = 1.25, size=6),
     text = element_text(size = 8, family = "serif"),
-    #axis.title.x = element_text(vjust = 1),
-    #axis.title.y = element_text(hjust = 0),
-    plot.margin = margin(2, 2, 2, 2)   # reduce outer whitespace
-    #panel.spacing = unit(1, "pt")       # spacing between facet panels
+    plot.margin = margin(2, 2, 2, 2)
   )
 
 # Reusable plotting function
-make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE) {
+make_plot <- function(data, ylab, show_legend = TRUE, strip_labels = TRUE) {
   p <- ggplot(
     data,
     aes(x = n * 0.5, y = value, group = model)
@@ -64,7 +75,7 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels
       breaks = 100 * 2^(0:7)
     ) +
     scale_y_log10(name = ylab) +
-    scale_color_viridis_d(name = "Method", option=color_option) +
+    scale_color_manual(name = NULL, values = method_colors) +
     coord_cartesian(
       xlim = c(100, 100 * 2^7.5),
       ylim = c(10, .4 * 1e-4)
@@ -82,40 +93,23 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels
 }
 
 # Build plots
+METHODS <- c("NAM", "NAM + Reg. (0.1)", "NAM + Reg. (1)", "NAM + Reg. (10)", "Pen. Refit")
+
 b1 <- make_plot(
-  df_bz %>% filter(
-    effect == "fx",
-    metric == "bias2",
-    model %in% c("SGD",
-                 "Refit",
-                 "Pen. Refit")
-  ),
+  df_bz %>% filter(effect == "fx", metric == "bias2", model %in% METHODS),
   ylab = TeX("$Bias^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "viridis",
   show_legend = FALSE,
   strip_labels = FALSE
 )
 
 b2 <- make_plot(
-  df_bz %>% filter(
-    effect == "fx",
-    metric == "var",
-    model %in% c("SGD",
-                 "Refit",
-                 "Pen. Refit")
-  ),
+  df_bz %>% filter(effect == "fx", metric == "var", model %in% METHODS),
   ylab = TeX("$Var(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  color_option = "viridis",
   show_legend = TRUE,
   strip_labels = FALSE
 )
 
 b <- b1 + b2
-plot(b)
-#+ plot_annotation(
-#  title = "b. Estimation of the direct X-effect", 
-#  theme = theme(plot.title = element_text(size = 9, family = "serif"))
-#  )
 
-ggsave("graphics/Fig3_Concurvity.pdf", b, width = 3.5, height = 1.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig2_Concurvity.pdf", b, width = 3.5, height = 1.8, units = "in", dpi=600, device = cairo_pdf)
 
