@@ -73,6 +73,8 @@ def covar_trainer(
     # dynamic range → no GradScaler needed. fp16 would — not supported here.
     amp_enabled = use_amp and device.type == "cuda"
 
+    use_covar = getattr(model, "num_covariates", 0) > 0
+
     best_val_loss = float("inf")
     best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     best_epoch = 0
@@ -87,9 +89,9 @@ def covar_trainer(
             z = batch["Z"].to(device, non_blocking=True)
             y = batch["y"].to(device, non_blocking=True)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
-                preds = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
+                preds = model(x, z) if use_covar else model(x)
                 loss = loss_fn(preds, y)
 
             loss.backward()
@@ -101,13 +103,13 @@ def covar_trainer(
         val_loss_sum = torch.zeros((), device=device)
         n_val = 0
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for batch in val_loader:
                 x = batch["X"].to(device, non_blocking=True)
                 z = batch["Z"].to(device, non_blocking=True)
                 y = batch["y"].to(device, non_blocking=True)
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
-                    preds = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
+                    preds = model(x, z) if use_covar else model(x)
                     val_loss_sum += loss_fn(preds, y) * x.size(0)
                 n_val += x.size(0)
 
