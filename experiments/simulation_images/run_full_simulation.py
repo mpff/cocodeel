@@ -220,21 +220,26 @@ def _trainer_params(outcome_type: str, hp: dict) -> dict:
 
 def _gather_predictions(model, loader, device):
     model.eval()
-    ys, fxs, frs, fzs = [], [], [], []
+    ys, fxs, fzs = [], [], []
     with torch.no_grad():
         for b in loader:
             x = b["X"].to(device)
             z = b["Z"].to(device)
             y_hat = model(x, z) if "num_covariates" in model.__dict__ and model.num_covariates > 0 else model(x)
             ys.append(y_hat.cpu())
-            # predict_fx accepts (x, z) on both BaseNetwork (z ignored) and PostHoc.
-            fxs.append(model.predict_fx(x, z).cpu() if _accepts_two(model.predict_fx) else model.predict_fx(x).cpu())
-            frs.append(_predict_fr(model, x, z).cpu())
+            # predict_fx returns the model's configured image effect:
+            # raw fx for orthogonalize=False, orthogonalized fx (= fr) for True.
+            # Store the same tensor under both "fx" and "fr" — figures filter by
+            # model name to pick the semantically correct row.
+            fx_pred = (model.predict_fx(x, z).cpu() if _accepts_two(model.predict_fx)
+                       else model.predict_fx(x).cpu())
+            fxs.append(fx_pred)
             fzs.append(model.predict_fz(z).cpu())
+    fx_arr = torch.cat(fxs, dim=0).view(-1).numpy().astype(np.float32)
     return {
         "y":  torch.cat(ys,  dim=0).view(-1).numpy().astype(np.float32),
-        "fx": torch.cat(fxs, dim=0).view(-1).numpy().astype(np.float32),
-        "fr": torch.cat(frs, dim=0).view(-1).numpy().astype(np.float32),
+        "fx": fx_arr,
+        "fr": fx_arr,
         "fz": torch.cat(fzs, dim=0).view(-1).numpy().astype(np.float32),
     }
 
@@ -245,17 +250,6 @@ def _accepts_two(fn) -> bool:
         return len(inspect.signature(fn).parameters) >= 2
     except (TypeError, ValueError):
         return False
-
-
-def _predict_fr(model, x, z):
-    """Residual X-effect: f_X(X) - E[f_X(X) | Z]. For PostHocCovarNetwork,
-    subtracting model.orth(z) from fx gives fr (if orthogonalize=False this is
-    zero-subtraction; if True it's fr by construction). Base models: fall back
-    to predict_fx (fr undefined)."""
-    if hasattr(model, "orth"):
-        fx = model.predict_fx(x, z)
-        return fx - model.orth(z)
-    return model.predict_fx(x) if not _accepts_two(model.predict_fx) else model.predict_fx(x, z)
 
 
 def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: dict) -> dict:
