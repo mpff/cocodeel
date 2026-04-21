@@ -322,10 +322,10 @@ class PostHocCovarNetwork(BaseNetwork):
             # --- Fitting Procedure ---
 
             # 1. Regress yw on Zw to get residuals.
-            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ yw)
+            resid_y = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z, Zw.T @ yw)
 
             # 2. Regress Xw on Zw to get residuals.
-            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ Xw)
+            resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z, Zw.T @ Xw)
 
             beta_fx = torch.linalg.solve(
                 resid_X.T @ resid_X + lam * torch.eye(resid_X.shape[1]).to(resid_X.device),
@@ -335,7 +335,7 @@ class PostHocCovarNetwork(BaseNetwork):
 
             # 4. Compute fz weights.
             resid_y_new = yw - self.fx(Xw)
-            beta_fz = torch.linalg.solve(Zw.T @ Zw + P_z + eps * torch.eye(Zw.shape[1]).to(Zw.device), Zw.T @ resid_y_new)
+            beta_fz = torch.linalg.solve(Zw.T @ Zw + P_z, Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
 
@@ -373,9 +373,8 @@ class PostHocCovarNetwork(BaseNetwork):
         Z = self.center_z(Z)
         fX = self.fx(X)
 
-        eps = 1e-5
         P = penalty_z.to(Z.device) if penalty_z is not None \
             else torch.zeros(Z.shape[1], Z.shape[1], device=Z.device)
-        solution = torch.linalg.solve(Z.T @ Z + P + eps * torch.eye(Z.shape[1], device=Z.device), Z.T @ fX)
+        solution = torch.linalg.solve(Z.T @ Z + P, Z.T @ fX)
         self.orth.weight.copy_(solution.T)
         return self
