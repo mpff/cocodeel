@@ -53,8 +53,10 @@ def covar_trainer(
         trailing-underscore attributes: ``val_losses_``, ``lr_history_``,
         ``best_epoch_``, ``n_epochs_run_``.
     """
-    # Default device and loss function
-    device = torch.device(device or "cpu")
+    # Default device and loss function.
+    # Use explicit None check: `device or "cpu"` silently routes to CPU when
+    # device=0 (truthy-falsy trap — `0 or "cpu"` → `"cpu"`).
+    device = torch.device("cpu" if device is None else device)
     loss_fn = loss_fn or nn.MSELoss()
     loss_fn = loss_fn.to(device)  # move buffers (e.g. pos_weight) to device
 
