@@ -27,7 +27,6 @@ df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
       "Pen. Refit")
   )) %>%
   filter(!is.na(model)) %>%
-  filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
 # Manual color scale: NAM=viridis purple, conc group=sequential blues, Pen. Refit=viridis yellow
@@ -72,12 +71,12 @@ make_plot <- function(data, ylab, show_legend = TRUE, strip_labels = TRUE) {
     geom_point(aes(color = model), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(0:7)
+      breaks = 100 * 2^(0:9)
     ) +
     scale_y_log10(name = ylab) +
     scale_color_manual(name = NULL, values = method_colors) +
     coord_cartesian(
-      xlim = c(100, 100 * 2^7.5),
+      xlim = c(100, 100 * 2^9.5),
       ylim = c(10, .4 * 1e-4)
     ) +
     shared_theme

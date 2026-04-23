@@ -52,7 +52,7 @@ from experiments.simulation_images.utils import simulate_dataloaders_split
 
 
 # ── Run config ────────────────────────────────────────────────────────────────
-DEVICE = "cuda:1"
+DEVICE = os.environ.get("COCODEEL_DEVICE", "cuda:1")
 N_WORKERS = 4
 NSIM = 50
 Q_DEFAULT = 32
@@ -61,7 +61,8 @@ TEST_N = 800
 EPOCHS_CAP = 1000
 HP_PATH = Path(__file__).resolve().parent / "chosen_hps.json"
 
-N_GRID      = [400, 800, 1600, 3200, 6400, 12800, 25600]
+N_GRID            = [400, 800, 1600, 3200, 6400, 12800, 25600]
+N_GRID_CONCURVITY = N_GRID + [51200, 102400]  # two extra log-steps for Fig 2
 BZ_GRID     = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]
 CV_GRID     = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 Q_GRID      = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -140,7 +141,7 @@ BLOCKS = {
             "covar_conc_1":   dict(lam_reg=1.0),    # Siems reg, medium
             "covar_conc_10":  dict(lam_reg=10.0),   # Siems reg, strong
         },
-        "settings": [dict(n=n) for n in N_GRID],
+        "settings": [dict(n=n) for n in N_GRID_CONCURVITY],
         "sweep_key_fn": lambda s: f"n={s['n']}",
     },
 }
@@ -421,7 +422,15 @@ def main():
     ap.add_argument("--only-block", type=str, default=None,
                     help="Restrict to a single block (e.g. 'increasing_bz').")
     ap.add_argument("--nsim", type=int, default=NSIM)
+    ap.add_argument("--device", type=str, default=DEVICE,
+                    help="CUDA device (e.g. 'cuda:0'). Overrides module default.")
     args = ap.parse_args()
+
+    # Override module-level DEVICE so spawned workers pick up the chosen device
+    # at import time (they re-import this module; the module sees the CLI arg
+    # via an env var set here before Pool spawn).
+    globals()["DEVICE"] = args.device
+    os.environ["COCODEEL_DEVICE"] = args.device
 
     if not HP_PATH.exists():
         print(f"Chosen HPs not found at {HP_PATH} — run hp_search.py first.", file=sys.stderr)
