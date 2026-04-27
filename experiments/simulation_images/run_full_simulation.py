@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT))
 
 from cocodeel.model import BaseNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
-from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork
+from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 
@@ -131,6 +131,7 @@ BLOCKS = {
         "posthoc_configs": {
             "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
             "posthoc_lam0": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"lam": 0.0}),
+            "posthoc_web":  dict(cls=PostHocOrthNetwork, recipe="full"),
         },
         # End-to-end NAM-style methods trained on the full sample. Fig 2
         # contrasts these "concurvity-exposed" fits with the split-recipe
@@ -140,6 +141,12 @@ BLOCKS = {
             "covar_conc_0.1": dict(lam_reg=0.1),    # Siems reg, weak
             "covar_conc_1":   dict(lam_reg=1.0),    # Siems reg, medium
             "covar_conc_10":  dict(lam_reg=10.0),   # Siems reg, strong
+        },
+        # SSN (Rügamer et al., 2023): wraps a fitted CovarNetwork and
+        # post-hoc orthogonalises via lstsq(Z, fX). Each entry names the
+        # sgd_config key whose model is wrapped.
+        "ssn_configs": {
+            "ssn": dict(wraps="covar"),
         },
         "settings": [dict(n=n) for n in N_GRID_CONCURVITY],
         "sweep_key_fn": lambda s: f"n={s['n']}",
@@ -328,6 +335,19 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
             m = m.center_effects(full_tr)
             sgd_models[name] = m
 
+    # SSN (SemiStructuredNetwork) wraps an already-fitted CovarNetwork and
+    # adds a post-hoc orthogonalisation term via lstsq(Z, fX). The wrapped
+    # model is identified by name in `ssn_configs[name]["wraps"]`.
+    ssn_models = {}
+    for name, cfg in block_cfg.get("ssn_configs", {}).items():
+        wraps = cfg["wraps"]
+        if wraps not in sgd_models:
+            raise ValueError(f"ssn_configs['{name}'] wraps '{wraps}', "
+                             f"but no sgd_config produced that model.")
+        m = SemiStructuredNetwork(sgd_models[wraps]).to(device)
+        m = m.fit(full_tr)
+        ssn_models[name] = m
+
     # --- evaluate on shared test draw ---
     # For the multi-covariate p-sweep, the test draw must use n_covars=p too
     # (otherwise Z dims mismatch). Keep everything else at defaults.
@@ -343,7 +363,8 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
         "fz": fz_te.view(-1).numpy().astype(np.float32),
     }
     for name, m in [("base_full", base_full), ("base_half", base_half),
-                    *sgd_models.items(), *posthoc_models.items()]:
+                    *sgd_models.items(), *ssn_models.items(),
+                    *posthoc_models.items()]:
         arrays[name] = _gather_predictions(m, loader, device)
 
     # Save one NPZ: per-method predictions + truths + metadata.
@@ -357,7 +378,7 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
     )
 
     # Clean up GPU memory between sims.
-    del base_full, base_half, posthoc_models, sgd_models
+    del base_full, base_half, posthoc_models, sgd_models, ssn_models
     torch.cuda.empty_cache()
     gc.collect()
 

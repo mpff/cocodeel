@@ -18,23 +18,33 @@ effect_names <- c(
 df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
   mutate(model = factor(
     model,
-    levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10", "posthoc"),
+    levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10",
+               "ssn", "posthoc_web", "posthoc"),
     labels = c(
       "NAM",
       "NAM + Reg. (0.1)",
       "NAM + Reg. (1)",
       "NAM + Reg. (10)",
+      "SSN",
+      "Weber",
       "Pen. Refit")
   )) %>%
   filter(!is.na(model)) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
-# Manual color scale: NAM=viridis purple, conc group=sequential blues, Pen. Refit=viridis yellow
+# Manual color scale:
+#   NAM             = viridis purple   (no correction baseline)
+#   NAM + Reg. (×3) = sequential blues (Siems concurvity penalty)
+#   SSN             = red              (post-hoc orth on a NAM)
+#   Weber           = orange           (post-hoc orth on a NN-only backbone)
+#   Pen. Refit      = viridis yellow   (ours)
 method_colors <- c(
   "NAM"              = "#440154",
   "NAM + Reg. (0.1)" = "#9ECAE1",
   "NAM + Reg. (1)"   = "#2171B5",
   "NAM + Reg. (10)"  = "#084594",
+  "SSN"              = "#E31A1C",
+  "Weber"            = "#FF7F00",
   "Pen. Refit"       = "#FDE725"
 )
 
@@ -92,7 +102,8 @@ make_plot <- function(data, ylab, show_legend = TRUE, strip_labels = TRUE) {
 }
 
 # Build plots
-METHODS <- c("NAM", "NAM + Reg. (0.1)", "NAM + Reg. (1)", "NAM + Reg. (10)", "Pen. Refit")
+METHODS <- c("NAM", "NAM + Reg. (0.1)", "NAM + Reg. (1)", "NAM + Reg. (10)",
+             "SSN", "Weber", "Pen. Refit")
 
 b1 <- make_plot(
   df_bz %>% filter(effect == "fx", metric == "bias2", model %in% METHODS),
