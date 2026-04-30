@@ -50,21 +50,22 @@ method_colors <- c(
 
 
 
-# Shared theme
+# Shared theme — legend is collected by patchwork and placed at the bottom
+# (see plot_layout(guides = "collect") below). In-panel placement was
+# unreadable: 7 vertically-stacked entries overlapped data curves.
 shared_theme <- theme_bw() +
   theme(
-    legend.title = element_text(vjust=-1.5),
-    legend.title.position = "top",
-    legend.key.height = unit(0.06, 'in'),
-    legend.key.width = unit(0.15, 'in'),
-    legend.ticks.length = unit(c(-.05, 0), 'in'),
-    legend.ticks = element_line(color='black'),
-    legend.position = c(0.44, 0.22),
-    legend.direction = "vertical",
+    legend.title = element_blank(),
+    legend.key.height = unit(0.07, 'in'),
+    legend.key.width = unit(0.14, 'in'),
     legend.background = element_rect(color = NA, fill = NA),
-    legend.text = element_text(size = 6, family = "serif", margin = margin(l = 2)),
+    legend.text = element_text(size = 6, family = "serif",
+                               margin = margin(l = 1, r = 6)),
     legend.margin = margin(0, 0, 0, 0),
-    legend.spacing.x = unit(4, "pt"),
+    legend.box.margin = margin(-4, 0, 0, 0),
+    legend.box.spacing = unit(0, "pt"),
+    legend.spacing.x = unit(0, "pt"),
+    legend.spacing.y = unit(0, "pt"),
     axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1.2, size=6),
     axis.text.y = element_text(hjust = 1.25, size=6),
     text = element_text(size = 8, family = "serif"),
@@ -72,7 +73,7 @@ shared_theme <- theme_bw() +
   )
 
 # Reusable plotting function
-make_plot <- function(data, ylab, show_legend = TRUE, strip_labels = TRUE) {
+make_plot <- function(data, ylab, strip_labels = TRUE) {
   p <- ggplot(
     data,
     aes(x = n * 0.5, y = value, group = model)
@@ -84,20 +85,19 @@ make_plot <- function(data, ylab, show_legend = TRUE, strip_labels = TRUE) {
       breaks = 100 * 2^(0:9)
     ) +
     scale_y_log10(name = ylab) +
-    scale_color_manual(name = NULL, values = method_colors) +
+    scale_color_manual(name = NULL, values = method_colors,
+                       breaks = names(method_colors)) +
+    guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
     coord_cartesian(
       xlim = c(100, 100 * 2^9.5),
       ylim = c(10, .4 * 1e-4)
     ) +
     shared_theme
-  
-  if (!show_legend) {
-    p <- p + theme(legend.position = "none")
-  }
+
   if (strip_labels) {
     p <- p + theme(strip.text.y = element_blank())
   }
-  
+
   p
 }
 
@@ -108,18 +108,21 @@ METHODS <- c("NAM", "NAM + Reg. (0.1)", "NAM + Reg. (1)", "NAM + Reg. (10)",
 b1 <- make_plot(
   df_bz %>% filter(effect == "fx", metric == "bias2", model %in% METHODS),
   ylab = TeX("$Bias^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  show_legend = FALSE,
   strip_labels = FALSE
 )
 
 b2 <- make_plot(
   df_bz %>% filter(effect == "fx", metric == "var", model %in% METHODS),
   ylab = TeX("$Var(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
-  show_legend = TRUE,
   strip_labels = FALSE
 )
 
-b <- b1 + b2
+# Collect the (identical) legends from both panels and place at bottom.
+# byrow=TRUE with 4 columns → row 1: NAM family (NAM + 3 Reg. variants);
+# row 2: post-hoc family (SSN, Weber, Pen. Refit).
+b <- (b1 + b2) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
 
-ggsave("graphics/Fig2_Concurvity.pdf", b, width = 3.5, height = 1.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig2_Concurvity.pdf", b, width = 3.5, height = 2.2, units = "in", dpi=600, device = cairo_pdf)
 
