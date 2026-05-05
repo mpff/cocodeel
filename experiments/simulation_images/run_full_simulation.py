@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import gc
+import inspect
 import json
 import os
 import subprocess
@@ -47,8 +48,21 @@ from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 
 from experiments.simulation_images.backbone import TrafficBackbone
-from experiments.simulation_images.dataset import simulate_traffic_light_data
+from experiments.simulation_images.dataset import (
+    simulate_traffic_light_data,
+    simulate_data_nonlinear_fz,
+    BSplineBasisTransform,
+)
 from experiments.simulation_images.utils import simulate_dataloaders_split
+
+# Spline basis used by the `nonlinear_fz` block: cubic B-spline with 5
+# inner knots on [0, 1] → 9 basis functions. Built once at import time
+# and shared via the BLOCKS dict (class-based so it pickles cleanly when
+# workers re-import this module).
+NONLINEAR_FZ_BASIS = BSplineBasisTransform(
+    knots=np.linspace(0.0, 1.0, 7), degree=3,
+)
+# n_basis = NONLINEAR_FZ_BASIS.n_basis = 9
 
 
 # ── Run config ────────────────────────────────────────────────────────────────
@@ -129,9 +143,12 @@ BLOCKS = {
         "outcome_type": "continuous",
         "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
         "posthoc_configs": {
-            "posthoc":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
-            "posthoc_lam0": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"lam": 0.0}),
-            "posthoc_web":  dict(cls=PostHocOrthNetwork, recipe="full"),
+            "posthoc":           dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}),
+            "posthoc_lam0":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, fit_kwargs={"lam": 0.0}),
+            "posthoc_orth":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True}),
+            "posthoc_xfit":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, recipe="xfit"),
+            "posthoc_orth_xfit": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True},  recipe="xfit"),
+            "posthoc_web":       dict(cls=PostHocOrthNetwork, recipe="full"),
         },
         # End-to-end NAM-style methods trained on the full sample. Fig 2
         # contrasts these "concurvity-exposed" fits with the split-recipe
@@ -150,6 +167,25 @@ BLOCKS = {
         },
         "settings": [dict(n=n) for n in N_GRID_CONCURVITY],
         "sweep_key_fn": lambda s: f"n={s['n']}",
+    },
+    "nonlinear_fz": {
+        # Nonlinear-fz block. Same image DGP as the rest of the suite,
+        # but fz is sinusoidal (one period over Z's [0,1] support);
+        # paired with a cubic B-spline basis on Z (9 functions) so the
+        # post-hoc model fits a spline regression for fz with no model
+        # changes. Cross-fit (k=2) is the only recipe — both methods
+        # share the second backbone trained on `half_B`.
+        "outcome_type": "continuous",
+        "dgp_fn":       simulate_data_nonlinear_fz,
+        "covar_transform":              NONLINEAR_FZ_BASIS,
+        "num_covariates_after_transform": NONLINEAR_FZ_BASIS.n_basis,
+        "sim_defaults": dict(b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
+        "posthoc_configs": {
+            "posthoc_xfit":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, recipe="xfit"),
+            "posthoc_orth_xfit": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True},  recipe="xfit"),
+        },
+        "settings": [dict(n=n, bz=bz) for n in N_GRID for bz in BZ_GRID],
+        "sweep_key_fn": lambda s: f"n={s['n']}_bz={s['bz']}",
     },
 }
 
@@ -195,7 +231,11 @@ def write_manifest(run_dir: Path, hp: dict) -> None:
 # ── Task helpers ──────────────────────────────────────────────────────────────
 def _model_params_for(setting: dict, block_cfg: dict) -> dict:
     q = setting.get("q", Q_DEFAULT)
-    p = setting.get("n_covars", 1)
+    # If the block applies a covariate transform (e.g. spline basis),
+    # the model sees `num_covariates_after_transform` columns, not the
+    # raw `n_covars` from the DGP.
+    p = block_cfg.get("num_covariates_after_transform",
+                      setting.get("n_covars", 1))
     return dict(
         backbone=TrafficBackbone,
         backbone_params={"out_features": q},
@@ -253,11 +293,61 @@ def _gather_predictions(model, loader, device):
 
 
 def _accepts_two(fn) -> bool:
-    import inspect
     try:
         return len(inspect.signature(fn).parameters) >= 2
     except (TypeError, ValueError):
         return False
+
+
+class CrossFitAverageModel:
+    """Two-fold cross-fit estimator. Holds two trained sub-models (each a
+    regular post-hoc refit on a complementary half of the data) and
+    returns the elementwise mean of their predictions on a shared test
+    set. Exposes the same forward / predict_fx / predict_fz interface as
+    the underlying models so it slots into `_gather_predictions`
+    unchanged."""
+
+    def __init__(self, m1, m2):
+        self.m1 = m1
+        self.m2 = m2
+        # _gather_predictions inspects __dict__ for num_covariates;
+        # surface it on the wrapper so the dispatch is uniform.
+        self.num_covariates = getattr(m1, "num_covariates", 0)
+
+    def eval(self):
+        self.m1.eval(); self.m2.eval()
+        return self
+
+    def to(self, device):
+        self.m1.to(device); self.m2.to(device)
+        return self
+
+    def __call__(self, x, z=None):
+        if z is None:
+            return (self.m1(x) + self.m2(x)) / 2
+        return (self.m1(x, z) + self.m2(x, z)) / 2
+
+    def predict_fx(self, x, z=None):
+        if z is None:
+            return (self.m1.predict_fx(x) + self.m2.predict_fx(x)) / 2
+        return (self.m1.predict_fx(x, z) + self.m2.predict_fx(x, z)) / 2
+
+    def predict_fz(self, z):
+        return (self.m1.predict_fz(z) + self.m2.predict_fz(z)) / 2
+
+
+def _fit_posthoc(model_cls, backbone, fit_tr, fit_va, init_kwargs,
+                 fit_kwargs, num_covariates, device):
+    """Construct and fit one post-hoc model. Dispatches on `fit()` arity:
+    PostHocOrthNetwork.fit takes 1 arg (train); PostHocCovarNetwork.fit
+    takes 2 args (train, val)."""
+    m = model_cls(backbone, num_covariates=num_covariates,
+                  **init_kwargs).to(device)
+    if not hasattr(m, "fit"):
+        return m
+    if len(inspect.signature(m.fit).parameters) == 1:
+        return m.fit(fit_tr, **fit_kwargs)
+    return m.fit(fit_tr, fit_va, **fit_kwargs)
 
 
 def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: dict) -> dict:
@@ -281,40 +371,77 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
 
     t0 = time.time()
 
-    full, half_A, half_B = simulate_dataloaders_split(sim_params, seed=seed)
+    # Optional per-block hooks: a custom DGP function and a covariate
+    # transform (e.g. spline basis on Z). Defaults preserve the original
+    # behaviour for the existing 6 blocks.
+    dgp_fn          = block_cfg.get("dgp_fn")
+    covar_transform = block_cfg.get("covar_transform")
+
+    full, half_A, half_B = simulate_dataloaders_split(
+        sim_params, seed=seed,
+        dgp_fn=dgp_fn, covar_transform=covar_transform,
+    )
     full_tr, full_va = full
     hA_tr,  hA_va  = half_A
     hB_tr,  hB_va  = half_B
 
-    base_full = covar_trainer(BaseNetwork, model_params, train_loader=full_tr, val_loader=full_va, **tp)
-    base_full = base_full.center_effects(full_tr)
+    posthoc_configs = block_cfg["posthoc_configs"]
+    recipes = {cfg.get("recipe", "split") for cfg in posthoc_configs.values()}
 
-    base_half = covar_trainer(BaseNetwork, model_params, train_loader=hA_tr, val_loader=hA_va, **tp)
-    base_half = base_half.center_effects(hA_tr)
+    # Train only the backbones the block's recipes actually need. Saves
+    # ~one full-N backbone per sim for blocks that don't use the "full"
+    # recipe (e.g. nonlinear_fz uses xfit only).
+    base_full = None
+    if "full" in recipes:
+        base_full = covar_trainer(BaseNetwork, model_params,
+                                  train_loader=full_tr, val_loader=full_va, **tp)
+        base_full = base_full.center_effects(full_tr)
 
-    import inspect
+    base_half = None
+    if recipes & {"split", "xfit"}:
+        base_half = covar_trainer(BaseNetwork, model_params,
+                                  train_loader=hA_tr, val_loader=hA_va, **tp)
+        base_half = base_half.center_effects(hA_tr)
+
+    # Cross-fit (recipe="xfit") needs a second backbone trained on the
+    # OTHER half. Shared across all xfit methods, since posthoc and
+    # posthoc_orth differ only in their refit step.
+    base_half_B = None
+    if "xfit" in recipes:
+        base_half_B = covar_trainer(BaseNetwork, model_params,
+                                    train_loader=hB_tr, val_loader=hB_va, **tp)
+        base_half_B = base_half_B.center_effects(hB_tr)
+
+    p = model_params["num_covariates"]
     posthoc_models = {}
-    for name, cfg in block_cfg["posthoc_configs"].items():
+    for name, cfg in posthoc_configs.items():
         init_kwargs = cfg.get("init_kwargs", {})
         fit_kwargs  = cfg.get("fit_kwargs", {})
         model_cls   = cfg["cls"]
-        # recipe="split" (default): backbone from half_A, refit on half_B.
-        # recipe="full":            backbone from full sample, refit on full.
-        # The Weber baseline (PostHocOrthNetwork / "posthoc_web") uses full —
-        # cocodeel's posthoc refit is the only method whose unbiasedness
+        # recipe="split" (default): backbone half_A, refit half_B.
+        # recipe="full":            backbone full, refit full.
+        # recipe="xfit":            two-fold cross-fit — fold 1 (AB):
+        #                           backbone half_A, refit half_B; fold 2
+        #                           (BA): backbone half_B, refit half_A;
+        #                           predictions averaged.
+        # The Weber baseline (PostHocOrthNetwork / "posthoc_web") uses full
+        # — cocodeel's posthoc refit is the only method whose unbiasedness
         # argument requires splitting; full-sample fit is the published
         # Weber recipe and the fair apples-to-apples baseline for it.
         recipe = cfg.get("recipe", "split")
-        backbone = base_full if recipe == "full" else base_half
-        fit_tr, fit_va = (full_tr, full_va) if recipe == "full" else (hB_tr, hB_va)
-        m = model_cls(backbone, num_covariates=model_params["num_covariates"], **init_kwargs).to(device)
-        if hasattr(m, "fit"):
-            # PostHocOrthNetwork.fit takes (train) only; PostHocCovarNetwork.fit takes (train, val).
-            params = inspect.signature(m.fit).parameters
-            if len(params) == 1:  # train only
-                m = m.fit(fit_tr, **fit_kwargs)
-            else:
-                m = m.fit(fit_tr, fit_va, **fit_kwargs)
+
+        if recipe == "xfit":
+            m_AB = _fit_posthoc(model_cls, base_half,   hB_tr, hB_va,
+                                init_kwargs, fit_kwargs, p, device)
+            m_BA = _fit_posthoc(model_cls, base_half_B, hA_tr, hA_va,
+                                init_kwargs, fit_kwargs, p, device)
+            m = CrossFitAverageModel(m_AB, m_BA)
+        elif recipe == "full":
+            m = _fit_posthoc(model_cls, base_full, full_tr, full_va,
+                             init_kwargs, fit_kwargs, p, device)
+        else:  # "split"
+            m = _fit_posthoc(model_cls, base_half, hB_tr, hB_va,
+                             init_kwargs, fit_kwargs, p, device)
         posthoc_models[name] = m
 
     # End-to-end (no-refit) SGD-style fits: train on full N (not split).
@@ -350,9 +477,13 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
 
     # --- evaluate on shared test draw ---
     # For the multi-covariate p-sweep, the test draw must use n_covars=p too
-    # (otherwise Z dims mismatch). Keep everything else at defaults.
+    # (otherwise Z dims mismatch). Keep everything else at defaults. For
+    # blocks with a custom DGP / covariate transform, mirror them on the
+    # test set so the model sees the same Z structure.
     test_sim = dict(sim_params); test_sim["n"] = TEST_N
-    X_te, Z_te, y_te, fx_te, fz_te, fr_te = simulate_traffic_light_data(**test_sim, seed=TEST_SEED)
+    test_dgp = dgp_fn if dgp_fn is not None else simulate_traffic_light_data
+    X_te, Z_te_raw, y_te, fx_te, fz_te, fr_te = test_dgp(**test_sim, seed=TEST_SEED)
+    Z_te = covar_transform(Z_te_raw) if covar_transform is not None else Z_te_raw
     loader = DataLoader(CovarDataset(X_te, Z_te, y_te), batch_size=min(200, TEST_N), shuffle=False)
 
     arrays = {}
@@ -362,9 +493,11 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
         "fr": fr_te.view(-1).numpy().astype(np.float32),
         "fz": fz_te.view(-1).numpy().astype(np.float32),
     }
-    for name, m in [("base_full", base_full), ("base_half", base_half),
-                    *sgd_models.items(), *ssn_models.items(),
-                    *posthoc_models.items()]:
+    to_eval = []
+    if base_full is not None: to_eval.append(("base_full", base_full))
+    if base_half is not None: to_eval.append(("base_half", base_half))
+    to_eval += list(sgd_models.items()) + list(ssn_models.items()) + list(posthoc_models.items())
+    for name, m in to_eval:
         arrays[name] = _gather_predictions(m, loader, device)
 
     # Save one NPZ: per-method predictions + truths + metadata.

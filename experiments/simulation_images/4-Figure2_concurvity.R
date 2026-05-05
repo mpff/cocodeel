@@ -19,33 +19,53 @@ df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
   mutate(model = factor(
     model,
     levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10",
-               "ssn", "posthoc_web", "posthoc"),
+               "ssn", "posthoc_xfit", "posthoc_orth_xfit"),
     labels = c(
-      "NAM",
-      "NAM + Reg. (0.1)",
-      "NAM + Reg. (1)",
-      "NAM + Reg. (10)",
-      "SSN",
-      "Weber",
-      "Pen. Refit")
+      "NAM [7]",
+      "NAM + Reg. (0.1) [20]",
+      "NAM + Reg. (1) [20]",
+      "NAM + Reg. (10) [20]",
+      "SSN [8]",
+      "DNN w. Controls",
+      "DNN w. Controls + Orth.")
   )) %>%
   filter(!is.na(model)) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
-# Manual color scale:
-#   NAM             = viridis purple   (no correction baseline)
-#   NAM + Reg. (×3) = sequential blues (Siems concurvity penalty)
-#   SSN             = red              (post-hoc orth on a NAM)
-#   Weber           = orange           (post-hoc orth on a NN-only backbone)
-#   Pen. Refit      = viridis yellow   (ours)
+# Manual color scale.
+#
+# NAM family → viridis cool ramp (purple → blue → teal); position encodes
+# regularisation strength. SSN → plasma magenta — a different post-hoc
+# approach, off the viridis path.
+#
+# DNN w. Controls and DNN w. Controls + Orth. mirror Fig 1bz's two
+# palettes (viridis / magma) at the position corresponding to the bz
+# value used in this simulation block (bz = 1), under the same scale
+# limits as Fig 1's scale_color_viridis_c (c(-0.025, 4.25)). Computing
+# the colours programmatically (rather than hardcoding hex) keeps the
+# two figures visually linked: the same bz value reads as the same
+# colour in both.
+FIG1_BZ_LIMITS <- c(-0.025, 4.25)
+FIG1_BZ_ANCHOR <- 2.5  # bz value used to pick the highlight colour;
+                       # 2.5 lands in the warm-mid range of viridis/magma,
+                       # giving teal-green + coral-pink (both readable and
+                       # CB-distinct from the cool NAM ramp).
+fig1_bz_pos <- (FIG1_BZ_ANCHOR - FIG1_BZ_LIMITS[1]) /
+               (FIG1_BZ_LIMITS[2] - FIG1_BZ_LIMITS[1])
+
+bz_anchor_color <- function(option) {
+  scales::viridis_pal(begin = fig1_bz_pos, end = fig1_bz_pos,
+                      option = option)(1)
+}
+
 method_colors <- c(
-  "NAM"              = "#440154",
-  "NAM + Reg. (0.1)" = "#9ECAE1",
-  "NAM + Reg. (1)"   = "#2171B5",
-  "NAM + Reg. (10)"  = "#084594",
-  "SSN"              = "#E31A1C",
-  "Weber"            = "#FF7F00",
-  "Pen. Refit"       = "#FDE725"
+  "NAM [7]"                 = "#440154",  # viridis(0.00) — deep purple
+  "NAM + Reg. (0.1) [20]"   = "#3B528B",  # viridis(0.25) — blue
+  "NAM + Reg. (1) [20]"     = "#287C8E",  # viridis(0.40) — teal-blue
+  "NAM + Reg. (10) [20]"    = "#26828E",  # viridis(0.50) — teal
+  "SSN [8]"                 = "#9C179E",  # plasma(0.40)  — magenta
+  "DNN w. Controls"         = bz_anchor_color("viridis"),
+  "DNN w. Controls + Orth." = bz_anchor_color("magma")
 )
 
 
@@ -68,6 +88,7 @@ shared_theme <- theme_bw() +
     legend.spacing.y = unit(0, "pt"),
     axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1.2, size=6),
     axis.text.y = element_text(hjust = 1.25, size=6),
+    axis.title.x = element_text(margin = margin(t = 0)),
     text = element_text(size = 8, family = "serif"),
     plot.margin = margin(2, 2, 2, 2)
   )
@@ -87,10 +108,10 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
     scale_y_log10(name = ylab) +
     scale_color_manual(name = NULL, values = method_colors,
                        breaks = names(method_colors)) +
-    guides(color = guide_legend(nrow = 2, byrow = TRUE)) +
+    guides(color = guide_legend(ncol = 1)) +
     coord_cartesian(
       xlim = c(100, 100 * 2^9.5),
-      ylim = c(10, .4 * 1e-4)
+      ylim = c(0.5, 1e-4)
     ) +
     shared_theme
 
@@ -102,27 +123,27 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
 }
 
 # Build plots
-METHODS <- c("NAM", "NAM + Reg. (0.1)", "NAM + Reg. (1)", "NAM + Reg. (10)",
-             "SSN", "Weber", "Pen. Refit")
+METHODS <- c("NAM [7]", "NAM + Reg. (0.1) [20]", "NAM + Reg. (1) [20]",
+             "NAM + Reg. (10) [20]", "SSN [8]", "DNN w. Controls",
+             "DNN w. Controls + Orth.")
 
 b1 <- make_plot(
-  df_bz %>% filter(effect == "fx", metric == "bias2", model %in% METHODS),
-  ylab = TeX("$Bias^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
+  df_bz %>% filter(effect == "fx", metric == "mspe", model %in% METHODS),
+  ylab = TeX("$MSPE(\\hat{f}_X)$"),
   strip_labels = FALSE
 )
 
 b2 <- make_plot(
-  df_bz %>% filter(effect == "fx", metric == "var", model %in% METHODS),
-  ylab = TeX("$Var(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
+  df_bz %>% filter(effect == "fr", metric == "mspe", model %in% METHODS),
+  ylab = TeX("$MSPE(\\hat{f}^{re}_X)$"),
   strip_labels = FALSE
 )
 
-# Collect the (identical) legends from both panels and place at bottom.
-# byrow=TRUE with 4 columns → row 1: NAM family (NAM + 3 Reg. variants);
-# row 2: post-hoc family (SSN, Weber, Pen. Refit).
+# Collect the (identical) legends from both panels and place at right
+# (single vertical column). Figure is double-column width.
 b <- (b1 + b2) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "bottom")
+  theme(legend.position = "right")
 
-ggsave("graphics/Fig2_Concurvity.pdf", b, width = 3.5, height = 2.2, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig2_Concurvity.pdf", b, width = 5.0, height = 1.5, units = "in", dpi=600, device = cairo_pdf)
 

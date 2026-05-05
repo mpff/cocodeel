@@ -17,7 +17,8 @@ def simulate_dataloader(simulation_params, seed=0):
     return train_loader, val_loader
 
 
-def simulate_dataloaders_split(simulation_params, seed=0):
+def simulate_dataloaders_split(simulation_params, seed=0,
+                                dgp_fn=None, covar_transform=None):
     """Draw one dataset and return three disjoint-partition loader pairs.
 
     Returns ``(full, half_A, half_B)`` where each element is
@@ -32,9 +33,20 @@ def simulate_dataloaders_split(simulation_params, seed=0):
     posthoc features ``H = phi(X_B; theta*)`` a deterministic function of
     ``X_B`` (not of ``y_B``), which restores exogeneity for the FWL+ridge
     refit (Pagan 1984).
+
+    Optional kwargs ``dgp_fn`` and ``covar_transform`` allow blocks with
+    custom data generation (e.g. nonlinear fz) and a covariate basis
+    transform (e.g. spline basis on Z) to reuse this loader. If
+    ``covar_transform`` is given, it is applied to Z before the loaders
+    are built — so the model sees the transformed covariate matrix
+    (e.g. a B-spline basis) directly.
     """
+    if dgp_fn is None:
+        dgp_fn = simulate_traffic_light_data
     torch.manual_seed(seed)
-    X, Z, y, fx, fz, fr = simulate_traffic_light_data(**simulation_params, seed=seed)
+    X, Z, y, fx, fz, fr = dgp_fn(**simulation_params, seed=seed)
+    if covar_transform is not None:
+        Z = covar_transform(Z)
     N = X.shape[0]
     half = N // 2
     base_batch = 200 if N >= 200 else N
