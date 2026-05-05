@@ -209,9 +209,9 @@ d <- b3 + c3
 
 d/b/c
 
-ggsave("graphics/Fig1b_bz_mspe.pdf", d, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig1b_bz_bias2.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig1b_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig1b_bz_mspe.pdf", d, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig1b_bz_bias2.pdf", b, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig1b_bz_var.pdf", c, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
 
 
 fxBias <- make_plot(

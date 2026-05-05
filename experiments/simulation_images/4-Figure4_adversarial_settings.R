@@ -73,6 +73,7 @@ shared_theme <- theme_bw() +
     legend.background = element_rect(color = NA, fill = NA),
     axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1.2, size=6),
     axis.text.y = element_text(hjust = 1.25, size=6),
+    axis.title.x = element_text(margin = margin(t = 0)),
     text = element_text(size = 8, family = "serif"),
     plot.margin = margin(2, 2, 2, 2)   # reduce outer whitespace
   )
@@ -90,6 +91,7 @@ shared_theme2 <- theme_bw() +
     legend.background = element_rect(color = NA, fill = NA),
     axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1.2, size=6),
     axis.text.y = element_text(hjust = 1.25, size=6),
+    axis.title.x = element_text(margin = margin(t = 0)),
     text = element_text(size = 8, family = "serif"),
     plot.margin = margin(2, 2, 2, 2)   # reduce outer whitespace
   )
@@ -106,7 +108,7 @@ qDE <- ggplot(
   ) +
   geom_line(aes(color = q), alpha = 0.8, linewidth = 0.8) +
   geom_point(aes(color = q), alpha = 0.8, size = 0.8) +
-  scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)")) +
+  scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$")) +
   scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
       breaks = 100 * 2^(0:7)
@@ -137,7 +139,7 @@ qRE <- ggplot(
 ) +
   geom_line(aes(color = q), alpha = 0.8, linewidth = 0.8) +
   geom_point(aes(color = q), alpha = 0.8, size = 0.8) +
-  scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)")) +
+  scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
     breaks = 100 * 2^(0:7)
@@ -169,7 +171,7 @@ pDE <- ggplot(
 ) +
   geom_line(aes(color = p), alpha = 0.8, linewidth = 0.8) +
   geom_point(aes(color = p), alpha = 0.8, size = 0.8) +
-  scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)")) +
+  scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
     breaks = 100 * 2^(0:7)
@@ -200,7 +202,7 @@ pRE <- ggplot(
 ) +
   geom_line(aes(color = p), alpha = 0.8, linewidth = 0.8) +
   geom_point(aes(color = p), alpha = 0.8, size = 0.8) +
-  scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)")) +
+  scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
     breaks = 100 * 2^(0:7)
@@ -233,7 +235,7 @@ cDE <- ggplot(
 ) +
   geom_line(aes(color = cv1), alpha = 0.8, linewidth = 0.8) +
   geom_point(aes(color = cv1), alpha = 0.8, size = 0.8) +
-  scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)")) +
+  scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
     breaks = 100 * 2^(0:7)
@@ -261,7 +263,7 @@ cRE <- ggplot(
 ) +
   geom_line(aes(color = cv1), alpha = 0.8, linewidth = 0.8) +
   geom_point(aes(color = cv1), alpha = 0.8, size = 0.8) +
-  scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)")) +
+  scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
     breaks = 100 * 2^(0:7)
@@ -284,5 +286,5 @@ b <- (qDE + pDE + cDE) / (qRE + pRE + cRE)
 plot(b)
 
 
-ggsave("graphics/Fig4_simulation.pdf", b, width = 7.16, height = 3.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig4_simulation.pdf", b, width = 7.16, height = 3.0, units = "in", dpi=600, device = cairo_pdf)
 
