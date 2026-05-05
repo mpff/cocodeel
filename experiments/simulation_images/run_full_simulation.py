@@ -187,6 +187,28 @@ BLOCKS = {
         "settings": [dict(n=n, bz=bz) for n in N_GRID for bz in BZ_GRID],
         "sweep_key_fn": lambda s: f"n={s['n']}_bz={s['bz']}",
     },
+    "nonlinear_fz_misspec": {
+        # Misspecification contrast to `nonlinear_fz`: same sin-fz DGP
+        # and same xfit recipe, but the model is fed the RAW 1-d
+        # covariate Z (no spline basis). The linear-in-Z refit can only
+        # recover the linear projection of sin(2π(Z-0.5)) (coefficient
+        # 6/π, captured variance 3/π² per unit bz²); the residual
+        # ≈ 0.2·bz² nonlinear-fz variance is unfitted and leaks into
+        # f̂_X via the X-Z correlation. Used in the appendix to show
+        # the consequences of misspecifying the covariate basis.
+        "outcome_type": "continuous",
+        "dgp_fn":       simulate_data_nonlinear_fz,
+        # No covar_transform / no num_covariates_after_transform —
+        # defaults give n_covars=1 (raw Z), which is the
+        # misspecification we are measuring.
+        "sim_defaults": dict(b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
+        "posthoc_configs": {
+            "posthoc_xfit":      dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": False}, recipe="xfit"),
+            "posthoc_orth_xfit": dict(cls=PostHocCovarNetwork, init_kwargs={"orthogonalize": True},  recipe="xfit"),
+        },
+        "settings": [dict(n=n, bz=bz) for n in N_GRID for bz in BZ_GRID],
+        "sweep_key_fn": lambda s: f"n={s['n']}_bz={s['bz']}",
+    },
 }
 
 
