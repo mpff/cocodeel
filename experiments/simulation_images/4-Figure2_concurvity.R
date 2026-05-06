@@ -26,8 +26,8 @@ df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
       "NAM + Reg. (1) [20]",
       "NAM + Reg. (10) [20]",
       "SSN [8]",
-      "DNN w. Controls",
-      "DNN w. Controls + Orth.")
+      "DNN with Controls",
+      "DNN with Controls\n+ Orthogonalisation")
   )) %>%
   filter(!is.na(model)) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -64,8 +64,8 @@ method_colors <- c(
   "NAM + Reg. (1) [20]"     = "#287C8E",  # viridis(0.40) — teal-blue
   "NAM + Reg. (10) [20]"    = "#26828E",  # viridis(0.50) — teal
   "SSN [8]"                 = "#9C179E",  # plasma(0.40)  — magenta
-  "DNN w. Controls"         = bz_anchor_color("viridis"),
-  "DNN w. Controls + Orth." = bz_anchor_color("magma")
+  "DNN with Controls"         = bz_anchor_color("viridis"),
+  "DNN with Controls\n+ Orthogonalisation" = bz_anchor_color("magma")
 )
 
 
@@ -124,8 +124,8 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
 
 # Build plots
 METHODS <- c("NAM [7]", "NAM + Reg. (0.1) [20]", "NAM + Reg. (1) [20]",
-             "NAM + Reg. (10) [20]", "SSN [8]", "DNN w. Controls",
-             "DNN w. Controls + Orth.")
+             "NAM + Reg. (10) [20]", "SSN [8]", "DNN with Controls",
+             "DNN with Controls\n+ Orthogonalisation")
 
 b1 <- make_plot(
   df_bz %>% filter(effect == "fx", metric == "mspe", model %in% METHODS),

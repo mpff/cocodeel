@@ -21,10 +21,10 @@ df_q <- read_csv("results/simulation_images/increasing_q.csv") %>%
     model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
     labels = c(
-      "DNN w. Controls",
-      "DNN w. Controls + Orth.",
-      "DNN",
-      "DNN + Regress Out [17]")
+      "DNN with Controls",
+      "DNN with Controls\n+ Orthogonalisation",
+      "DNN (Baseline)",
+      "DNN (Baseline)\n+ Orthogonalisation [17]")
   )) %>%
   filter(n < 50000, q > 2) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -34,10 +34,10 @@ df_cv1 <- read_csv("results/simulation_images/increasing_cv.csv") %>%
     model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
     labels = c(
-      "DNN w. Controls",
-      "DNN w. Controls + Orth.",
-      "DNN",
-      "DNN + Regress Out [17]")
+      "DNN with Controls",
+      "DNN with Controls\n+ Orthogonalisation",
+      "DNN (Baseline)",
+      "DNN (Baseline)\n+ Orthogonalisation [17]")
   )) %>%
   filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -47,10 +47,10 @@ df_p <- read_csv("results/simulation_images/increasing_p.csv") %>%
     model,
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
     labels = c(
-      "DNN w. Controls",
-      "DNN w. Controls + Orth.",
-      "DNN",
-      "DNN + Regress Out [17]")
+      "DNN with Controls",
+      "DNN with Controls\n+ Orthogonalisation",
+      "DNN (Baseline)",
+      "DNN (Baseline)\n+ Orthogonalisation [17]")
   )) %>%
   filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -102,7 +102,7 @@ qDE <- ggplot(
   df_q %>% filter(
     effect == "fx",
     metric == "mspe",
-    model %in% c("DNN w. Controls")
+    model %in% c("DNN with Controls")
   ),
   aes(x = n * 0.5, y = value, group = q)
   ) +
@@ -133,7 +133,7 @@ qRE <- ggplot(
   df_q %>% filter(
     effect == "fr",
     metric == "mspe",
-    model %in% c("DNN w. Controls + Orth.")
+    model %in% c("DNN with Controls\n+ Orthogonalisation")
   ),
   aes(x = n * 0.5, y = value, group = q)
 ) +
@@ -165,7 +165,7 @@ pDE <- ggplot(
   df_p %>% filter(
     effect == "fx",
     metric == "mspe",
-    model %in% c("DNN w. Controls")
+    model %in% c("DNN with Controls")
   ),
   aes(x = n * 0.5, y = value, group = p)
 ) +
@@ -196,7 +196,7 @@ pRE <- ggplot(
   df_p %>% filter(
     effect == "fr",
     metric == "mspe",
-    model %in% c("DNN w. Controls + Orth.")
+    model %in% c("DNN with Controls\n+ Orthogonalisation")
   ),
   aes(x = n * 0.5, y = value, group = p)
 ) +
@@ -229,7 +229,7 @@ cDE <- ggplot(
   df_cv1 %>% filter(
     effect == "fx",
     metric == "mspe",
-    model %in% c("DNN w. Controls")
+    model %in% c("DNN with Controls")
   ),
   aes(x = n * 0.5, y = value, group = cv1)
 ) +
@@ -257,7 +257,7 @@ cRE <- ggplot(
   df_cv1 %>% filter(
     effect == "fr",
     metric == "mspe",
-    model %in% c("DNN w. Controls + Orth.")
+    model %in% c("DNN with Controls\n+ Orthogonalisation")
   ),
   aes(x = n * 0.5, y = value, group = cv1)
 ) +

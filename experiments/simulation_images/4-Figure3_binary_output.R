@@ -21,10 +21,10 @@ df_bz <- read_csv("results/simulation_images/binary_increasing_bz.csv") %>%
     model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
     labels = c(
-      "DNN w. Controls",
-      "DNN w. Controls + Orth.",
-      "DNN",
-      "DNN + Orth. [17]")
+      "DNN with Controls",
+      "DNN with Controls\n+ Orthogonalisation",
+      "DNN (Baseline)",
+      "DNN (Baseline)\n+ Orthogonalisation [17]")
   )) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
@@ -112,7 +112,7 @@ b1 <- make_plot(
   df_bz %>% filter(
     effect == "fx",
     metric == "bias2",
-    model %in% c("DNN", "DNN w. Controls")
+    model %in% c("DNN (Baseline)", "DNN with Controls")
   ),
   ylab = TeX("$Bias^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
@@ -124,7 +124,7 @@ c1 <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "bias2",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "DNN (Baseline)\n+ Orthogonalisation [17]")
   ),
   ylab = TeX("$Bias^2(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -135,7 +135,7 @@ b2 <- make_plot(
   df_bz %>% filter(
     effect == "fx",
     metric == "var",
-    model %in% c("DNN", "DNN w. Controls")
+    model %in% c("DNN (Baseline)", "DNN with Controls")
   ),
   ylab = TeX("$Var(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
@@ -147,7 +147,7 @@ c2 <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "var",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "DNN (Baseline)\n+ Orthogonalisation [17]")
   ),
   ylab = TeX("$Var(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -238,7 +238,7 @@ a <- make_plot2(
   df_bz %>% filter(
     effect == "fx",
     metric == "mspe",
-    model %in% c("DNN", "DNN w. Controls")
+    model %in% c("DNN (Baseline)", "DNN with Controls")
   ),
   ylab = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
@@ -256,7 +256,7 @@ b <- make_plot2(
   df_bz %>% filter(
     effect == "fr",
     metric == "mspe",
-    model %in% c("DNN w. Controls + Orth.", "DNN + Orth. [17]")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "DNN (Baseline)\n+ Orthogonalisation [17]")
   ),
   ylab = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
