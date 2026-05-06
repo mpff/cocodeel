@@ -67,8 +67,8 @@ make_panel <- function(data, ylab,
 }
 
 # Shared y-range across both rows for direct visual comparison.
-YLIM_FX <- c(1e-4, 1e-1)
-YLIM_FZ <- c(1e-4, 1e-1)
+YLIM_FX <- c(1e-5, 1e-1)
+YLIM_FZ <- c(1e-5, 1e-1)
 
 # Top row — fx (direct image effect): MSPE, Bias², Var.
 top_mspe <- make_panel(

@@ -59,7 +59,7 @@ make_panel <- function(data, ylab, ylim = c(1e-4, 10)) {
     shared_theme
 }
 
-YLIM <- c(1e-4, 10)
+YLIM <- c(1e-5, 10)
 
 # Top row — fx (direct image effect): MSPE, Bias², Var.
 top_mspe <- make_panel(
