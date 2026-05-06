@@ -8,15 +8,20 @@ library(patchwork)
 
 # Concurvity vs backbone size. Two methods (NAM = end-to-end SGD,
 # DNN with Controls = post-hoc xfit refit) sweep over (n, q). Curves
-# are coloured by q on a viridis log gradient.
+# are coloured by the trainable parameter count of the backbone (in
+# thousands), which is more interpretable than q itself for an ML
+# audience. Param formula: BaseNetwork has 4801 + 514·q params.
 
 df <- read_csv("results/simulation_images/concurvity_q.csv") %>%
   filter(model %in% c("covar", "posthoc_xfit")) %>%
-  mutate(model = factor(
-    model,
-    levels = c("covar", "posthoc_xfit"),
-    labels = c("NAM", "DNN with Controls")
-  )) %>%
+  mutate(
+    model = factor(
+      model,
+      levels = c("covar", "posthoc_xfit"),
+      labels = c("NAM", "DNN with Controls")
+    ),
+    params_k = (4801 + 514 * q) / 1000   # backbone params in thousands
+  ) %>%
   mutate(effect = factor(effect, levels = c("y", "fx", "fr", "fz")))
 
 shared_theme <- theme_bw() +
@@ -36,24 +41,29 @@ shared_theme <- theme_bw() +
     plot.margin = margin(2, 2, 2, 2)
   )
 
-# Single shared colour scale (log-q on viridis); reusing the same R
-# object across panels so patchwork's guide collection deduplicates.
-Q_COLOR_SCALE <- scale_color_viridis_c(
+# Single shared colour scale (params_k on log-viridis); reusing the
+# same R object across panels so patchwork's guide collection
+# deduplicates. Breaks chosen at the actual Q_GRID positions
+# corresponding to ~6k, 9k, 21k, 71k, 268k params (q = 2, 8, 32, 128,
+# 512). Labels formatted with k suffix.
+PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   option = "viridis", trans = "log",
-  limits = c(2, 1024), breaks = c(2, 8, 32, 128, 512),
-  name = TeX("$q$")
+  limits = c(5.829, 531.137),
+  breaks = c(5.829, 8.913, 21.249, 70.593, 267.969),
+  labels = c("6k", "9k", "21k", "71k", "268k"),
+  name = "params"
 )
 
 make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
   ggplot(data, aes(x = n * 0.5, y = value, group = q)) +
-    geom_line(aes(color = q), alpha = 0.8, linewidth = 0.8) +
-    geom_point(aes(color = q), alpha = 0.8, size = 0.8) +
+    geom_line(aes(color = params_k), alpha = 0.8, linewidth = 0.8) +
+    geom_point(aes(color = params_k), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
       breaks = 100 * 2^(1:7)
     ) +
     scale_y_log10(name = ylab) +
-    Q_COLOR_SCALE +
+    PARAMS_COLOR_SCALE +
     coord_cartesian(
       xlim = c(175, 100 * 2^7.05),
       ylim = ylim
@@ -62,38 +72,47 @@ make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
     facet_grid(model ~ .)
 }
 
-# Top row — NAM. Bottom row — DNN with Controls.
-nam_fx <- make_panel(
+# 2 rows (methods) × 3 cols (MSPE, Bias², Var) — all on fx.
+nam_mspe  <- make_panel(
   df %>% filter(model == "NAM", effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
-nam_fr <- make_panel(
-  df %>% filter(model == "NAM", effect == "fr", metric == "mspe"),
-  ylab = TeX("$MSPE(\\hat{f}^{re}_X)$")
+nam_bias  <- make_panel(
+  df %>% filter(model == "NAM", effect == "fx", metric == "bias2"),
+  ylab = TeX("$Bias^2(\\hat{f}_X)$")
 )
-ctrl_fx <- make_panel(
+nam_var   <- make_panel(
+  df %>% filter(model == "NAM", effect == "fx", metric == "var"),
+  ylab = TeX("$Var(\\hat{f}_X)$")
+)
+ctrl_mspe <- make_panel(
   df %>% filter(model == "DNN with Controls", effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
-ctrl_fr <- make_panel(
-  df %>% filter(model == "DNN with Controls", effect == "fr", metric == "mspe"),
-  ylab = TeX("$MSPE(\\hat{f}^{re}_X)$")
+ctrl_bias <- make_panel(
+  df %>% filter(model == "DNN with Controls", effect == "fx", metric == "bias2"),
+  ylab = TeX("$Bias^2(\\hat{f}_X)$")
+)
+ctrl_var  <- make_panel(
+  df %>% filter(model == "DNN with Controls", effect == "fx", metric == "var"),
+  ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Place the q colourbar inside the top-left panel; suppress on others
-# (matches Fig_nonlinear_fz convention).
-nam_fx <- nam_fx +
+# Single colourbar in the top-left panel (NAM / MSPE).
+nam_mspe <- nam_mspe +
   theme(legend.position = c(0.32, 0.93),
         legend.direction = "horizontal",
         legend.key.width = unit(0.15, 'in'),
         legend.background = element_rect(color = NA, fill = NA))
-nam_fr  <- nam_fr  + theme(legend.position = "none")
-ctrl_fx <- ctrl_fx + theme(legend.position = "none")
-ctrl_fr <- ctrl_fr + theme(legend.position = "none")
+nam_bias  <- nam_bias  + theme(legend.position = "none")
+nam_var   <- nam_var   + theme(legend.position = "none")
+ctrl_mspe <- ctrl_mspe + theme(legend.position = "none")
+ctrl_bias <- ctrl_bias + theme(legend.position = "none")
+ctrl_var  <- ctrl_var  + theme(legend.position = "none")
 
-fig <- (nam_fx | nam_fr) /
-       (ctrl_fx | ctrl_fr)
+fig <- (nam_mspe | nam_bias | nam_var) /
+       (ctrl_mspe | ctrl_bias | ctrl_var)
 
 ggsave("graphics/Fig_concurvity_q.pdf", fig,
-       width = 4.16, height = 3.4, units = "in",
+       width = 6.0, height = 3.4, units = "in",
        dpi = 600, device = cairo_pdf)
