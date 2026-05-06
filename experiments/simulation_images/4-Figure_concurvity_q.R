@@ -13,7 +13,8 @@ library(patchwork)
 # audience. Param formula: BaseNetwork has 4801 + 514·q params.
 
 df <- read_csv("results/simulation_images/concurvity_q.csv") %>%
-  filter(model %in% c("covar", "posthoc_xfit")) %>%
+  filter(model %in% c("covar", "posthoc_xfit"),
+         q >= 8) %>%   # drop the two smallest backbones (q=2,4 too small to fit fx)
   mutate(
     model = factor(
       model,

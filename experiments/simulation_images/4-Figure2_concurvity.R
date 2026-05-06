@@ -19,13 +19,14 @@ df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
   mutate(model = factor(
     model,
     levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10",
-               "ssn", "posthoc_orth_xfit"),
+               "ssn", "posthoc_xfit", "posthoc_orth_xfit"),
     labels = c(
       "NAM [7]",
       "NAM + Reg. (0.1) [20]",
       "NAM + Reg. (1) [20]",
       "NAM + Reg. (10) [20]",
       "SSN [8]",
+      "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation")
   )) %>%
   filter(!is.na(model)) %>%
@@ -63,6 +64,7 @@ method_colors <- c(
   "NAM + Reg. (1) [20]"     = "#287C8E",  # viridis(0.40) — teal-blue
   "NAM + Reg. (10) [20]"    = "#26828E",  # viridis(0.50) — teal
   "SSN [8]"                 = "#9C179E",  # plasma(0.40)  — magenta
+  "DNN with Controls"         = bz_anchor_color("viridis"),
   "DNN with Controls\n+ Orthogonalisation" = bz_anchor_color("magma")
 )
 
@@ -122,7 +124,7 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
 
 # Build plots
 METHODS <- c("NAM [7]", "NAM + Reg. (0.1) [20]", "NAM + Reg. (1) [20]",
-             "NAM + Reg. (10) [20]", "SSN [8]",
+             "NAM + Reg. (10) [20]", "SSN [8]", "DNN with Controls",
              "DNN with Controls\n+ Orthogonalisation")
 
 b1 <- make_plot(
