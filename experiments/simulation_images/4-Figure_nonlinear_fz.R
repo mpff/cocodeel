@@ -60,7 +60,7 @@ make_panel <- function(data, ylab,
     scale_y_log10(name = ylab) +
     BZ_COLOR_SCALE +
     coord_cartesian(
-      xlim = c(100, 100 * 2^7.05),
+      xlim = c(175, 100 * 2^7.05),
       ylim = ylim
     ) +
     shared_theme
@@ -109,9 +109,9 @@ bot_var <- make_panel(
 # ~1e-3 (well below the colourbar's y-position). All other panels
 # suppress their legends.
 top_mspe <- top_mspe +
-  theme(legend.position = c(0.32, 0.18),
+  theme(legend.position = c(0.32, 0.93),
         legend.direction = "horizontal",
-        legend.key.width = unit(0.18, 'in'),
+        legend.key.width = unit(0.15, 'in'),
         legend.background = element_rect(color = NA, fill = NA))
 
 top_bias <- top_bias + theme(legend.position = "none")

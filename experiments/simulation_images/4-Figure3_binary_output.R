@@ -91,7 +91,7 @@ shared_theme <- theme_bw() +
         name = TeX("$\\beta_Z$")
       ) +
       coord_cartesian(
-        xlim = c(100, 100 * 2^7.05),
+        xlim = c(175, 100 * 2^7.05),
         ylim = c(.4 * 1e-3, 1.25)
       ) +
       shared_theme +
@@ -216,7 +216,7 @@ make_plot2 <- function(data, ylab, color_option, show_legend = TRUE, strip_label
       name = TeX("$\\beta_Z$")
     ) +
     coord_cartesian(
-      xlim = c(100, 100 * 2^7.05),
+      xlim = c(175, 100 * 2^7.05),
       ylim = c(.4 * 1e-3, 1.25)
     ) +
     shared_theme2 +

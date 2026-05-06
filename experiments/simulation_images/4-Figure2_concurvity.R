@@ -110,7 +110,7 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
                        breaks = names(method_colors)) +
     guides(color = guide_legend(ncol = 1)) +
     coord_cartesian(
-      xlim = c(100, 100 * 2^9.5),
+      xlim = c(175, 100 * 2^9.5),
       ylim = c(0.5, 1e-4)
     ) +
     shared_theme

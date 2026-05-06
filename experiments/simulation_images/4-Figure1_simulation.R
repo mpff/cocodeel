@@ -71,7 +71,7 @@ shared_theme <- theme_bw() +
 
 # Reusable plotting function
   make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE,
-                        ylim = c(.4 * 1e-4, 1.25), xlim = c(100, 100 * 2^7.05),
+                        ylim = c(.4 * 1e-4, 1.25), xlim = c(175, 100 * 2^7.05),
                         vertical = TRUE, legend.pos = c(0.5, 0.9)) {
     p <- ggplot(
       data,
@@ -307,15 +307,27 @@ shared_theme <- theme_bw() +
     #panel.spacing = unit(1, "pt")       # spacing between facet panels
   )
 
-# Reusable plotting function
-make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels = TRUE) {
+# Reusable plotting function for the fz panels.
+#
+# Methods that do not estimate fz (base, posthoc_web) emit a constant
+# zero, producing a flat horizontal line at the variance of fz_truth
+# (~bz²/12). Plotting them with the bz-viridis gradient is misleading —
+# the lines are not informative about model behaviour. The
+# `estimators` argument names which models DO estimate fz; only those
+# are drawn with the colour gradient. All other rows are still drawn
+# but in grey, signalling "this method does not estimate fz".
+make_plot <- function(data, ylab, color_option, estimators,
+                      show_legend = TRUE, strip_labels = TRUE) {
   p <- ggplot(
     data,
     aes(x = n * 0.5, y = value, group = bz)
   ) +
-    #geom_hline(yintercept = 0, linewidth = 0.5, color = "grey80") +
-    geom_line(aes(color = bz), alpha = 0.8, linewidth = 0.8) +
-    geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
+    geom_line(color = "grey75", alpha = 0.6, linewidth = 0.6) +
+    geom_point(color = "grey75", alpha = 0.6, size = 0.6) +
+    geom_line(data = ~ filter(.x, model %in% estimators),
+              aes(color = bz), alpha = 0.8, linewidth = 0.8) +
+    geom_point(data = ~ filter(.x, model %in% estimators),
+               aes(color = bz), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
       breaks = 100 * 2^(1:7)
@@ -330,23 +342,28 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels
       name = TeX("$\\beta_Z$")
     ) +
     coord_cartesian(
-      xlim = c(100, 100 * 2^7.5),
-      ylim = c(.4 * 1e-4, 1.25)
+      xlim = c(175, 100 * 2^7.5),
+      ylim = c(1e-5, 1.25)
     ) +
     shared_theme +
     facet_grid(model ~ .)
-  
+
   if (!show_legend) {
     p <- p + theme(legend.position = "none")
   }
   if (strip_labels) {
     p <- p + theme(strip.text.y = element_blank())
   }
-  
+
   p
 }
 
-# Build plots
+# Build plots. `estimators` names the methods that ACTUALLY estimate
+# fz (vs. emit a constant 0); only these get the bz-viridis colouring,
+# the others are drawn in grey.
+ESTIMATORS_DIRECT <- "DNN with Controls"
+ESTIMATORS_ORTH   <- "DNN with Controls\n+ Orthogonalisation"
+
 b1 <- make_plot(
   df_bz %>% filter(
     effect == "fz",
@@ -355,6 +372,7 @@ b1 <- make_plot(
   ),
   ylab = TeX("$Bias^2(\\hat{f}_Z)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
+  estimators = ESTIMATORS_DIRECT,
   show_legend = TRUE,
   strip_labels = FALSE
 )
@@ -367,6 +385,7 @@ c1 <- make_plot(
   ),
   ylab = TeX("$Bias^2(\\hat{f}^{tot}_Z)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
+  estimators = ESTIMATORS_ORTH,
   show_legend = TRUE,
   strip_labels = FALSE
 )
@@ -378,6 +397,7 @@ b2 <- make_plot(
   ),
   ylab = TeX("$Var(\\hat{f}_Z)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
+  estimators = ESTIMATORS_DIRECT,
   show_legend = FALSE,
   strip_labels = FALSE
 )
@@ -390,6 +410,7 @@ c2 <- make_plot(
   ),
   ylab = TeX("$Var(\\hat{f}^{tot}_Z)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
+  estimators = ESTIMATORS_ORTH,
   show_legend = FALSE,
   strip_labels = FALSE
 )

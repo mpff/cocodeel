@@ -53,7 +53,7 @@ make_panel <- function(data, ylab, ylim = c(1e-4, 10)) {
     scale_y_log10(name = ylab) +
     BZ_COLOR_SCALE +
     coord_cartesian(
-      xlim = c(100, 100 * 2^7.05),
+      xlim = c(175, 100 * 2^7.05),
       ylim = ylim
     ) +
     shared_theme
@@ -92,8 +92,10 @@ bot_var <- make_panel(
 # Single legend INSIDE the top-left panel (MSPE(fx)) at bottom-left,
 # matching the well-specified figure's convention. Suppress on others.
 top_mspe <- top_mspe +
-  theme(legend.position = c(0.32, 0.18),
-        legend.key.width = unit(0.18, 'in'))
+  theme(legend.position = c(0.32, 0.93),
+        legend.direction = "horizontal",
+        legend.key.width = unit(0.15, 'in'),
+        legend.background = element_rect(color = NA, fill = NA))
 top_bias <- top_bias + theme(legend.position = "none")
 top_var  <- top_var  + theme(legend.position = "none")
 bot_mspe <- bot_mspe + theme(legend.position = "none")

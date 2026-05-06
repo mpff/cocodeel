@@ -124,7 +124,7 @@ qDE <- ggplot(
   labs(color = TeX("$q$")) +
   shared_theme +
   coord_cartesian(
-      xlim = c(100, 100 * 2^7.5),
+      xlim = c(175, 100 * 2^7.5),
       ylim = c(0.5*1e-3, 0.15)
     ) +
   facet_grid(model ~ .)
@@ -155,7 +155,7 @@ qRE <- ggplot(
   labs(color = TeX("$q$")) +
   shared_theme +
   coord_cartesian(
-    xlim = c(100, 100 * 2^7.5),
+    xlim = c(175, 100 * 2^7.5),
     ylim = c(0.5*1e-3, 0.15)
   ) +
   facet_grid(model ~ .)
@@ -187,7 +187,7 @@ pDE <- ggplot(
   labs(color = TeX("$p$")) +
   shared_theme +
   coord_cartesian(
-    xlim = c(100, 100 * 2^7.5),
+    xlim = c(175, 100 * 2^7.5),
     ylim = c(0.5*1e-3, 0.15)
   ) +
   facet_grid(model ~ .)
@@ -218,7 +218,7 @@ pRE <- ggplot(
   labs(color = TeX("$p$")) +
   shared_theme +
   coord_cartesian(
-    xlim = c(100, 100 * 2^7.5),
+    xlim = c(175, 100 * 2^7.5),
     ylim = c(0.5*1e-3, 0.15)
   ) +
   facet_grid(model ~ .)
@@ -248,7 +248,7 @@ cDE <- ggplot(
   labs(color = TeX("$c$")) +
   shared_theme2 +
   coord_cartesian(
-    xlim = c(100, 100 * 2^7.5),
+    xlim = c(175, 100 * 2^7.5),
     ylim = c( 0.5*1e-3, 0.15)
   ) +
   facet_grid(model ~ .)
@@ -276,7 +276,7 @@ cRE <- ggplot(
   labs(color = TeX("$c$")) +
   shared_theme2 +
   coord_cartesian(
-    xlim = c(100, 100 * 2^7.5),
+    xlim = c(175, 100 * 2^7.5),
     ylim = c(0.5*1e-3, 0.15)
   ) +
   facet_grid(model ~ .)
