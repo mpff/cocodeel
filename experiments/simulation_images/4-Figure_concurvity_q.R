@@ -49,9 +49,12 @@ shared_theme <- theme_bw() +
 PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   option = "viridis", trans = "log",
   limits = c(8.913, 531.137),
-  breaks = c(8.913, 21.249, 70.593, 267.969),
-  labels = c("9k", "21k", "71k", "268k"),
-  name = "Parameters"
+  breaks = c(8.913, 13.025, 21.249, 37.697, 70.593, 136.385, 267.969, 531.137),
+  labels = c("9k", "13k", "21k", "38k", "71k", "136k", "268k", "531k"),
+  name = "Parameters",
+  guide = guide_colorbar(label.theme = element_text(
+    size = 5, angle = 30, hjust = 1, family = "serif"
+  ))
 )
 
 make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
