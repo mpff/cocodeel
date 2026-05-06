@@ -73,8 +73,9 @@ Q_DEFAULT = 32
 TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000
-HP_PATH       = Path(__file__).resolve().parent / "chosen_hps.json"
-HP_PER_Q_PATH = Path(__file__).resolve().parent / "chosen_hps_q.json"
+HP_PATH           = Path(__file__).resolve().parent / "chosen_hps.json"
+HP_PER_Q_PATH     = Path(__file__).resolve().parent / "chosen_hps_q.json"
+HP_PER_Q_NAM_PATH = Path(__file__).resolve().parent / "chosen_hps_q_nam.json"
 
 N_GRID            = [400, 800, 1600, 3200, 6400, 12800, 25600]
 N_GRID_CONCURVITY = N_GRID + [51200, 102400]  # two extra log-steps for Fig 2
@@ -417,6 +418,11 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
     # look up the lr / wd / patience combo from chosen_hps_q.json by
     # the current q value. We construct a minimal hp dict that
     # `_trainer_params` can consume without modification.
+    #
+    # NAM (sgd_configs) is searched separately from the posthoc backbone
+    # (different model class — CovarNetwork end-to-end vs BaseNetwork
+    # backbone), so when chosen_hps_q_nam.json exists, sgd_configs use
+    # those HPs while posthoc_configs keep the original chosen_hps_q.json.
     if block_cfg.get("hp_per_q"):
         if not HP_PER_Q_PATH.exists():
             raise RuntimeError(
@@ -426,9 +432,18 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
         hp_q = json.loads(HP_PER_Q_PATH.read_text())
         combo = hp_q[str(setting["q"])]
         hp_local = {block_cfg["outcome_type"]: combo}
+
+        if HP_PER_Q_NAM_PATH.exists():
+            hp_q_nam = json.loads(HP_PER_Q_NAM_PATH.read_text())
+            combo_nam = hp_q_nam[str(setting["q"])]
+            hp_local_nam = {block_cfg["outcome_type"]: combo_nam}
+        else:
+            hp_local_nam = hp_local
     else:
         hp_local = hp
+        hp_local_nam = hp
     tp = _trainer_params(block_cfg["outcome_type"], hp_local)
+    tp_nam = _trainer_params(block_cfg["outcome_type"], hp_local_nam)
 
     t0 = time.time()
 
@@ -518,7 +533,7 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
         for name, cfg in sgd_configs.items():
             m = train_covar_with_concurvity_reg(
                 CovarNetwork, model_params, full_tr, full_va,
-                lam_reg=cfg["lam_reg"], **tp,
+                lam_reg=cfg["lam_reg"], **tp_nam,
             )
             m = m.center_effects(full_tr)
             sgd_models[name] = m
