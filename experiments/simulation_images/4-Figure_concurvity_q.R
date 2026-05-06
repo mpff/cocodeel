@@ -33,7 +33,7 @@ shared_theme <- theme_bw() +
     legend.ticks = element_line(color = 'black'),
     legend.direction = "horizontal",
     legend.title.position = "top",
-    legend.title = element_text(hjust = 0.5, margin = margin(b = -2)),
+    legend.title = element_text(hjust = 0.5, margin = margin(b = 2)),
     legend.box.spacing = unit(0, 'pt'),
     legend.spacing.y = unit(0, 'pt'),
     legend.margin = margin(0, 0, 0, 0),
@@ -51,7 +51,7 @@ PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   limits = c(8.913, 531.137),
   breaks = c(8.913, 21.249, 70.593, 267.969),
   labels = c("9k", "21k", "71k", "268k"),
-  name = "#Parameters"
+  name = "Parameters"
 )
 
 make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
