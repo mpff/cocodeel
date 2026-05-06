@@ -8,11 +8,9 @@ library(patchwork)
 
 # Concurvity vs backbone size. Two methods (DNN with Controls = post-hoc
 # xfit refit, NAM = end-to-end SGD) sweep over (n, q). Top row = our
-# method, bottom row = NAM baseline. Each row gets its own param
-# colourbar shaded by the method's anchor colour from Fig 2:
-#   - DNN with Controls → viridis(0.59) teal-green   (Fig 2 anchor)
-#   - NAM              → viridis(0.00) deep purple   (Fig 2 anchor)
-# Lighter shades along each colourbar map to smaller q.
+# method, bottom row = NAM baseline. Both rows share a single viridis
+# colourbar over the params (in thousands), placed inside the top-left
+# panel.
 
 df <- read_csv("results/simulation_images/concurvity_q.csv") %>%
   filter(model %in% c("covar", "posthoc_xfit"),
@@ -47,27 +45,16 @@ shared_theme <- theme_bw() +
     plot.margin = margin(2, 2, 2, 2)
   )
 
-# Fig 2 anchor colours.
-DNN_HIGH <- "#1F9E89"   # viridis(0.59), DNN with Controls
-NAM_HIGH <- "#440154"   # viridis(0.00), NAM
-
-# Per-method gradient: light shade → method colour, log-scale on params.
-DNN_SCALE <- scale_color_gradient(
-  low = "#CDE9DE", high = DNN_HIGH, trans = "log",
+# Single shared viridis colourbar, log-scale on params.
+PARAMS_COLOR_SCALE <- scale_color_viridis_c(
+  option = "viridis", trans = "log",
   limits = c(8.913, 531.137),
   breaks = c(8.913, 21.249, 70.593, 267.969),
   labels = c("9k", "21k", "71k", "268k"),
-  name = "params"
-)
-NAM_SCALE <- scale_color_gradient(
-  low = "#DDD2E5", high = NAM_HIGH, trans = "log",
-  limits = c(8.913, 531.137),
-  breaks = c(8.913, 21.249, 70.593, 267.969),
-  labels = c("9k", "21k", "71k", "268k"),
-  name = "params"
+  name = "#Parameters"
 )
 
-make_panel <- function(data, ylab, color_scale, ylim = c(1e-4, 1.25)) {
+make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
   ggplot(data, aes(x = n * 0.5, y = value, group = q)) +
     geom_line(aes(color = params_k), alpha = 0.8, linewidth = 0.8) +
     geom_point(aes(color = params_k), alpha = 0.8, size = 0.8) +
@@ -76,7 +63,7 @@ make_panel <- function(data, ylab, color_scale, ylim = c(1e-4, 1.25)) {
       breaks = 100 * 2^(1:7)
     ) +
     scale_y_log10(name = ylab) +
-    color_scale +
+    PARAMS_COLOR_SCALE +
     coord_cartesian(
       xlim = c(175, 100 * 2^7.05),
       ylim = ylim
@@ -88,39 +75,37 @@ make_panel <- function(data, ylab, color_scale, ylim = c(1e-4, 1.25)) {
 # Top row — DNN with Controls.
 ctrl_mspe <- make_panel(
   df %>% filter(model == "DNN with Controls", effect == "fx", metric == "mspe"),
-  ylab = TeX("$MSPE(\\hat{f}_X)$"), color_scale = DNN_SCALE
+  ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
 ctrl_bias <- make_panel(
   df %>% filter(model == "DNN with Controls", effect == "fx", metric == "bias2"),
-  ylab = TeX("$Bias^2(\\hat{f}_X)$"), color_scale = DNN_SCALE
+  ylab = TeX("$Bias^2(\\hat{f}_X)$")
 )
 ctrl_var  <- make_panel(
   df %>% filter(model == "DNN with Controls", effect == "fx", metric == "var"),
-  ylab = TeX("$Var(\\hat{f}_X)$"), color_scale = DNN_SCALE
+  ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
 # Bottom row — NAM.
 nam_mspe <- make_panel(
   df %>% filter(model == "NAM", effect == "fx", metric == "mspe"),
-  ylab = TeX("$MSPE(\\hat{f}_X)$"), color_scale = NAM_SCALE
+  ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
 nam_bias <- make_panel(
   df %>% filter(model == "NAM", effect == "fx", metric == "bias2"),
-  ylab = TeX("$Bias^2(\\hat{f}_X)$"), color_scale = NAM_SCALE
+  ylab = TeX("$Bias^2(\\hat{f}_X)$")
 )
 nam_var  <- make_panel(
   df %>% filter(model == "NAM", effect == "fx", metric == "var"),
-  ylab = TeX("$Var(\\hat{f}_X)$"), color_scale = NAM_SCALE
+  ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Two colourbars: one in the bottom of each row's MSPE panel.
+# Single colourbar at the bottom of the top-left (DNN/MSPE) panel.
 ctrl_mspe <- ctrl_mspe +
-  theme(legend.position = c(0.30, 0.18))
-nam_mspe <- nam_mspe +
-  theme(legend.position = c(0.30, 0.18))
-
+  theme(legend.position = c(0.42, 0.18))
 ctrl_bias <- ctrl_bias + theme(legend.position = "none")
 ctrl_var  <- ctrl_var  + theme(legend.position = "none")
+nam_mspe  <- nam_mspe  + theme(legend.position = "none")
 nam_bias  <- nam_bias  + theme(legend.position = "none")
 nam_var   <- nam_var   + theme(legend.position = "none")
 
