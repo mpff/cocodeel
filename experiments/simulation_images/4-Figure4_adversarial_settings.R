@@ -24,7 +24,7 @@ df_q <- read_csv("results/simulation_images/increasing_q.csv") %>%
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
       "DNN (Baseline)",
-      "DNN (Baseline)\n+ Orthogonalisation [17]")
+      "[17] DNN (Baseline)\n+ Orthogonalisation")
   )) %>%
   filter(n < 50000, q > 2) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -37,7 +37,7 @@ df_cv1 <- read_csv("results/simulation_images/increasing_cv.csv") %>%
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
       "DNN (Baseline)",
-      "DNN (Baseline)\n+ Orthogonalisation [17]")
+      "[17] DNN (Baseline)\n+ Orthogonalisation")
   )) %>%
   filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -50,7 +50,7 @@ df_p <- read_csv("results/simulation_images/increasing_p.csv") %>%
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
       "DNN (Baseline)",
-      "DNN (Baseline)\n+ Orthogonalisation [17]")
+      "[17] DNN (Baseline)\n+ Orthogonalisation")
   )) %>%
   filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
