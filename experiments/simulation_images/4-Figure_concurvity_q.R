@@ -28,7 +28,7 @@ df <- read_csv("results/simulation_images/concurvity_q.csv") %>%
 shared_theme <- theme_bw() +
   theme(
     legend.key.height = unit(0.06, 'in'),
-    legend.key.width = unit(0.12, 'in'),
+    legend.key.width = unit(0.18, 'in'),
     legend.ticks.length = unit(c(-.05, 0), 'in'),
     legend.ticks = element_line(color = 'black'),
     legend.direction = "horizontal",
@@ -53,7 +53,7 @@ PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   labels = c("9k", "13k", "21k", "38k", "71k", "136k", "268k", "531k"),
   name = "Parameters",
   guide = guide_colorbar(label.theme = element_text(
-    size = 5, angle = 30, hjust = 1, family = "serif"
+    size = 5, angle = 60, hjust = 1, vjust = 1, family = "serif"
   ))
 )
 
