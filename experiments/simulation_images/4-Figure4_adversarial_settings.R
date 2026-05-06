@@ -111,7 +111,7 @@ qDE <- ggplot(
   scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$")) +
   scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(0:7)
+      breaks = 100 * 2^(1:7)
     ) +
   scale_color_viridis_c(
       begin = 0, 
@@ -142,7 +142,7 @@ qRE <- ggplot(
   scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-    breaks = 100 * 2^(0:7)
+    breaks = 100 * 2^(1:7)
   ) +
   scale_color_viridis_c(
     begin = 0, 
@@ -174,7 +174,7 @@ pDE <- ggplot(
   scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-    breaks = 100 * 2^(0:7)
+    breaks = 100 * 2^(1:7)
   ) +
   scale_color_viridis_c(
     begin = 0, 
@@ -205,7 +205,7 @@ pRE <- ggplot(
   scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-    breaks = 100 * 2^(0:7)
+    breaks = 100 * 2^(1:7)
   ) +
   scale_color_viridis_c(
     begin = 0, 
@@ -238,7 +238,7 @@ cDE <- ggplot(
   scale_y_log10(name = TeX("$MSPE(\\hat{f}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-    breaks = 100 * 2^(0:7)
+    breaks = 100 * 2^(1:7)
   ) +
   scale_color_viridis_c(
     begin = 0, 
@@ -266,7 +266,7 @@ cRE <- ggplot(
   scale_y_log10(name = TeX("$MSPE(\\hat{f}^{re}_X)$")) +
   scale_x_log10(
     name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-    breaks = 100 * 2^(0:7)
+    breaks = 100 * 2^(1:7)
   ) +
   scale_color_viridis_c(
     begin = 0, 

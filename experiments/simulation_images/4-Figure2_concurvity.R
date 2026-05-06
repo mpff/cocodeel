@@ -103,7 +103,7 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
     geom_point(aes(color = model), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(0:9)
+      breaks = 100 * 2^(1:9)
     ) +
     scale_y_log10(name = ylab) +
     scale_color_manual(name = NULL, values = method_colors,

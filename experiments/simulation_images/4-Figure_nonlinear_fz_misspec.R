@@ -48,7 +48,7 @@ make_panel <- function(data, ylab, ylim = c(1e-4, 10)) {
     geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(0:7)
+      breaks = 100 * 2^(1:7)
     ) +
     scale_y_log10(name = ylab) +
     BZ_COLOR_SCALE +

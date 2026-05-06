@@ -82,7 +82,7 @@ shared_theme <- theme_bw() +
       geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
       scale_x_log10(
         name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-        breaks = 100 * 2^(0:7)
+        breaks = 100 * 2^(1:7)
       ) +
       scale_y_log10(name = ylab) +
       scale_color_viridis_c(
@@ -189,7 +189,7 @@ c3 <- make_plot(
   ),
   ylab = TeX("$MSPE(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
-  show_legend = FALSE,
+  show_legend = TRUE,
   strip_labels = FALSE,
   ylim = c(.4 * 1e-3, 1.25)
 )
@@ -318,7 +318,7 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE, strip_labels
     geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(0:7)
+      breaks = 100 * 2^(1:7)
     ) +
     scale_y_log10(name = ylab) +
     scale_color_viridis_c(

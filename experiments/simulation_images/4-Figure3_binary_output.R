@@ -79,7 +79,7 @@ shared_theme <- theme_bw() +
       geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
       scale_x_log10(
         name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-        breaks = 100 * 2^(0:7)
+        breaks = 100 * 2^(1:7)
       ) +
       scale_y_log10(name = ylab) +
       scale_color_viridis_c(
@@ -204,7 +204,7 @@ make_plot2 <- function(data, ylab, color_option, show_legend = TRUE, strip_label
     geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(0:7)
+      breaks = 100 * 2^(1:7)
     ) +
     scale_y_log10(name = ylab) +
     scale_color_viridis_c(
@@ -268,6 +268,6 @@ b
 
 a/b
 
-ggsave("graphics/Fig3_binary_bz_full.pdf", a/b, width = 3.5, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("graphics/Fig3_binary_bz_full.pdf", a/b, width = 3.5, height = 3.6, units = "in", dpi=600, device = cairo_pdf)
 
 
