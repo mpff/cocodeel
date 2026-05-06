@@ -55,7 +55,7 @@ PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   limits = c(8.913, 531.137),
   breaks = c(8.913, 21.249, 70.593, 267.969),
   labels = c("9k", "21k", "71k", "268k"),
-  name = "DNN Parameters"
+  name = "Number of parameters"
 )
 
 make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
@@ -102,16 +102,20 @@ ctrl_var  <- make_panel(
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Single colourbar at the bottom of the top-right panel (NAM / Var(f̂_X))
-# — the curves there have decayed below ~5e-3 by mid-N, leaving the
-# bottom of the panel empty for the legend. Suppress on all other panels.
-nam_var <- nam_var +
-  theme(legend.position = c(0.30, 0.15),
+# Single colourbar at the bottom of the top-left panel (NAM / MSPE(f̂_X))
+# — the title "Number of parameters" sits above the colour bar via
+# `legend.title.position = "top"`. Bottom-of-panel placement keeps it
+# below the curves (which decay to ~3e-3 at large N, well above the
+# legend at y=0.18). Suppress on all other panels.
+nam_mspe <- nam_mspe +
+  theme(legend.position = c(0.30, 0.18),
         legend.direction = "horizontal",
+        legend.title.position = "top",
+        legend.title = element_text(hjust = 0.5),
         legend.key.width = unit(0.12, 'in'),
         legend.background = element_rect(color = NA, fill = NA))
-nam_mspe  <- nam_mspe  + theme(legend.position = "none")
 nam_bias  <- nam_bias  + theme(legend.position = "none")
+nam_var   <- nam_var   + theme(legend.position = "none")
 ctrl_mspe <- ctrl_mspe + theme(legend.position = "none")
 ctrl_bias <- ctrl_bias + theme(legend.position = "none")
 ctrl_var  <- ctrl_var  + theme(legend.position = "none")
