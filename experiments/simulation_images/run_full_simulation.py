@@ -73,7 +73,8 @@ Q_DEFAULT = 32
 TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000
-HP_PATH = Path(__file__).resolve().parent / "chosen_hps.json"
+HP_PATH       = Path(__file__).resolve().parent / "chosen_hps.json"
+HP_PER_Q_PATH = Path(__file__).resolve().parent / "chosen_hps_q.json"
 
 N_GRID            = [400, 800, 1600, 3200, 6400, 12800, 25600]
 N_GRID_CONCURVITY = N_GRID + [51200, 102400]  # two extra log-steps for Fig 2
@@ -186,6 +187,28 @@ BLOCKS = {
         },
         "settings": [dict(n=n, bz=bz) for n in N_GRID for bz in BZ_GRID],
         "sweep_key_fn": lambda s: f"n={s['n']}_bz={s['bz']}",
+    },
+    "concurvity_q": {
+        # Concurvity vs backbone size: how does the NAM (covar) suffer
+        # under increasing q (last-layer width / backbone capacity), and
+        # does cocodeel's xfit refit (DNN w. Controls) stay consistent?
+        # Same DGP defaults as the original concurvity block (linear fz,
+        # bz=1) but sweep is over (n, q). Per-q HPs are loaded from
+        # chosen_hps_q.json (set hp_per_q=True) — backbones with
+        # 5k → 530k params need different lr.
+        "outcome_type": "continuous",
+        "hp_per_q": True,
+        "sim_defaults": dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.),
+        "posthoc_configs": {
+            "posthoc_xfit": dict(cls=PostHocCovarNetwork,
+                                 init_kwargs={"orthogonalize": False},
+                                 recipe="xfit"),
+        },
+        "sgd_configs": {
+            "covar": dict(lam_reg=0.0),   # NAM (CovarNetwork, no reg)
+        },
+        "settings": [dict(n=n, q=q) for n in N_GRID for q in Q_GRID],
+        "sweep_key_fn": lambda s: f"n={s['n']}_q={s['q']}",
     },
     "nonlinear_fz_misspec": {
         # Misspecification contrast to `nonlinear_fz`: same sin-fz DGP
@@ -389,7 +412,23 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
 
     sim_params = _sim_params_for(setting, block_cfg)
     model_params = _model_params_for(setting, block_cfg)
-    tp = _trainer_params(block_cfg["outcome_type"], hp)
+
+    # Per-q HP dispatch: if the block was configured with `hp_per_q`,
+    # look up the lr / wd / patience combo from chosen_hps_q.json by
+    # the current q value. We construct a minimal hp dict that
+    # `_trainer_params` can consume without modification.
+    if block_cfg.get("hp_per_q"):
+        if not HP_PER_Q_PATH.exists():
+            raise RuntimeError(
+                f"Block {block_name} requires per-q HPs at {HP_PER_Q_PATH} — "
+                "run hp_search_q.py first."
+            )
+        hp_q = json.loads(HP_PER_Q_PATH.read_text())
+        combo = hp_q[str(setting["q"])]
+        hp_local = {block_cfg["outcome_type"]: combo}
+    else:
+        hp_local = hp
+    tp = _trainer_params(block_cfg["outcome_type"], hp_local)
 
     t0 = time.time()
 
