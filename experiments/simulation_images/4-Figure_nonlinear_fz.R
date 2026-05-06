@@ -67,8 +67,8 @@ make_panel <- function(data, ylab,
 }
 
 # Shared y-range across both rows for direct visual comparison.
-YLIM_FX <- c(1e-5, 1e-1)
-YLIM_FZ <- c(1e-5, 1e-1)
+YLIM_FX <- c(1e-4, 1e-1)
+YLIM_FZ <- c(1e-4, 1e-1)
 
 # Top row — fx (direct image effect): MSPE, Bias², Var.
 top_mspe <- make_panel(
@@ -109,7 +109,7 @@ bot_var <- make_panel(
 # ~1e-3 (well below the colourbar's y-position). All other panels
 # suppress their legends.
 top_mspe <- top_mspe +
-  theme(legend.position = c(0.32, 0.93),
+  theme(legend.position = c(0.30, 0.18),
         legend.direction = "horizontal",
         legend.key.width = unit(0.15, 'in'),
         legend.background = element_rect(color = NA, fill = NA))
