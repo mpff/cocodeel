@@ -47,12 +47,15 @@ shared_theme <- theme_bw() +
 # deduplicates. Breaks chosen at the actual Q_GRID positions
 # corresponding to ~6k, 9k, 21k, 71k, 268k params (q = 2, 8, 32, 128,
 # 512). Labels formatted with k suffix.
+# `trans = "log"` makes colours interpolate exponentially in params.
+# Breaks at q = 8, 32, 128, 512 (each 4× the previous) give clean
+# geometric labels. Limits match the q >= 8 filter applied to the data.
 PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   option = "viridis", trans = "log",
-  limits = c(5.829, 531.137),
-  breaks = c(5.829, 8.913, 21.249, 70.593, 267.969),
-  labels = c("6k", "9k", "21k", "71k", "268k"),
-  name = "params"
+  limits = c(8.913, 531.137),
+  breaks = c(8.913, 21.249, 70.593, 267.969),
+  labels = c("9k", "21k", "71k", "268k"),
+  name = "DNN Parameters"
 )
 
 make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
@@ -99,14 +102,16 @@ ctrl_var  <- make_panel(
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Single colourbar in the top-left panel (NAM / MSPE).
-nam_mspe <- nam_mspe +
-  theme(legend.position = c(0.32, 0.93),
+# Single colourbar at the bottom of the top-right panel (NAM / Var(f̂_X))
+# — the curves there have decayed below ~5e-3 by mid-N, leaving the
+# bottom of the panel empty for the legend. Suppress on all other panels.
+nam_var <- nam_var +
+  theme(legend.position = c(0.30, 0.15),
         legend.direction = "horizontal",
-        legend.key.width = unit(0.15, 'in'),
+        legend.key.width = unit(0.12, 'in'),
         legend.background = element_rect(color = NA, fill = NA))
+nam_mspe  <- nam_mspe  + theme(legend.position = "none")
 nam_bias  <- nam_bias  + theme(legend.position = "none")
-nam_var   <- nam_var   + theme(legend.position = "none")
 ctrl_mspe <- ctrl_mspe + theme(legend.position = "none")
 ctrl_bias <- ctrl_bias + theme(legend.position = "none")
 ctrl_var  <- ctrl_var  + theme(legend.position = "none")
