@@ -1,12 +1,10 @@
 import unittest
 import torch
 
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
 
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from cocodeel.transform import Center
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork, CovarNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
@@ -251,7 +249,6 @@ class TestSchedulerParam(unittest.TestCase):
         }
 
     def _dummy_params(self):
-        from cocodeel.model import BaseNetwork
         backbone_cls = type("B", (nn.Module,), {
             "__init__": lambda self, out_features: (nn.Module.__init__(self), setattr(self, "out_features", out_features), setattr(self, "linear", nn.Linear(3, out_features))).__class__,
         })

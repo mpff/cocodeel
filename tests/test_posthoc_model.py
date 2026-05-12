@@ -5,12 +5,11 @@ import tempfile
 import os
 
 import numpy
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+from sklearn.linear_model import LinearRegression, Ridge
 
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from cocodeel.transform import Center
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
@@ -819,7 +818,6 @@ class TestHighDimRegression(unittest.TestCase):
           β₀=0, λ=1e5: SMALL reduction (<20%) — ridge blocks debiasing
           β₀=1, λ≈0:  NO reduction (<10%) — genuine entanglement
         """
-        import copy
         d, N, ntrain = 20, 500, 400
 
         def run_cell(beta0, lam):

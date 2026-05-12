@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 
 from cocodeel.model import BaseNetwork
 from cocodeel.transform import Center

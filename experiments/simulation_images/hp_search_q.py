@@ -194,7 +194,7 @@ def main():
     DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
     tasks = [(q, lr, wd, early_pat, sched_pat) for q in qs for lr in lrs]
-    print(f"=== HP search per q ===")
+    print("=== HP search per q ===")
     print(f"qs={qs}\nlrs={lrs}\nwd={wd}, early_pat={early_pat}, "
           f"sched_pat={sched_pat}\nanchor_N={ANCHOR_N}, device={args.device}, "
           f"workers={N_WORKERS}\n{len(tasks)} tasks", flush=True)

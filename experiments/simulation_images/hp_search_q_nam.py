@@ -179,7 +179,7 @@ def main():
     DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
     tasks = [(q, lr, wd, early_pat, sched_pat) for q in Q_GRID for lr in LR_GRID]
-    print(f"=== HP search per q (NAM) ===")
+    print("=== HP search per q (NAM) ===")
     print(f"qs={Q_GRID}\nlrs={LR_GRID}\nwd={wd}, early_pat={early_pat}, "
           f"sched_pat={sched_pat}\nanchor_N={ANCHOR_N}, device={args.device}, "
           f"workers={N_WORKERS}\n{len(tasks)} tasks", flush=True)

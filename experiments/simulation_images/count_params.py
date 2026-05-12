@@ -41,7 +41,7 @@ def main(q: int = 32) -> None:
     print(f"    fc (32·4·4 → q):        {count(net.backbone.fc):>7,}")
     print(f"  fx (Linear q→1, no bias): {fx:>7,}")
     print(f"  intercept (scalar):       {intercept:>7,}")
-    print(f"  ────────────────────────  ───────")
+    print("  ────────────────────────  ───────")
     print(f"  TOTAL (backbone + fx):    {total:>7,}")
 
 

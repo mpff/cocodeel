@@ -1,12 +1,10 @@
 import unittest
 import torch
 
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
 
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-from cocodeel.transform import Center
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork, CovarNetwork
 from cocodeel.trainer import covar_trainer
