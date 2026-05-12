@@ -18,6 +18,13 @@ Rplots.pdf
 results/simulation_images/runs/
 results/simulation_images/hp_search/
 
+# UKBB / ADNI experiment runs — large checkpoints + per-run artefacts
+experiments/ukbb/runs/
+experiments/adni/runs/
+
+# Experiment-tracking scratch
+**/wandb/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
