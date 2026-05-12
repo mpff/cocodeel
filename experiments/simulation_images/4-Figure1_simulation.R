@@ -317,7 +317,9 @@ shared_theme <- theme_bw() +
 # are drawn with the colour gradient. All other rows are still drawn
 # but in grey, signalling "this method does not estimate fz".
 make_plot <- function(data, ylab, color_option, estimators,
-                      show_legend = TRUE, strip_labels = TRUE) {
+                      show_legend = TRUE, strip_labels = TRUE,
+                      vertical = TRUE, legend.pos = c(0.5, 0.9),
+                      ylim = c(1e-5, 1.25)) {
   p <- ggplot(
     data,
     aes(x = n * 0.5, y = value, group = bz)
@@ -343,10 +345,16 @@ make_plot <- function(data, ylab, color_option, estimators,
     ) +
     coord_cartesian(
       xlim = c(175, 100 * 2^7.5),
-      ylim = c(1e-5, 1.25)
+      ylim = ylim
     ) +
     shared_theme +
-    facet_grid(model ~ .)
+    theme(legend.position = legend.pos)
+
+  if (vertical) {
+    p <- p + facet_grid(model ~ .)
+  } else {
+    p <- p + facet_grid(. ~ model)
+  }
 
   if (!show_legend) {
     p <- p + theme(legend.position = "none")
@@ -430,5 +438,86 @@ b/c
 
 ggsave("graphics/FigS1b_fz_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
 ggsave("graphics/FigS1c_fz_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+
+
+### MSPE(yhat) and MSPE(fzhat) — two FigS1a-style PDFs (one unorth, one orth)
+
+UNORTH <- c("DNN (Baseline)", "DNN with Controls")
+ORTH   <- c("DNN with Controls\n+ Orthogonalisation",
+            "[17] DNN (Baseline)\n+ Orthogonalisation")
+
+# Inline plotter for MSPE(yhat): values sit in [1.003, 5.47] for the four
+# plotted methods, so a linear scale starting near the noise floor at 1.0
+# resolves the across-bz spread that a log scale crushes against y=1.
+# Mirrors `make_plot`'s API: vertical = FALSE -> facet_grid(. ~ model).
+make_y_plot <- function(data, color_option, show_legend = TRUE,
+                        legend.pos = c(0.3, 0.8),
+                        ylim = c(0.95, 5.7), vertical = TRUE) {
+  p <- ggplot(data, aes(x = n * 0.5, y = value, group = bz)) +
+    geom_hline(yintercept = 1, linetype = "dashed",
+               color = "grey40", linewidth = 0.4) +
+    geom_line(aes(color = bz), alpha = 0.8, linewidth = 0.8) +
+    geom_point(aes(color = bz), alpha = 0.8, size = 0.8) +
+    scale_x_log10(name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
+                  breaks = 100 * 2^(1:7)) +
+    scale_y_continuous(name = TeX("$MSPE(\\hat{y})$"),
+                       breaks = c(1, 2, 3, 4, 5)) +
+    scale_color_viridis_c(begin = 0, end = 1, option = color_option,
+                          limits = c(-0.025, 4.25),
+                          breaks = c(0, 1, 2, 3, 4),
+                          name = TeX("$\\beta_Z$")) +
+    coord_cartesian(xlim = c(175, 100 * 2^7.05), ylim = ylim) +
+    shared_theme +
+    theme(legend.position = legend.pos)
+  if (vertical) p <- p + facet_grid(model ~ .)
+  else          p <- p + facet_grid(. ~ model)
+  if (!show_legend) p <- p + theme(legend.position = "none")
+  p
+}
+
+# MSPE(yhat): UNORTH (left, viridis) | ORTH (right, inferno).
+# ylim top = 7 leaves headroom above the highest curve (~5.4) so the
+# default legend at panel-y 0.9 sits in empty space.
+y_b <- make_y_plot(
+  df_bz %>% filter(effect == "y", metric == "mspe", model %in% UNORTH),
+  color_option = "viridis",
+  show_legend = TRUE,
+  legend.pos = c(0.5, 0.9),
+  ylim = c(0.95, 7),
+  vertical = TRUE
+)
+y_c <- make_y_plot(
+  df_bz %>% filter(effect == "y", metric == "mspe", model %in% ORTH),
+  color_option = "inferno",
+  show_legend = TRUE,
+  legend.pos = c(0.5, 0.9),
+  ylim = c(0.95, 7),
+  vertical = TRUE
+)
+ggsave("graphics/Fig1b_bz_y_mspe.pdf", y_b + y_c,
+       width = 4.16, height = 2.4, units = "in",
+       dpi = 600, device = cairo_pdf)
+
+# MSPE(fzhat): UNORTH (left, viridis) | ORTH (right, inferno).
+# Methods that emit constant 0 (base / posthoc_web) are greyed out.
+fz_b <- make_plot(
+  df_bz %>% filter(effect == "fz", metric == "mspe", model %in% UNORTH),
+  ylab = TeX("$MSPE(\\hat{f}_Z)$  ($\\log_{10}$ scale)"),
+  color_option = "viridis",
+  estimators = "DNN with Controls",
+  show_legend = TRUE,
+  strip_labels = FALSE
+)
+fz_c <- make_plot(
+  df_bz %>% filter(effect == "fz", metric == "mspe", model %in% ORTH),
+  ylab = TeX("$MSPE(\\hat{f}_Z)$  ($\\log_{10}$ scale)"),
+  color_option = "inferno",
+  estimators = "DNN with Controls\n+ Orthogonalisation",
+  show_legend = TRUE,
+  strip_labels = FALSE
+)
+ggsave("graphics/Fig1b_bz_fz_mspe.pdf", fz_b + fz_c,
+       width = 4.16, height = 2.4, units = "in",
+       dpi = 600, device = cairo_pdf)
 
 
