@@ -19,10 +19,13 @@ from torch.utils.data import Dataset, DataLoader
 from scipy.stats import norm
 
 # ── Project path ──────────────────────────────────────────────────────────────
-proj_path = str(Path("~/Research/proj-orthogonalisation/").expanduser()) + "/"
-sys.path.insert(0, proj_path + "submodules/cocodeel")
-sys.path.insert(1, proj_path + "submodules/nitorch")
-sys.path.insert(2, proj_path + "experiments")
+# Resolved relative to this file so the imports work from any cwd.
+# Phase 3 will introduce pyproject.toml + `pip install -e .` and remove
+# these sys.path hacks entirely.
+code_root = Path(__file__).resolve().parents[2]  # → ovb-ddns/code/
+sys.path.insert(0, str(code_root))                                # cocodeel/
+sys.path.insert(1, str(code_root / "external" / "nitorch"))       # external/nitorch/nitorch/
+sys.path.insert(2, str(code_root / "experiments" / "common"))     # common/backbones.py
 
 from nitorch.transforms import IntensityRescale, ToTensor
 from cocodeel.model import BaseNetwork
