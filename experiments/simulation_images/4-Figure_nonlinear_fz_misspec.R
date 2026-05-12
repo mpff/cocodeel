@@ -92,9 +92,11 @@ bot_var <- make_panel(
 # Single legend INSIDE the top-left panel (MSPE(fx)) at bottom-left,
 # matching the well-specified figure's convention. Suppress on others.
 top_mspe <- top_mspe +
-  theme(legend.position = c(0.30, 0.18),
+  theme(legend.position = c(0.40, 0.18),
         legend.direction = "horizontal",
         legend.key.width = unit(0.15, 'in'),
+        legend.text = element_text(size = 7),
+        legend.title = element_text(size = 7),
         legend.background = element_rect(color = NA, fill = NA))
 top_bias <- top_bias + theme(legend.position = "none")
 top_var  <- top_var  + theme(legend.position = "none")
