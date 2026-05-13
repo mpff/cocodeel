@@ -43,14 +43,13 @@ from sklearn.model_selection import train_test_split, StratifiedGroupKFold, Stra
 from sklearn.metrics import *
 from sklearn.linear_model import LogisticRegression 
 
-# Set sys.path so cocodeel, nitorch, and backbones resolve in the new layout.
-# Resolved relative to this file so the imports work from any cwd.
-# Phase 3 will replace this with `pip install -e .` and proper packaging.
+# cocodeel is pip-installed (`pip install -e .` at the code/ root). nitorch
+# (vendored) and the experiment-shared backbones module are not pip-installable
+# yet — keep their sys.path lines, resolved relative to this file.
 from pathlib import Path as _Path
 code_root = _Path(__file__).resolve().parents[2]  # → ovb-ddns/code/
-sys.path.insert(0, str(code_root))                                # cocodeel/
-sys.path.insert(1, str(code_root / "external" / "nitorch"))       # external/nitorch/nitorch/
-sys.path.insert(2, str(code_root / "experiments" / "common"))     # common/backbones.py
+sys.path.insert(0, str(code_root / "external" / "nitorch"))       # for nitorch
+sys.path.insert(1, str(code_root / "experiments" / "common"))     # for backbones
 from nitorch.transforms import  *
 from nitorch.data import show_brain
 from cocodeel.model import BaseNetwork
