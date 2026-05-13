@@ -97,8 +97,8 @@ DATA_H5 = Path("~/Research/Datasets/proj-orthogonalisation/"
 
 _resume = os.environ.get("ADNI_K3_RESUME_DIR")
 RUN_DIR = (Path(_resume) if _resume else
-           PROJ / "experiments/adni/runs"
-                / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S_outer5"))
+           code_root / "experiments/adni/runs"
+                     / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S_outer5"))
 
 BATCH_SIZE = 64
 NUM_WORKERS = 16
