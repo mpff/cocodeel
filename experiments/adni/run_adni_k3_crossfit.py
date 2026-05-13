@@ -69,10 +69,12 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 # ── Project paths ────────────────────────────────────────────────────────────
-PROJ = Path("~/Research/proj-orthogonalisation/").expanduser()
-sys.path.insert(0, str(PROJ / "submodules/cocodeel"))
-sys.path.insert(1, str(PROJ / "submodules/nitorch"))
-sys.path.insert(2, str(PROJ / "experiments"))
+# Resolved relative to this file so the imports work from any cwd.
+# Phase 3 will replace this with `pip install -e .` and proper packaging.
+code_root = Path(__file__).resolve().parents[2]  # → ovb-ddns/code/
+sys.path.insert(0, str(code_root))                                # cocodeel/
+sys.path.insert(1, str(code_root / "external" / "nitorch"))       # external/nitorch/nitorch/
+sys.path.insert(2, str(code_root / "experiments" / "common"))     # common/backbones.py
 
 from nitorch.transforms import IntensityRescale, ToTensor
 from cocodeel.model import BaseNetwork
