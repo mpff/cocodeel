@@ -14,7 +14,7 @@ class _BaseCovarNetwork(nn.Module):
         self.backbone_params = backbone_params
         self.num_covariates = num_covariates
         self.link = link
-        self._link = LINKS[link]  # 4-tuple of pure link functions; see cocodeel.links
+        self._link = LINKS[link]
 
         # Centering modules
         self.center_x = Center(self.backbone.out_features)

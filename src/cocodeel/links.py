@@ -1,15 +1,8 @@
-"""Link functions for cocodeel models.
+"""GLM link functions registered by name.
 
-A `Link` is a 4-tuple of pure functions describing the GLM link:
-
-- `inverse(eta) -> mu`: g⁻¹(η). Forward pass: linear predictor → predicted mean.
-- `forward(mu) -> eta`: g(μ). IRLS init: initial intercept η₀ from ȳ.
-- `derivative(mu) -> g'(μ)`: IRLS reweighting (working-response weight).
-- `variance(mu) -> V(μ)`: GLM variance function, also IRLS reweighting.
-
-Numerical stabilisation constants (`+ 1e-6`) are preserved bit-for-bit from
-the pre-refactor implementation so sha256 baselines of paper-relevant CSVs
-do not drift.
+Each `Link` carries `inverse` (g⁻¹), `forward` (g), `derivative` (g'(μ)),
+and `variance` (V(μ)). Numerical stabilisation constants (`+ 1e-6`) are
+preserved bit-for-bit so sha256 baselines do not drift.
 """
 from typing import Callable, NamedTuple
 
