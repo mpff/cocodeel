@@ -1,9 +1,8 @@
 # ADNI experiments — NOT part of the NeurIPS 2026 submission
 
-This branch (`adni`) preserves ADNI experimental work for future
-ADNI-focused publications. **The NeurIPS 2026 manuscript's Section 6 is
-UKBB only** — nothing in this directory is referenced by `paper/paper.tex`
-in its current form.
+ADNI experimental work, preserved for future ADNI-focused publications.
+**The NeurIPS 2026 manuscript's Section 6 is UKBB only** — nothing in
+this directory is referenced by `paper/paper.tex` in its current form.
 
 ## What's here
 
@@ -17,24 +16,16 @@ in its current form.
 
 ## Status
 
-Imported from `mpff/proj-orthogonalisation/experiments/adni/` on 2026-05-12
-(Phase 2 of the monorepo refactor — see
-`~/.claude/plans/ok-we-have-a-cozy-lecun.md`). The `sys.path.insert` hacks
-in the `.py` scripts have been retargeted to the new layout
-(cocodeel = code root; nitorch = code/external/nitorch/; backbones =
-code/experiments/common/). Phase 3 will replace these with
-`pip install -e .` and proper packaging.
-
-## Workflow
-
-This branch sits on top of `main`. Phases 3–7 will be implemented on
-`main`; Phase 8 includes a `git rebase adni main` to bring those
-improvements into this branch.
-
-Until then: switch to this branch when working on ADNI
-(`git switch adni`), back to `main` for the NeurIPS submission line.
+The `.py` scripts use `sys.path.insert` hacks (cocodeel = code root;
+nitorch = code/external/nitorch/; backbones = code/experiments/common/);
+the package is not yet pip-installable.
 
 ## Data access
 
 ADNI data is access-controlled (separate from UK Biobank); see the ADNI
 website for the application procedure.
+
+## TODO
+
+- Split this directory to its own branch before NeurIPS submission to
+  keep the submission line UKBB-only.
