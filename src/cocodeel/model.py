@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+
+from cocodeel.links import LINKS
 from cocodeel.transform import Center
 
 
@@ -12,6 +14,7 @@ class _BaseCovarNetwork(nn.Module):
         self.backbone_params = backbone_params
         self.num_covariates = num_covariates
         self.link = link
+        self._link = LINKS[link]  # 4-tuple of pure link functions; see cocodeel.links
 
         # Centering modules
         self.center_x = Center(self.backbone.out_features)
@@ -35,15 +38,8 @@ class _BaseCovarNetwork(nn.Module):
         raise NotImplementedError("Subclasses must implement `predict_fz`.")
     
     def output_func(self, eta):
-        """Applies the link function to the linear predictor eta."""
-        if self.link == "identity":
-            return eta
-        elif self.link == "logit":
-            return torch.sigmoid(eta)
-        elif self.link == "log":
-            return torch.exp(eta)
-        else:
-            raise ValueError(f"Unsupported link function: {self.link}")
+        """Apply g⁻¹: linear predictor η → predicted mean μ."""
+        return self._link.inverse(eta)
 
     # -------------------------------------------------------------------------
     # Centering logic
@@ -86,54 +82,6 @@ class _BaseCovarNetwork(nn.Module):
         y = torch.cat(ys, dim=0)
         return X, Z, y
     
-    @torch.no_grad()
-    def _variance_function(self, mu):
-        """
-        General variance function V(mu) for exponential family.
-        Modify this function for different GLM families:
-        - Gaussian: V(mu) = 1
-        - Binomial: V(mu) = mu * (1 - mu)
-        - Poisson: V(mu) = mu
-        """
-        if self.link == "logit":  # Bernoulli / logit
-            return mu * (1 - mu)
-        elif self.link == "identity":  # Gaussian
-            return torch.ones_like(mu)
-        elif self.link == "log":  # Poisson/log-link (approximates exp)
-            return mu
-        else:
-            raise NotImplementedError("Variance function not implemented for this output function.")
-    
-    @torch.no_grad()
-    def _link_derivative(self, mu):
-        """
-        Derivative of the link function g' for use in working response calculation.
-        Modify for different GLM link functions:
-        - Gaussian (identity): g'(mu) = 1
-        - Binomial (logit): g'(mu) = mu * (1 - mu)
-        - Poisson (log): g'(mu) = 1 / mu
-        """
-        if self.link == "logit":  # Bernoulli / logit
-            return mu * (1 - mu)
-        elif self.link == "identity":  # Gaussian
-            return torch.ones_like(mu)
-        elif self.link == "log":  # Poisson/log-link (approximates exp)
-            return 1 / (mu + 1e-6)
-        else:
-            raise NotImplementedError("Link derivative not implemented for this output function.")
-
-    @torch.no_grad()
-    def _link_function(self, eta):
-        """Applies the link function to y."""
-        if self.link == "identity":
-            return eta
-        elif self.link == "log":
-            return torch.log(eta + 1e-6)
-        elif self.link == "logit":
-            return torch.log(eta / (1 - eta + 1e-6) + 1e-6)
-        else:
-            raise ValueError(f"Unsupported link function: {self.link}")
-
 
 class BaseNetwork(_BaseCovarNetwork):
     """Base Network: ignores covariates (Z)."""

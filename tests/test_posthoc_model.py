@@ -1105,7 +1105,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         eps = 1e-5
         m.fx.weight.data.zero_()
         m.fz.weight.data.zero_()
-        m.intercept.data = m._link_function(y.mean()).view(1)
+        m.intercept.data = m._link.forward(y.mean()).view(1)
 
         fx_old = m.fx.weight.data.clone()
         fz_old = m.fz.weight.data.clone()
@@ -1114,9 +1114,9 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
 
         for i in range(max_iters):
             eta = m.intercept + m.fx(X_std) + m.fz(Z_std)
-            mu = m.output_func(eta)
-            var = m._variance_function(mu)
-            g_p = m._link_derivative(mu)
+            mu = m._link.inverse(eta)
+            var = m._link.variance(mu)
+            g_p = m._link.derivative(mu)
             w   = g_p**2 / (var + eps)
 
             close0, close1 = mu < eps, mu > 1 - eps
@@ -1217,7 +1217,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         # Replicate the zero-init state of _fit_effects.
         model.fx.weight.data.zero_()
         model.fz.weight.data.zero_()
-        model.intercept.data = model._link_function(model.center_y.mean).view(1)
+        model.intercept.data = model._link.forward(model.center_y.mean).view(1)
 
         # Capture the pre-step state (all zeros).
         eta_fx_0 = model.fx(X_std).clone()    # = 0
@@ -1226,9 +1226,9 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         # One IRLS step to get beta_fx_1.
         P_z = penalty_z
         eta = model.intercept + model.fx(X_std) + model.fz(Z_std)
-        mu = model.output_func(eta)
-        var = model._variance_function(mu)
-        g_p = model._link_derivative(mu)
+        mu = model._link.inverse(eta)
+        var = model._link.variance(mu)
+        g_p = model._link.derivative(mu)
         w   = g_p**2 / (var + eps)
         sw  = w.sqrt()
         y_work = eta + (y_raw - mu) / (g_p + eps)

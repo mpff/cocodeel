@@ -150,7 +150,7 @@ class PostHocCovarNetwork(BaseNetwork):
             # ---- Initialize parameters ----
             self.fx.weight.data.zero_()
             self.fz.weight.data.zero_()
-            self.intercept.data = self._link_function(self.center_y.mean).view(1)  # mean defined as shape (1,)!
+            self.intercept.data = self._link.forward(self.center_y.mean).view(1)  # mean defined as shape (1,)!
 
             best_val_loss = float("inf")
             best_val_loss_any = float("inf")  # fallback: best val loss ignoring convergence
@@ -222,7 +222,7 @@ class PostHocCovarNetwork(BaseNetwork):
 
                 self.fx.weight.data.zero_()
                 self.fz.weight.data.zero_()
-                self.intercept.data = self._link_function(self.center_y.mean).view(1)  # mean defined as shape (1,)!
+                self.intercept.data = self._link.forward(self.center_y.mean).view(1)  # mean defined as shape (1,)!
 
             # If no lambda converged, fall back to best unconverged state.
             if best_state is None:
@@ -290,9 +290,9 @@ class PostHocCovarNetwork(BaseNetwork):
             # ---- Prepare reweighted data ----
 
             eta = self.intercept + self.fx(X) + self.fz(Z)
-            mu = self.output_func(eta)
-            var = self._variance_function(mu)
-            g_prime = self._link_derivative(mu)
+            mu = self._link.inverse(eta)
+            var = self._link.variance(mu)
+            g_prime = self._link.derivative(mu)
             weights = g_prime**2 / (var + eps)
 
             # Clip probabilities for numerical stability in binomial case.

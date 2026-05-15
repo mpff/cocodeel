@@ -219,9 +219,9 @@ class TestLinkInternals(unittest.TestCase):
     def test_identity(self):
         model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="identity")
         mu = torch.tensor([-1.0, 0.0, 0.5, 2.0])
-        self.assertTrue(torch.allclose(model._link_function(mu), mu, atol=1e-6))
-        self.assertTrue(torch.allclose(model._link_derivative(mu), torch.ones_like(mu), atol=1e-6))
-        self.assertTrue(torch.allclose(model._variance_function(mu), torch.ones_like(mu), atol=1e-6))
+        self.assertTrue(torch.allclose(model._link.forward(mu), mu, atol=1e-6))
+        self.assertTrue(torch.allclose(model._link.derivative(mu), torch.ones_like(mu), atol=1e-6))
+        self.assertTrue(torch.allclose(model._link.variance(mu), torch.ones_like(mu), atol=1e-6))
 
     @torch.no_grad()
     def test_logit(self):
@@ -229,17 +229,17 @@ class TestLinkInternals(unittest.TestCase):
         mu = torch.tensor([0.2, 0.4, 0.6, 0.8])
         expected_forward = torch.log(mu / (1 - mu))     # g(μ) = log(μ / (1-μ))
         expected_grad = mu * (1 - mu)                   # g'(μ) = μ(1-μ); V(μ) = μ(1-μ)
-        self.assertTrue(torch.allclose(model._link_function(mu), expected_forward, atol=1e-5))
-        self.assertTrue(torch.allclose(model._link_derivative(mu), expected_grad, atol=1e-6))
-        self.assertTrue(torch.allclose(model._variance_function(mu), expected_grad, atol=1e-6))
+        self.assertTrue(torch.allclose(model._link.forward(mu), expected_forward, atol=1e-5))
+        self.assertTrue(torch.allclose(model._link.derivative(mu), expected_grad, atol=1e-6))
+        self.assertTrue(torch.allclose(model._link.variance(mu), expected_grad, atol=1e-6))
 
     @torch.no_grad()
     def test_log(self):
         model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="log")
         mu = torch.tensor([0.5, 1.0, 2.0, 5.0])
-        self.assertTrue(torch.allclose(model._link_function(mu), torch.log(mu), atol=1e-5))     # g(μ) = log(μ)
-        self.assertTrue(torch.allclose(model._link_derivative(mu), 1 / mu, atol=1e-5))          # g'(μ) = 1/μ
-        self.assertTrue(torch.allclose(model._variance_function(mu), mu, atol=1e-6))            # V(μ) = μ
+        self.assertTrue(torch.allclose(model._link.forward(mu), torch.log(mu), atol=1e-5))     # g(μ) = log(μ)
+        self.assertTrue(torch.allclose(model._link.derivative(mu), 1 / mu, atol=1e-5))         # g'(μ) = 1/μ
+        self.assertTrue(torch.allclose(model._link.variance(mu), mu, atol=1e-6))               # V(μ) = μ
 
 
 if __name__ == "__main__":
