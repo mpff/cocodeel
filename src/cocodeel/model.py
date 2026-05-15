@@ -52,6 +52,18 @@ class _BaseCovarNetwork(nn.Module):
     def center_effects(self, dataloader):
         """Center X, Z, and y using the dataloader."""
         raise NotImplementedError("Subclasses must implement `center_effects`.")
+
+    @torch.no_grad()
+    def _fit_centers_from_loader(self, dataloader):
+        """Fit center_x, center_z (if present), and center_y on the loader's
+        data. Does NOT touch the intercept or `is_centered` — callers handle
+        those based on the subclass's centering contract.
+        """
+        X, Z, y = self._extract_features_from_loader(dataloader)
+        self.center_x.fit(X)
+        if self.center_z is not None:
+            self.center_z.fit(Z)
+        self.center_y.fit(y)
     
     # -------------------------------------------------------------------------
     # Utility methods
@@ -147,16 +159,10 @@ class BaseNetwork(_BaseCovarNetwork):
     
     @torch.no_grad()
     def center_effects(self, dataloader):
-        """Center X, Z, and y using the dataloader."""
-
+        """Fit centering means and shift the intercept so predictions are unchanged."""
         if self.is_centered:
             return self
-    
-        X, _, y = self._extract_features_from_loader(dataloader)
-
-        self.center_x.fit(X)
-        self.center_y.fit(y)
-
+        self._fit_centers_from_loader(dataloader)
         self.intercept.data += self.fx(self.center_x.mean)
         self.is_centered.fill_(True)
         return self
@@ -188,17 +194,10 @@ class CovarNetwork(_BaseCovarNetwork):
     
     @torch.no_grad()
     def center_effects(self, dataloader):
-        """Center X, Z, and y using the dataloader."""
-        
+        """Fit centering means and shift the intercept so predictions are unchanged."""
         if self.is_centered:
             return self
-        
-        X, Z, y = self._extract_features_from_loader(dataloader)
-
-        self.center_x.fit(X)
-        self.center_z.fit(Z)
-        self.center_y.fit(y)
-
+        self._fit_centers_from_loader(dataloader)
         self.intercept.data += self.fx(self.center_x.mean) + self.fz(self.center_z.mean)
         self.is_centered.fill_(True)
         return self

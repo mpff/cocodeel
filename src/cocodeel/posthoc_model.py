@@ -87,17 +87,14 @@ class PostHocCovarNetwork(BaseNetwork):
     
     @torch.no_grad()
     def center_effects(self, dataloader):
-        """Fit centering means (center_x, center_z, center_y) on `dataloader`.
+        """Fit centering means on `dataloader`.
 
         The intercept is intentionally NOT adjusted here: `_fit_effects`
         refits the intercept via IRLS on the same dataloader, so the
         intercept and the centering means end up derived from the same
         fold (the split-sample invariant).
         """
-        X, Z, y = self._extract_features_from_loader(dataloader)
-        self.center_x.fit(X)
-        self.center_z.fit(Z)
-        self.center_y.fit(y)
+        self._fit_centers_from_loader(dataloader)
         self.is_centered.fill_(True)
         return self
 
