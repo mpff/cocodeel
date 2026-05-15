@@ -210,5 +210,37 @@ class TestGeneralizedLinkFunctions(unittest.TestCase):
         self.assertTrue(torch.allclose(output, torch.exp(eta), atol=1e-6))
 
 
+class TestLinkInternals(unittest.TestCase):
+    # Forward link g(μ), derivative g'(μ), and variance V(μ) are exercised
+    # only indirectly via IRLS — and the log-link path has no IRLS test at
+    # all. Pin the math directly so a link-registry refactor preserves it.
+
+    @torch.no_grad()
+    def test_identity(self):
+        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="identity")
+        mu = torch.tensor([-1.0, 0.0, 0.5, 2.0])
+        self.assertTrue(torch.allclose(model._link_function(mu), mu, atol=1e-6))
+        self.assertTrue(torch.allclose(model._link_derivative(mu), torch.ones_like(mu), atol=1e-6))
+        self.assertTrue(torch.allclose(model._variance_function(mu), torch.ones_like(mu), atol=1e-6))
+
+    @torch.no_grad()
+    def test_logit(self):
+        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="logit")
+        mu = torch.tensor([0.2, 0.4, 0.6, 0.8])
+        expected_forward = torch.log(mu / (1 - mu))     # g(μ) = log(μ / (1-μ))
+        expected_grad = mu * (1 - mu)                   # g'(μ) = μ(1-μ); V(μ) = μ(1-μ)
+        self.assertTrue(torch.allclose(model._link_function(mu), expected_forward, atol=1e-5))
+        self.assertTrue(torch.allclose(model._link_derivative(mu), expected_grad, atol=1e-6))
+        self.assertTrue(torch.allclose(model._variance_function(mu), expected_grad, atol=1e-6))
+
+    @torch.no_grad()
+    def test_log(self):
+        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="log")
+        mu = torch.tensor([0.5, 1.0, 2.0, 5.0])
+        self.assertTrue(torch.allclose(model._link_function(mu), torch.log(mu), atol=1e-5))     # g(μ) = log(μ)
+        self.assertTrue(torch.allclose(model._link_derivative(mu), 1 / mu, atol=1e-5))          # g'(μ) = 1/μ
+        self.assertTrue(torch.allclose(model._variance_function(mu), mu, atol=1e-6))            # V(μ) = μ
+
+
 if __name__ == "__main__":
     unittest.main()
