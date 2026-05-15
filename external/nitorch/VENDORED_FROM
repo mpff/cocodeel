@@ -1,11 +1,4 @@
-nitorch upstream provenance (recorded Phase 1, 2026-05-12)
+nitorch upstream provenance
 
 Repository: https://github.com/ritterlab/nitorch.git
 Commit:     fd0c33e5ae1bf8cece59b6ae661b29b9b4c1a870
-
-Current location:
-    ~/Research/proj-orthogonalisation/submodules/nitorch  (git submodule)
-
-Phase 2 plan: vendor this tree into ~/Research/ovb-ddns/code/external/nitorch/
-              with this commit hash recorded as VENDORED_FROM inside that dir.
-              The submodule entry in .gitmodules is removed at that time.

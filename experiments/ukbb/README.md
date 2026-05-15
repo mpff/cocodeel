@@ -22,18 +22,14 @@ structural MRI.
 
 ## Status
 
-This directory was imported from
-`mpff/proj-orthogonalisation/experiments/ukbb/` on 2026-05-12 (Phase 2 of
-the monorepo refactor — see `~/.claude/plans/ok-we-have-a-cozy-lecun.md`).
-Imports currently use `sys.path.insert` hacks (resolved relative to
-`code_root`); Phase 3 will replace these with `pip install -e .`.
+Imports use `sys.path.insert` hacks resolved relative to `code_root`;
+the package is not yet pip-installable.
 
 ## Reproducing Section 6 figures
 
-Full per-figure reproduction recipes (with compute budgets) come in
-Phase 6 / 7. For now, scripts run from
-`~/Research/ovb-ddns/code/` (`dl-mri` env required) — see each script's
-`--help` for available flags.
+Scripts run from `~/Research/ovb-ddns/code/` (`dl-mri` env required) —
+see each script's `--help` for available flags. Per-figure
+reproduction recipes are not yet documented.
 
 Run artefacts (checkpoints + per-run CSVs) live in `runs/` (gitignored,
 ~96 GB). Paper-relevant runs are listed in
@@ -41,6 +37,4 @@ Run artefacts (checkpoints + per-run CSVs) live in `runs/` (gitignored,
 
 ## Data access
 
-UK Biobank data is access-controlled and cannot be redistributed. See
-forthcoming `code/docs/data_access.md` (Phase 7) for the application
-procedure.
+UK Biobank data is access-controlled and cannot be redistributed.
