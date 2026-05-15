@@ -1,8 +1,7 @@
 """GLM link functions registered by name.
 
 Each `Link` carries `inverse` (g⁻¹), `forward` (g), `derivative` (g'(μ)),
-and `variance` (V(μ)). Numerical stabilisation constants (`+ 1e-6`) are
-preserved bit-for-bit so sha256 baselines do not drift.
+and `variance` (V(μ)).
 """
 from typing import Callable, NamedTuple
 

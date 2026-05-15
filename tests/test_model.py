@@ -82,8 +82,7 @@ class TestBaseNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def test_center_effects_is_idempotent(self):
-        # Without the is_centered guard, a second call would re-add
-        # fx(center_x.mean) to the intercept, double-shifting it.
+        # Calling center_effects twice must not shift the intercept twice.
         X = torch.ones(10, 2, 3)
         dataset = CovarDataset(X, torch.zeros(10), torch.ones(10))
         loader = DataLoader(dataset, batch_size=5)
@@ -167,8 +166,7 @@ class TestCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def test_center_effects_is_idempotent(self):
-        # Without the is_centered guard, a second call would re-add
-        # fx(center_x.mean) + fz(center_z.mean) to the intercept.
+        # Calling center_effects twice must not shift the intercept twice.
         X = torch.ones(10, 2, 3)
         Z = torch.ones(10, self.num_covariates)
         dataset = CovarDataset(X, Z, torch.ones(10))
@@ -211,9 +209,8 @@ class TestGeneralizedLinkFunctions(unittest.TestCase):
 
 
 class TestLinkInternals(unittest.TestCase):
-    # Forward link g(μ), derivative g'(μ), and variance V(μ) are exercised
-    # only indirectly via IRLS — and the log-link path has no IRLS test at
-    # all. Pin the math directly so a link-registry refactor preserves it.
+    # Direct math pins for forward link g(μ), derivative g'(μ), and variance
+    # V(μ). Other tests exercise these only indirectly through IRLS.
 
     @torch.no_grad()
     def test_identity(self):
