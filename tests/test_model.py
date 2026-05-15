@@ -80,6 +80,22 @@ class TestBaseNetwork(unittest.TestCase):
         predictions_after = self.model.forward(X)
         self.assertTrue(torch.allclose(predictions_before, predictions_after, atol=1e-6))
 
+    @torch.no_grad()
+    def test_center_effects_is_idempotent(self):
+        # Without the is_centered guard, a second call would re-add
+        # fx(center_x.mean) to the intercept, double-shifting it.
+        X = torch.ones(10, 2, 3)
+        dataset = CovarDataset(X, torch.zeros(10), torch.ones(10))
+        loader = DataLoader(dataset, batch_size=5)
+
+        self.model.center_effects(loader)
+        intercept_after_first = self.model.intercept.clone()
+        pred_after_first = self.model.forward(X).clone()
+
+        self.model.center_effects(loader)
+        self.assertTrue(torch.allclose(self.model.intercept, intercept_after_first, atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.forward(X), pred_after_first, atol=1e-6))
+
 
 class TestCovarNetwork(unittest.TestCase):
 
@@ -148,6 +164,23 @@ class TestCovarNetwork(unittest.TestCase):
         # Check that predictions are not affected by centering.
         predictions_after = self.model.forward(X, Z)
         self.assertTrue(torch.allclose(predictions_before, predictions_after, atol=1e-6))
+
+    @torch.no_grad()
+    def test_center_effects_is_idempotent(self):
+        # Without the is_centered guard, a second call would re-add
+        # fx(center_x.mean) + fz(center_z.mean) to the intercept.
+        X = torch.ones(10, 2, 3)
+        Z = torch.ones(10, self.num_covariates)
+        dataset = CovarDataset(X, Z, torch.ones(10))
+        loader = DataLoader(dataset, batch_size=5)
+
+        self.model.center_effects(loader)
+        intercept_after_first = self.model.intercept.clone()
+        pred_after_first = self.model.forward(X, Z).clone()
+
+        self.model.center_effects(loader)
+        self.assertTrue(torch.allclose(self.model.intercept, intercept_after_first, atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.forward(X, Z), pred_after_first, atol=1e-6))
 
 
 class TestGeneralizedLinkFunctions(unittest.TestCase):
