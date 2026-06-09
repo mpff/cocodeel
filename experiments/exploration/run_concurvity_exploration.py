@@ -85,8 +85,9 @@ HP_PATH = ROOT / "experiments/simulation_images/chosen_hps.json"
 N_GRID = [400, 800, 1600, 3200, 6400, 12800, 25600, 51200]
 
 # Ridge sweep for the `nam_ridge_<λ>` method: AdamW weight decay (decoupled
-# L2 on all parameters), endpoints 0.001 / 100 plus one interior decade.
-RIDGE_LAMBDAS = [0.001, 0.1, 100.0]
+# L2 on all parameters). λ=100 over-regularises to a near-constant predictor
+# (flat, high-bias, ~zero-variance), so the sweep stops at 0.1.
+RIDGE_LAMBDAS = [0.001, 0.1]
 
 SIM_DEFAULTS = dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.)
 
