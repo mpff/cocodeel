@@ -17,6 +17,7 @@ def covar_trainer(
     scheduler_kwargs=None,
     use_amp=False,
     amp_dtype=torch.bfloat16,
+    optimizer_cls=torch.optim.Adam,
 ):
     """
     Train a covariance model with early stopping.
@@ -47,6 +48,10 @@ def covar_trainer(
         amp_dtype: dtype for autocast. Default ``torch.bfloat16`` (A100+).
             For older GPUs pass ``torch.float16`` — but note: fp16 requires
             GradScaler, which is NOT handled here. Use bf16 or no-AMP.
+        optimizer_cls: Optimizer class (not instance), constructed as
+            ``optimizer_cls(model.parameters(), lr=lr, weight_decay=weight_decay)``.
+            Default ``Adam`` (coupled L2). Pass ``AdamW`` for decoupled
+            weight decay.
 
     Returns:
         Trained model (on the specified device). Fit history is attached as
@@ -63,7 +68,7 @@ def covar_trainer(
     # Initialize and move model to device
     model = model(**model_params).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optimizer_cls(model.parameters(), lr=lr, weight_decay=weight_decay)
     if scheduler is not None:
         scheduler = scheduler(optimizer, **(scheduler_kwargs or {}))
     else:
