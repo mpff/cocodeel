@@ -42,6 +42,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Fonts: Fira Sans for text, Lete Sans Math (its sans companion) for math.
+# Installed under ~/.local/share/fonts; matplotlib falls back with a warning
+# if they are absent.
+plt.rcParams.update({
+    "font.family": "Fira Sans",
+    "mathtext.fontset": "custom",
+    "mathtext.rm": "Lete Sans Math",
+    "mathtext.it": "Lete Sans Math",
+    "mathtext.bf": "Lete Sans Math:bold",
+    "mathtext.sf": "Lete Sans Math",
+    "mathtext.cal": "Lete Sans Math",
+    "mathtext.tt": "Fira Sans",
+})
+
 RUNS_GLOB = (
     "/home/RDC/pfeuffma/Research/ovb-ddns/code/results/exploration/runs/"
     "*_concurvity_*nsim*"
@@ -56,21 +70,19 @@ METHOD_LABELS = {
     "nam": "NAM (lambda=0)",
     "nam_ridge_0.001": "NAM + ridge (lambda=0.001)",
     "nam_ridge_0.1": "NAM + ridge (lambda=0.1)",
-    "nam_ridge_100": "NAM + ridge (lambda=100)",
     "posthoc": "DNN with Controls",
     "posthoc_xfit": "DNN with Controls (xfit)",
 }
 METHOD_ORDER = list(METHOD_LABELS)
 
-# The three ridge strengths share a light->dark blue ramp so they read as one
-# sweep; nam (lambda=0) keeps yellow-green, sgd grey, and the two post-hoc
-# methods keep the coral/orange family marking the different approach.
+# The ridge strengths share a light->dark blue ramp so they read as one sweep;
+# nam (lambda=0) keeps yellow-green, sgd grey, and the two post-hoc methods
+# keep the coral/orange family marking the different approach.
 METHOD_COLORS = {
     "sgd": "#7F7F7F",              # grey — linear-fz baseline
     "nam": "#7AD151",              # yellow-green — NAM, lambda=0
     "nam_ridge_0.001": "#9ECAE1",  # light blue — weakest ridge
-    "nam_ridge_0.1": "#4292C6",    # medium blue
-    "nam_ridge_100": "#08519C",    # dark blue — strongest ridge
+    "nam_ridge_0.1": "#08519C",    # dark blue — strongest ridge
     "posthoc": "#D1426F",          # coral-magenta — off-ramp highlight
     "posthoc_xfit": "#F08F4A",     # warm orange — second post-hoc
 }
@@ -165,7 +177,7 @@ def aggregate(run_dir: Path) -> tuple[dict, dict[int, int], int]:
 
 def render_figure(records: dict, run_dir: Path) -> bytes:
     """Render the bias^2 / var / MSPE-vs-N_train decomposition to PNG bytes."""
-    fig, axes = plt.subplots(1, 3, figsize=(11, 3.6), sharex=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6), sharex=True)
 
     for ax, metric in zip(axes, METRICS):
         for m in METHOD_ORDER:
@@ -188,14 +200,14 @@ def render_figure(records: dict, run_dir: Path) -> bytes:
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
-        handles, labels, loc="lower center", ncol=len(labels),
-        fontsize=7.5, frameon=False, bbox_to_anchor=(0.5, -0.02),
+        handles, labels, loc="center left", bbox_to_anchor=(0.82, 0.5),
+        fontsize=8, frameon=False,
     )
     fig.suptitle(
         f"Concurvity exploration — image effect $f_X$   ({run_dir.name})",
         fontsize=10,
     )
-    fig.tight_layout(rect=(0, 0.07, 1, 0.96))
+    fig.tight_layout(rect=(0, 0, 0.81, 0.96))
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120)
