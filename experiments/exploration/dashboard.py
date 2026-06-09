@@ -261,11 +261,17 @@ def make_handler(run_dir: Path):
     return Handler
 
 
+class _ReuseTCPServer(socketserver.TCPServer):
+    # Rebind the port immediately after a restart instead of waiting out the
+    # kernel's TIME_WAIT on the previous socket.
+    allow_reuse_address = True
+
+
 def serve(run_dir: Path, host: str, port: int, max_tries: int = 10) -> None:
     handler = make_handler(run_dir)
     for candidate in range(port, port + max_tries):
         try:
-            httpd = socketserver.TCPServer((host, candidate), handler)
+            httpd = _ReuseTCPServer((host, candidate), handler)
         except OSError:
             print(f"[dashboard] port {candidate} busy, trying next", flush=True)
             continue
