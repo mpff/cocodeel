@@ -223,14 +223,19 @@ def _run_one_sim(n: int, seed: int, run_dir: Path, hp: dict) -> dict:
     }
     del m_sgd, m_nam, m_AB, m_BA
 
-    np.savez_compressed(
-        npz_path,
-        methods=np.array(list(arrays.keys())),
-        **{f"{name}__{eff}": arr for name, d in arrays.items() for eff, arr in d.items()},
-        **{f"truth__{eff}": arr for eff, arr in truths.items()},
-        setting=np.array(json.dumps({"n": n})),
-        sim_params=np.array(json.dumps({k: v for k, v in sim_params.items()})),
-    )
+    # Write atomically: a worker killed mid-write must not leave a truncated
+    # npz that the resume logic (npz_path.exists()) would treat as complete.
+    tmp_path = npz_path.with_name(npz_path.name + ".tmp")
+    with open(tmp_path, "wb") as f:
+        np.savez_compressed(
+            f,
+            methods=np.array(list(arrays.keys())),
+            **{f"{name}__{eff}": arr for name, d in arrays.items() for eff, arr in d.items()},
+            **{f"truth__{eff}": arr for eff, arr in truths.items()},
+            setting=np.array(json.dumps({"n": n})),
+            sim_params=np.array(json.dumps({k: v for k, v in sim_params.items()})),
+        )
+    os.replace(tmp_path, npz_path)
 
     torch.cuda.empty_cache()
     gc.collect()
