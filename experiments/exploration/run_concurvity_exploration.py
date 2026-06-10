@@ -138,14 +138,14 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def setup_run_dir() -> Path:
+def setup_run_dir(nsim: int) -> Path:
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out = ROOT / f"results/exploration/runs/{ts}_concurvity_{OUTCOME_TYPE}_nsim{NSIM}"
+    out = ROOT / f"results/exploration/runs/{ts}_concurvity_{OUTCOME_TYPE}_nsim{nsim}"
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
-def write_manifest(run_dir: Path, hp: dict) -> None:
+def write_manifest(run_dir: Path, hp: dict, nsim: int) -> None:
     manifest = {
         "start": datetime.datetime.now().isoformat(),
         "host": os.uname().nodename,
@@ -154,7 +154,7 @@ def write_manifest(run_dir: Path, hp: dict) -> None:
         "device": DEVICE,
         "outcome_type": OUTCOME_TYPE,
         "n_workers": N_WORKERS,
-        "nsim": NSIM,
+        "nsim": nsim,
         "q_default": Q_DEFAULT,
         "test": {"seed": TEST_SEED, "n": TEST_N},
         "n_grid": N_GRID,
@@ -302,11 +302,11 @@ def main():
         run_dir.mkdir(parents=True, exist_ok=True)
         print(f"Using {run_dir}")
     else:
-        run_dir = setup_run_dir()
+        run_dir = setup_run_dir(args.nsim)
         print(f"New run dir: {run_dir}")
     # Concurrent shards point at the same dir; the first to arrive writes it.
     if not (run_dir / "manifest.json").exists():
-        write_manifest(run_dir, hp)
+        write_manifest(run_dir, hp, args.nsim)
 
     seed_end = args.seed_end if args.seed_end is not None else args.nsim
     n_values = [int(v) for v in args.n_values.split(",")] if args.n_values else N_GRID
