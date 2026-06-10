@@ -68,7 +68,7 @@ from experiments.exploration.covar_mlp_fz import CovarNetworkMLPfz
 # (which re-import this module) pick up the runner's CLI choices at import
 # time. binary → logit + BCE; continuous → identity + MSE.
 DEVICE = os.environ.get("COCODEEL_DEVICE", "cuda:1")
-OUTCOME_TYPE = os.environ.get("COCODEEL_OUTCOME", "binary")
+OUTCOME_TYPE = os.environ.get("COCODEEL_OUTCOME", "continuous")
 N_WORKERS = 4
 NSIM = 50
 Q_DEFAULT = 32
