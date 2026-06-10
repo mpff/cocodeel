@@ -9,14 +9,15 @@ Reruns the concurvity block of the paper simulation
   * results are written under `results/exploration/`, never the paper tree.
 
 Methods per (n, seed) — the three base methods:
-    sgd            end-to-end CovarNetwork (linear f_z), MSE only
-    nam            end-to-end CovarNetworkMLPfz (MLP f_z), MSE only
+    sgd            end-to-end CovarNetwork (linear f_z)
+    nam            end-to-end CovarNetworkMLPfz (MLP f_z)
     posthoc_xfit   two-fold cross-fit refit (folds averaged)
 
 DGP, backbone, split helper, and the post-hoc fitting machinery are imported
 from the paper experiment; HPs are read from its `chosen_hps.json`. The
-methods are fit in clearly delimited blocks inside `_run_one_sim`; comment
-out a block to skip those methods on a fresh run.
+methods are fit in clearly delimited blocks inside `_run_one_sim`; the shared
+test set is drawn only after all fits, because the DGP reseeds the global
+torch RNG — drawing it earlier would give every sim identical weight inits.
 
 Outputs (per run directory):
     <run>/manifest.json              config snapshot, git commit, start time
@@ -174,20 +175,37 @@ def _run_one_sim(n: int, seed: int, run_dir: Path, hp: dict) -> dict:
         return {"sweep_key": sweep_key, "seed": seed, "status": "cached", "wall_s": 0.0}
 
     device = torch.device(DEVICE)
-    torch.manual_seed(seed)
 
     sim_params = dict(SIM_DEFAULTS, n=n, outcome_type=OUTCOME_TYPE)
     tp = _trainer_params(hp)
     t0 = time.time()
 
+    # Seeds the global RNG with `seed` before drawing, so weight inits and
+    # shuffle streams downstream are seed-keyed.
     full, half_A, half_B = simulate_dataloaders_split(sim_params, seed=seed)
     full_tr, full_va = full
     hA_tr, hA_va = half_A
     hB_tr, hB_va = half_B
 
-    arrays: dict[str, dict[str, np.ndarray]] = {}
+    # ── sgd: end-to-end CovarNetwork (linear f_z) ─────────────────────────────
+    m_sgd = covar_trainer(CovarNetwork, MODEL_PARAMS, full_tr, full_va, **tp)
+    m_sgd = m_sgd.center_effects(full_tr)
 
-    # Shared test draw (same for every method).
+    # ── nam: end-to-end CovarNetworkMLPfz (MLP f_z) ───────────────────────────
+    m_nam = covar_trainer(CovarNetworkMLPfz, MODEL_PARAMS, full_tr, full_va, **tp)
+    m_nam = m_nam.center_effects(full_tr)
+
+    # ── posthoc_xfit: two backbones, refit on the opposite half, average ─────
+    base_A = covar_trainer(BaseNetwork, MODEL_PARAMS,
+                           train_loader=hA_tr, val_loader=hA_va, **tp).center_effects(hA_tr)
+    base_B = covar_trainer(BaseNetwork, MODEL_PARAMS,
+                           train_loader=hB_tr, val_loader=hB_va, **tp).center_effects(hB_tr)
+    m_AB = _fit_posthoc(PostHocCovarNetwork, base_A, hB_tr, hB_va, {"orthogonalize": False}, {}, 1, device)
+    m_BA = _fit_posthoc(PostHocCovarNetwork, base_B, hA_tr, hA_va, {"orthogonalize": False}, {}, 1, device)
+    del base_A, base_B
+
+    # Shared test draw (same for every method) — only after all fits, since
+    # simulate_traffic_light_data reseeds the global RNG with TEST_SEED.
     test_sim = dict(sim_params, n=TEST_N)
     X_te, Z_te, y_te, fx_te, fz_te, _fr_te = simulate_traffic_light_data(**test_sim, seed=TEST_SEED)
     loader = DataLoader(CovarDataset(X_te, Z_te, y_te), batch_size=min(200, TEST_N), shuffle=False)
@@ -198,27 +216,12 @@ def _run_one_sim(n: int, seed: int, run_dir: Path, hp: dict) -> dict:
         "fz": fz_te.view(-1).numpy().astype(np.float32),
     }
 
-    # ── sgd: end-to-end CovarNetwork (linear f_z), MSE only ──────────────────
-    m_sgd = covar_trainer(CovarNetwork, MODEL_PARAMS, full_tr, full_va, **tp)
-    m_sgd = m_sgd.center_effects(full_tr)
-    arrays["sgd"] = _gather(m_sgd, loader, device)
-    del m_sgd
-
-    # ── nam: end-to-end CovarNetworkMLPfz (MLP f_z), MSE only ────────────────
-    m_nam = covar_trainer(CovarNetworkMLPfz, MODEL_PARAMS, full_tr, full_va, **tp)
-    m_nam = m_nam.center_effects(full_tr)
-    arrays["nam"] = _gather(m_nam, loader, device)
-    del m_nam
-
-    # ── posthoc_xfit: two backbones, refit on the opposite half, average ─────
-    base_A = covar_trainer(BaseNetwork, MODEL_PARAMS,
-                           train_loader=hA_tr, val_loader=hA_va, **tp).center_effects(hA_tr)
-    base_B = covar_trainer(BaseNetwork, MODEL_PARAMS,
-                           train_loader=hB_tr, val_loader=hB_va, **tp).center_effects(hB_tr)
-    m_AB = _fit_posthoc(PostHocCovarNetwork, base_A, hB_tr, hB_va, {"orthogonalize": False}, {}, 1, device)
-    m_BA = _fit_posthoc(PostHocCovarNetwork, base_B, hA_tr, hA_va, {"orthogonalize": False}, {}, 1, device)
-    arrays["posthoc_xfit"] = _gather(CrossFitAverageModel(m_AB, m_BA), loader, device)
-    del base_A, base_B, m_AB, m_BA
+    arrays: dict[str, dict[str, np.ndarray]] = {
+        "sgd": _gather(m_sgd, loader, device),
+        "nam": _gather(m_nam, loader, device),
+        "posthoc_xfit": _gather(CrossFitAverageModel(m_AB, m_BA), loader, device),
+    }
+    del m_sgd, m_nam, m_AB, m_BA
 
     np.savez_compressed(
         npz_path,
