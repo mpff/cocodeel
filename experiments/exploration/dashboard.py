@@ -2,7 +2,8 @@
 
 Re-scans the run directory on every request, re-aggregates all per-(n, seed)
 NPZ prediction files present so far, and serves an auto-refreshing HTML page
-with the bias^2 / variance / MSPE-vs-N figure for the f_x (image) effect.
+with the MSPE / bias^2 / variance-vs-N figure, one panel row per effect
+(f_x image effect, f_z covariate effect).
 
 The bias/variance decomposition replicates `aggregate_full_simulation.py`
 exactly (per test point i, method m, S seeds):
@@ -11,7 +12,7 @@ exactly (per test point i, method m, S seeds):
     var_i   = var_s yhat_{i,s}                 (population var, ddof=0)
     mspe_i  = mean_s (yhat_{i,s} - truth_i)^2  = bias2_i + var_i
 
-then reported as mean_i(...) per (method, n). Only the f_x effect is used.
+then reported as mean_i(...) per (method, effect, n).
 
 The figure mirrors `4-Figure2_concurvity.R`: quantity vs N_train on a log10
 x-axis (N_train = n/2, the train size of the `full` split; exact for the
@@ -60,7 +61,7 @@ RUNS_GLOB = (
     "/home/RDC/pfeuffma/Research/ovb-ddns/code/results/exploration/runs/"
     "*_concurvity_*nsim*"
 )
-EFFECT = "fx"
+EFFECTS = ["fx", "fz"]  # one panel row per effect
 
 # Method draw order + display labels: the three base methods. Both "DNN w.
 # Controls" variants estimate the same structured model (DNN f_x + linear
@@ -78,12 +79,18 @@ METHOD_COLORS = {
     "posthoc_xfit": "#F08F4A", # warm orange — cross-fit post-hoc
 }
 
-METRICS = ["bias2", "var", "mspe"]
-METRIC_LABELS = {
-    "bias2": r"Bias$^2(\hat{f}_X)$",
-    "var": r"Var$(\hat{f}_X)$",
-    "mspe": r"MSPE$(\hat{f}_X)$",
-}
+# MSPE leads: it is the headline quantity, bias^2/var are its decomposition.
+METRICS = ["mspe", "bias2", "var"]
+EFFECT_TEX = {"fx": r"\hat{f}_X", "fz": r"\hat{f}_Z"}
+
+
+def metric_label(metric: str, effect: str) -> str:
+    et = EFFECT_TEX[effect]
+    return {
+        "mspe": rf"MSPE$({et})$",
+        "bias2": rf"Bias$^2({et})$",
+        "var": rf"Var$({et})$",
+    }[metric]
 
 
 def resolve_run_dir(run_dir: str | None) -> Path:
@@ -110,92 +117,99 @@ def scan(run_dir: Path) -> dict[int, list[Path]]:
 
 
 def aggregate(run_dir: Path) -> tuple[dict, dict[int, int], int]:
-    """Re-aggregate every NPZ present into per-(method, metric, n) values.
+    """Re-aggregate every NPZ present into per-(method, effect, metric, n) values.
 
-    Returns (records, counts, n_skipped). `records` maps (method, metric) ->
-    {n: value}, restricted to the plotted METHOD_ORDER. Each NPZ supplies the
-    shared truth and all methods. Files that fail to load (mid-write) are
-    skipped and succeed on a later refresh. `counts` is the per-n loaded sim
-    count.
+    Returns (records, counts, n_skipped). `records` maps
+    (method, effect, metric) -> {n: value}, restricted to the plotted
+    METHOD_ORDER. Each NPZ supplies the shared truths and all methods. Files
+    that fail to load (mid-write) are skipped and succeed on a later refresh.
+    `counts` is the per-n loaded sim count.
     """
     files_by_n = scan(run_dir)
-    records: dict[tuple[str, str], dict[int, float]] = {}
+    records: dict[tuple[str, str, str], dict[int, float]] = {}
     counts: dict[int, int] = {}
     n_skipped = 0
 
     for n, paths in files_by_n.items():
-        # Per (method): stack seed predictions [S, T]; truth__fx is shared.
-        stacks: dict[str, list[np.ndarray]] = {}
-        truth = None
+        # Per (method, effect): stack seed predictions [S, T]; truths shared.
+        stacks: dict[tuple[str, str], list[np.ndarray]] = {}
+        truths: dict[str, np.ndarray] = {}
         n_loaded = 0
         for p in paths:
             try:
                 d = np.load(p, allow_pickle=True)
                 methods = [str(m) for m in d["methods"]]
-                t = d[f"truth__{EFFECT}"]
+                t = {eff: d[f"truth__{eff}"] for eff in EFFECTS}
                 preds = {
-                    m: d[f"{m}__{EFFECT}"] for m in methods if m in METHOD_ORDER
+                    (m, eff): d[f"{m}__{eff}"]
+                    for m in methods if m in METHOD_ORDER for eff in EFFECTS
                 }
             except Exception:
                 n_skipped += 1
                 continue
-            if truth is None:
-                truth = t
+            if not truths:
+                truths = t
             n_loaded += 1
-            for m, arr in preds.items():
-                stacks.setdefault(m, []).append(arr)
+            for key, arr in preds.items():
+                stacks.setdefault(key, []).append(arr)
 
         counts[n] = n_loaded
-        if n_loaded == 0 or truth is None:
+        if n_loaded == 0 or not truths:
             continue
 
-        for m, seed_list in stacks.items():
+        for (m, eff), seed_list in stacks.items():
+            truth = truths[eff]
             preds = np.stack(seed_list, axis=0)            # [S, T]
             mean_pred = preds.mean(axis=0)                 # [T]
             bias2 = (mean_pred - truth) ** 2               # [T]
             var = preds.var(axis=0, ddof=0)                # [T]  population var
             mspe = ((preds - truth[None, :]) ** 2).mean(0) # [T]
             vals = {
+                "mspe": float(mspe.mean()),
                 "bias2": float(bias2.mean()),
                 "var": float(var.mean()),
-                "mspe": float(mspe.mean()),
             }
             for metric, v in vals.items():
-                records.setdefault((m, metric), {})[n] = v
+                records.setdefault((m, eff, metric), {})[n] = v
 
     return records, counts, n_skipped
 
 
 def render_figure(records: dict, run_dir: Path) -> bytes:
-    """Render the bias^2 / var / MSPE-vs-N_train decomposition to PNG bytes."""
-    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6), sharex=True)
+    """Render MSPE / bias^2 / var vs N_train, one panel row per effect."""
+    fig, axes = plt.subplots(
+        len(EFFECTS), len(METRICS), figsize=(13, 6.4), sharex=True
+    )
 
-    for ax, metric in zip(axes, METRICS):
-        for m in METHOD_ORDER:
-            series = records.get((m, metric))
-            if not series:
-                continue
-            ns = sorted(series)
-            n_train = [n * 0.5 for n in ns]   # N_train = n/2 (sample split)
-            y = [series[n] for n in ns]
-            ax.plot(
-                n_train, y, marker="o", markersize=3.5, linewidth=1.3,
-                alpha=0.85, color=METHOD_COLORS[m], label=METHOD_LABELS[m],
-            )
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_xlabel(r"$N_{train}$ ($\log_{10}$ scale)", fontsize=9)
-        ax.set_ylabel(METRIC_LABELS[metric], fontsize=9)
-        ax.tick_params(labelsize=8)
-        ax.grid(True, which="major", linewidth=0.4, alpha=0.5)
+    for i, eff in enumerate(EFFECTS):
+        for j, metric in enumerate(METRICS):
+            ax = axes[i][j]
+            for m in METHOD_ORDER:
+                series = records.get((m, eff, metric))
+                if not series:
+                    continue
+                ns = sorted(series)
+                n_train = [n * 0.5 for n in ns]   # N_train = n/2 (sample split)
+                y = [series[n] for n in ns]
+                ax.plot(
+                    n_train, y, marker="o", markersize=3.5, linewidth=1.3,
+                    alpha=0.85, color=METHOD_COLORS[m], label=METHOD_LABELS[m],
+                )
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            if i == len(EFFECTS) - 1:
+                ax.set_xlabel(r"$N_{train}$ ($\log_{10}$ scale)", fontsize=9)
+            ax.set_ylabel(metric_label(metric, eff), fontsize=9)
+            ax.tick_params(labelsize=8)
+            ax.grid(True, which="major", linewidth=0.4, alpha=0.5)
 
-    handles, labels = axes[0].get_legend_handles_labels()
+    handles, labels = axes[0][0].get_legend_handles_labels()
     fig.legend(
         handles, labels, loc="center left", bbox_to_anchor=(0.82, 0.5),
         fontsize=8, frameon=False,
     )
     fig.suptitle(
-        f"Concurvity exploration — image effect $f_X$   ({run_dir.name})",
+        f"Concurvity exploration   ({run_dir.name})",
         fontsize=10,
     )
     fig.tight_layout(rect=(0, 0, 0.81, 0.96))
@@ -302,7 +316,7 @@ def main() -> None:
     if args.check:
         records, counts, n_skipped = aggregate(run_dir)
         png = render_figure(records, run_dir)
-        methods_seen = sorted({m for m, _ in records})
+        methods_seen = sorted({m for m, _, _ in records})
         print(
             f"[check] run_dir={run_dir}\n"
             f"[check] counts={dict(sorted(counts.items()))} skipped={n_skipped}\n"
