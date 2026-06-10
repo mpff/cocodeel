@@ -3,17 +3,14 @@
 Reruns the concurvity block of the paper simulation
 (`simulation_images/run_full_simulation.py`) with two changes:
 
-  * the only end-to-end NAM-style fits are an SGD-trained CovarNetwork
-    (linear f_z), a NAM with an MLP shape function for f_z, and a ridge
-    sweep over that NAM (AdamW weight decay on all parameters); no
-    Siems penalty, no backfitting variants.
+  * the only end-to-end fits are an SGD-trained CovarNetwork (linear f_z)
+    and a NAM with an MLP shape function for f_z; no Siems penalty, no
+    ridge sweep, no backfitting variants.
   * results are written under `results/exploration/`, never the paper tree.
 
-Methods per (n, seed):
+Methods per (n, seed) — the three base methods:
     sgd            end-to-end CovarNetwork (linear f_z), MSE only
     nam            end-to-end CovarNetworkMLPfz (MLP f_z), MSE only
-    nam_ridge_<λ>  the NAM, AdamW ridge on all params, one fit per λ in RIDGE_LAMBDAS
-    posthoc        sample-split refit (backbone half_A, refit half_B)
     posthoc_xfit   two-fold cross-fit refit (folds averaged)
 
 DGP, backbone, split helper, and the post-hoc fitting machinery are imported
@@ -83,11 +80,6 @@ HP_PATH = ROOT / "experiments/simulation_images/chosen_hps.json"
 # Subset of the paper concurvity block's N grid (n=102400 dropped — too slow
 # for the exploration's value).
 N_GRID = [400, 800, 1600, 3200, 6400, 12800, 25600, 51200]
-
-# Ridge sweep for the `nam_ridge_<λ>` method: AdamW weight decay (decoupled
-# L2 on all parameters). λ=100 over-regularises to a near-constant predictor
-# (flat, high-bias, ~zero-variance), so the sweep stops at 0.1.
-RIDGE_LAMBDAS = [0.001, 0.1]
 
 SIM_DEFAULTS = dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.)
 
@@ -165,7 +157,6 @@ def write_manifest(run_dir: Path, hp: dict) -> None:
         "q_default": Q_DEFAULT,
         "test": {"seed": TEST_SEED, "n": TEST_N},
         "n_grid": N_GRID,
-        "ridge_lambdas": RIDGE_LAMBDAS,
         "sim_defaults": SIM_DEFAULTS,
         "effects": ["y", "fx", "fz"],
         "hp": hp,
@@ -219,22 +210,13 @@ def _run_one_sim(n: int, seed: int, run_dir: Path, hp: dict) -> dict:
     arrays["nam"] = _gather(m_nam, loader, device)
     del m_nam
 
-    # ── nam_ridge_<λ>: the NAM, AdamW ridge on all params, one fit per λ ──────
-    for lam in RIDGE_LAMBDAS:
-        tp_ridge = dict(tp, weight_decay=lam, optimizer_cls=torch.optim.AdamW)
-        m_ridge = covar_trainer(CovarNetworkMLPfz, MODEL_PARAMS, full_tr, full_va, **tp_ridge)
-        m_ridge = m_ridge.center_effects(full_tr)
-        arrays[f"nam_ridge_{lam:g}"] = _gather(m_ridge, loader, device)
-        del m_ridge
-
-    # ── posthoc / posthoc_xfit: shared backbones, then refit on half_B/A ────
+    # ── posthoc_xfit: two backbones, refit on the opposite half, average ─────
     base_A = covar_trainer(BaseNetwork, MODEL_PARAMS,
                            train_loader=hA_tr, val_loader=hA_va, **tp).center_effects(hA_tr)
     base_B = covar_trainer(BaseNetwork, MODEL_PARAMS,
                            train_loader=hB_tr, val_loader=hB_va, **tp).center_effects(hB_tr)
     m_AB = _fit_posthoc(PostHocCovarNetwork, base_A, hB_tr, hB_va, {"orthogonalize": False}, {}, 1, device)
     m_BA = _fit_posthoc(PostHocCovarNetwork, base_B, hA_tr, hA_va, {"orthogonalize": False}, {}, 1, device)
-    arrays["posthoc"] = _gather(m_AB, loader, device)
     arrays["posthoc_xfit"] = _gather(CrossFitAverageModel(m_AB, m_BA), loader, device)
     del base_A, base_B, m_AB, m_BA
 

@@ -16,8 +16,8 @@ then reported as mean_i(...) per (method, n). Only the f_x effect is used.
 The figure mirrors `4-Figure2_concurvity.R`: quantity vs N_train on a log10
 x-axis (N_train = n/2, the train size of the `full` split; exact for the
 end-to-end methods), log10 y-axis, one line+point per method, theme_bw-style
-panels. Methods: sgd, nam, the three nam_ridge_<λ> sweep points, posthoc,
-posthoc_xfit (see run_concurvity_exploration.py).
+panels. The three base methods are plotted: sgd, nam, posthoc_xfit (see
+run_concurvity_exploration.py).
 
 Usage:
     python dashboard.py --check                  # render once, no server
@@ -62,29 +62,20 @@ RUNS_GLOB = (
 )
 EFFECT = "fx"
 
-# Method draw order + display labels. The NAM family (end-to-end MLP-fz NAM
-# and its AdamW ridge sweep) is plotted alongside the two post-hoc methods,
-# which sit apart to mark the "DNN with Controls" approach.
+# Method draw order + display labels: the three base methods. Both "DNN w.
+# Controls" variants estimate the same structured model (DNN f_x + linear
+# f_z); they differ only in fitting (end-to-end SGD vs cross-fit post-hoc).
 METHOD_LABELS = {
-    "sgd": "CovarNetwork (linear f_z)",
-    "nam": "NAM (lambda=0)",
-    "nam_ridge_0.001": "NAM + ridge (lambda=0.001)",
-    "nam_ridge_0.1": "NAM + ridge (lambda=0.1)",
-    "posthoc": "DNN with Controls",
-    "posthoc_xfit": "DNN with Controls (xfit)",
+    "sgd": "DNN w. Controls (SGD)",
+    "nam": "NAM",
+    "posthoc_xfit": "DNN w. Controls (xfit)",
 }
 METHOD_ORDER = list(METHOD_LABELS)
 
-# The ridge strengths share a light->dark blue ramp so they read as one sweep;
-# nam (lambda=0) keeps yellow-green, sgd grey, and the two post-hoc methods
-# keep the coral/orange family marking the different approach.
 METHOD_COLORS = {
-    "sgd": "#7F7F7F",              # grey — linear-fz baseline
-    "nam": "#7AD151",              # yellow-green — NAM, lambda=0
-    "nam_ridge_0.001": "#9ECAE1",  # light blue — weakest ridge
-    "nam_ridge_0.1": "#08519C",    # dark blue — strongest ridge
-    "posthoc": "#D1426F",          # coral-magenta — off-ramp highlight
-    "posthoc_xfit": "#F08F4A",     # warm orange — second post-hoc
+    "sgd": "#1F77B4",          # blue — end-to-end CovarNetwork (linear f_z)
+    "nam": "#7AD151",          # yellow-green — MLP-f_z NAM
+    "posthoc_xfit": "#F08F4A", # warm orange — cross-fit post-hoc
 }
 
 METRICS = ["bias2", "var", "mspe"]
