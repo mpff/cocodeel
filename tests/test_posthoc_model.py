@@ -7,24 +7,14 @@ import os
 import numpy
 from sklearn.linear_model import LinearRegression, Ridge
 
-from torch import nn
 from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
+from tests.conftest import DummyBackbone
 
 rtol, atol = 1e-2, 1e-2
-
-class DummyBackbone(nn.Module):
-    def __init__(self, in_features, out_features):
-        super().__init__()
-        self.linear = nn.Linear(in_features, out_features)
-        self.out_features = out_features
-        self.in_features = in_features
-
-    def forward(self, x):
-        return self.linear(x)
 
 
 class TestPostHocLinearCovarNetwork(unittest.TestCase):
@@ -45,17 +35,15 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.val_dataset = CovarDataset(self.X[100:200], self.Z[100:200], self.y[100:200])
         self.train_dataloader = DataLoader(self.train_dataset, batch_size=25)
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=25)
-        # Pre-train BaseNetwork (to simulate backbone + fx weights)
+        # Identity backbone simulates a pretrained feature map.
         self.base_model = BaseNetwork(
-            backbone=DummyBackbone, 
-            backbone_params={'in_features': self.X.shape[1], 'out_features': self.out_features}, 
+            backbone=DummyBackbone,
+            backbone_params={'in_features': self.X.shape[1],
+                             'out_features': self.out_features, 'identity': True},
             num_covariates=self.num_covariates,
             link=self.link
         )
-        # Set backbone weights to be identity mapping.
-        self.base_model.backbone.linear.weight.data = torch.eye(self.out_features, self.X.shape[1])
-        self.base_model.backbone.linear.bias.data.zero_()
-            
+
     @torch.no_grad()
     def test_initialization(self):
         model = PostHocCovarNetwork(
@@ -78,8 +66,8 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertFalse(model.is_centered)
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=1e-6))
         self.assertTrue(hasattr(model, 'lam'))
-        
-    @torch.no_grad()  
+
+    @torch.no_grad()
     def test_forward_shape(self):
         model = PostHocCovarNetwork(
             model=self.base_model,
@@ -197,12 +185,11 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
             # Recreate BaseNetwork EXACTLY as in setUp
             base_model_reloaded = BaseNetwork(
                 backbone=DummyBackbone,
-                backbone_params={'in_features': self.X.shape[1], 'out_features': self.out_features},
+                backbone_params={'in_features': self.X.shape[1],
+                                 'out_features': self.out_features, 'identity': True},
                 num_covariates=self.num_covariates,
                 link=self.link
             )
-            base_model_reloaded.backbone.linear.weight.data = torch.eye(self.out_features)
-            base_model_reloaded.backbone.linear.bias.data.zero_()
 
             # Create fresh posthoc model and load state_dict
             reloaded = PostHocCovarNetwork(
@@ -243,16 +230,14 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.train_dataloader = DataLoader(self.train_dataset, batch_size=50)
         self.val_dataset = CovarDataset(self.X[self.n//2:], self.Z[self.n//2:], self.y[self.n//2:])
         self.val_dataloader = DataLoader(self.val_dataset, batch_size=50)
-        # Pre-train BaseNetwork (to simulate backbone + fx weights)
+        # Identity backbone simulates a pretrained feature map.
         self.base_model = BaseNetwork(
-            backbone=DummyBackbone, 
-            backbone_params={'in_features': self.X.shape[1], 'out_features': self.out_features}, 
+            backbone=DummyBackbone,
+            backbone_params={'in_features': self.X.shape[1],
+                             'out_features': self.out_features, 'identity': True},
             num_covariates=self.num_covariates,
             link=self.link
         )
-        # Set backbone weights to simulate pre-training. Only X[0] gets a weight of 1, rest is zeroed out.
-        self.base_model.backbone.linear.weight.data = torch.eye(self.out_features, self.X.shape[1])
-        self.base_model.backbone.linear.bias.data.zero_()
             
     @torch.no_grad()
     def test_initialization(self):
@@ -386,13 +371,12 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
 
             # Recreate BaseNetwork EXACTLY as in setUp
             base_model_reloaded = BaseNetwork(
-            backbone=DummyBackbone, 
-            backbone_params={'in_features': self.X.shape[1], 'out_features': self.out_features}, 
-            num_covariates=self.num_covariates,
-            link=self.link
-        )
-            base_model_reloaded.backbone.linear.weight.data = torch.eye(self.out_features)
-            base_model_reloaded.backbone.linear.bias.data.zero_()
+                backbone=DummyBackbone,
+                backbone_params={'in_features': self.X.shape[1],
+                                 'out_features': self.out_features, 'identity': True},
+                num_covariates=self.num_covariates,
+                link=self.link
+            )
 
             # Create fresh posthoc model and load state_dict
             reloaded = PostHocCovarNetwork(
@@ -442,16 +426,14 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
         self.train_dataloader_corr = DataLoader(self.train_dataset_corr, batch_size=50)
         self.val_dataset_corr = CovarDataset(self.Xcorr[self.ntrain:], self.Z[self.ntrain:], self.ycorr[self.ntrain:])
         self.val_dataloader_corr = DataLoader(self.val_dataset_corr, batch_size=50)
-        # Pre-train BaseNetwork (to simulate backbone + fx weights)
+        # Identity backbone simulates a pretrained feature map.
         self.base_model = BaseNetwork(
-            backbone=DummyBackbone, 
-            backbone_params={'in_features': self.in_features, 'out_features': self.out_features}, 
+            backbone=DummyBackbone,
+            backbone_params={'in_features': self.in_features,
+                             'out_features': self.out_features, 'identity': True},
             num_covariates=self.num_covariates,
             link=self.link
         )
-        # Set backbone weights to be identity mapping.
-        self.base_model.backbone.linear.weight.data = torch.eye(self.out_features, self.in_features)
-        self.base_model.backbone.linear.bias.data.zero_()
 
     @torch.no_grad()
     def test_posthoc_identifies_effects(self):
@@ -525,11 +507,10 @@ class TestHighDimRegression(unittest.TestCase):
 
         self.base_model = BaseNetwork(
             backbone=DummyBackbone,
-            backbone_params={'in_features': self.d, 'out_features': self.d},
+            backbone_params={'in_features': self.d, 'out_features': self.d,
+                             'identity': True},
             num_covariates=1, link="identity"
         )
-        self.base_model.backbone.linear.weight.data = torch.eye(self.d)
-        self.base_model.backbone.linear.bias.data.zero_()
 
     def test_ridge_collapses_fx_when_lambda_dominates_spectrum(self):
         """Isotropic ridge shrinks β_fx to ~0 when λ >> σ_max²(resid_X).
@@ -567,10 +548,9 @@ class TestHighDimRegression(unittest.TestCase):
         val_loader = DataLoader(
             CovarDataset(H[ntrain:], Z[ntrain:], y[ntrain:]), batch_size=64)
         base = BaseNetwork(backbone=DummyBackbone,
-                           backbone_params={'in_features': d, 'out_features': d},
+                           backbone_params={'in_features': d, 'out_features': d,
+                                            'identity': True},
                            num_covariates=1, link="identity")
-        base.backbone.linear.weight.data = torch.eye(d)
-        base.backbone.linear.bias.data.zero_()
         model = PostHocCovarNetwork(base, num_covariates=1)
         model.fit(train_loader, val_loader)
         fz = model.fz.weight.data[0, 0].item()
@@ -630,10 +610,9 @@ class TestHighDimRegression(unittest.TestCase):
             val_loader = DataLoader(
                 CovarDataset(H[ntrain:], Z[ntrain:], y[ntrain:]), batch_size=64)
             base = BaseNetwork(backbone=DummyBackbone,
-                               backbone_params={'in_features': d, 'out_features': d},
+                               backbone_params={'in_features': d, 'out_features': d,
+                                                'identity': True},
                                num_covariates=1, link="identity")
-            base.backbone.linear.weight.data = torch.eye(d)
-            base.backbone.linear.bias.data.zero_()
             model = PostHocCovarNetwork(base, num_covariates=1)
             model.fit(train_loader, val_loader, lam=lam)
             fz_values.append(model.fz.weight.data[0, 0].item())
@@ -667,10 +646,9 @@ class TestHighDimRegression(unittest.TestCase):
             val_loader = DataLoader(
                 CovarDataset(H[ntrain:], Z[ntrain:], y[ntrain:]), batch_size=64)
             base = BaseNetwork(backbone=DummyBackbone,
-                               backbone_params={'in_features': d, 'out_features': d},
+                               backbone_params={'in_features': d, 'out_features': d,
+                                                'identity': True},
                                num_covariates=1, link="identity")
-            base.backbone.linear.weight.data = torch.eye(d)
-            base.backbone.linear.bias.data.zero_()
             model = PostHocCovarNetwork(base, num_covariates=1)
             model.fit(train_loader, val_loader, lam=lam)
             fz_values.append(model.fz.weight.data[0, 0].item())
@@ -731,10 +709,9 @@ class TestHighDimRegression(unittest.TestCase):
 
         # Base model: w_base loads on PC0 (simulates confound-exploiting training).
         base = BaseNetwork(backbone=DummyBackbone,
-                           backbone_params={'in_features': d, 'out_features': d},
+                           backbone_params={'in_features': d, 'out_features': d,
+                                            'identity': True},
                            num_covariates=1, link="identity")
-        base.backbone.linear.weight.data = torch.eye(d)
-        base.backbone.linear.bias.data.zero_()
         base.fx.weight.data.zero_()
         base.fx.weight.data[0, 0] = 1.0  # loads on PC0
 
@@ -843,10 +820,9 @@ class TestHighDimRegression(unittest.TestCase):
 
             # Posthoc: FWL with given λ.
             base = BaseNetwork(backbone=DummyBackbone,
-                               backbone_params={'in_features': d, 'out_features': d},
+                               backbone_params={'in_features': d, 'out_features': d,
+                                                'identity': True},
                                num_covariates=1, link="identity")
-            base.backbone.linear.weight.data = torch.eye(d)
-            base.backbone.linear.bias.data.zero_()
             base.fx.weight.data = w_noZ.T
 
             tl = DataLoader(CovarDataset(H[:ntrain], Z[:ntrain], y[:ntrain]),
@@ -940,12 +916,11 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         # Base model with an identity backbone (simulates a pretrained feature map).
         self.base = BaseNetwork(
             backbone=DummyBackbone,
-            backbone_params={"in_features": 3, "out_features": self.out_features},
+            backbone_params={"in_features": 3, "out_features": self.out_features,
+                             "identity": True},
             num_covariates=self.num_covariates,
             link="identity",
         )
-        self.base.backbone.linear.weight.data = torch.eye(self.out_features, 3)
-        self.base.backbone.linear.bias.data.zero_()
         self.base = self.base.center_effects(self.tr_A)  # center on the A-sample
 
     @torch.no_grad()
@@ -1080,12 +1055,11 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
 
         self.base_model = BaseNetwork(
             backbone=DummyBackbone,
-            backbone_params={"in_features": 3, "out_features": self.out_features},
+            backbone_params={"in_features": 3, "out_features": self.out_features,
+                             "identity": True},
             num_covariates=self.num_covariates,
             link="logit",
         )
-        self.base_model.backbone.linear.weight.data = torch.eye(self.out_features, 3)
-        self.base_model.backbone.linear.bias.data.zero_()
 
     def _make_loaders(self, y):
         train_ds = CovarDataset(self.X[:self.n_train], self.Z[:self.n_train], y[:self.n_train])

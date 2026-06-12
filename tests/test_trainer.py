@@ -10,16 +10,7 @@ from cocodeel.model import BaseNetwork, CovarNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
 from cocodeel.benchmarking.posthoc_model import SemiStructuredNetwork
 from cocodeel.trainer import covar_trainer
-
-
-class DummyBackbone(nn.Module):
-    def __init__(self, out_features):
-        super().__init__()
-        self.linear = nn.Linear(3, out_features)
-        self.out_features = out_features
-
-    def forward(self, x):
-        return self.linear(x)
+from tests.conftest import DummyBackbone
 
 
 class TestLinearTraining(unittest.TestCase):
@@ -33,7 +24,7 @@ class TestLinearTraining(unittest.TestCase):
         self.model_params = {
             'link': 'identity',
             'backbone': DummyBackbone,
-            'backbone_params': {'out_features': self.out_features},
+            'backbone_params': {'in_features': 3, 'out_features': self.out_features},
             'num_covariates': self.num_covariates
             }
         self.loss_fn = nn.MSELoss()
@@ -137,7 +128,7 @@ class TestLogisticTraining(unittest.TestCase):
         self.model_params = {
             'link': 'logit',
             'backbone': DummyBackbone,
-            'backbone_params': {'out_features': self.out_features},
+            'backbone_params': {'in_features': 3, 'out_features': self.out_features},
             'num_covariates': self.num_covariates
             }
         self.loss_fn = nn.BCELoss()
@@ -243,20 +234,8 @@ class TestSchedulerParam(unittest.TestCase):
         self.val_loader = DataLoader(ds, batch_size=20, shuffle=False)
         self.model_params = {
             "link": "identity",
-            "backbone": lambda out_features: nn.Sequential(nn.Linear(3, out_features)),
-            "backbone_params": {"out_features": 2},
-            "num_covariates": 2,
-        }
-
-    def _dummy_params(self):
-        backbone_cls = type("B", (nn.Module,), {
-            "__init__": lambda self, out_features: (nn.Module.__init__(self), setattr(self, "out_features", out_features), setattr(self, "linear", nn.Linear(3, out_features))).__class__,
-        })
-        # Use DummyBackbone defined at module level
-        return {
-            "link": "identity",
             "backbone": DummyBackbone,
-            "backbone_params": {"out_features": 2},
+            "backbone_params": {"in_features": 3, "out_features": 2},
             "num_covariates": 2,
         }
 
@@ -264,7 +243,7 @@ class TestSchedulerParam(unittest.TestCase):
         """Non-ReduceLROnPlateau scheduler is accepted and does not error."""
         model = covar_trainer(
             model=BaseNetwork,
-            model_params=self._dummy_params(),
+            model_params=self.model_params,
             train_loader=self.train_loader,
             val_loader=self.val_loader,
             device="cpu",
@@ -280,7 +259,7 @@ class TestSchedulerParam(unittest.TestCase):
         """Custom ReduceLROnPlateau kwargs override the default."""
         model = covar_trainer(
             model=BaseNetwork,
-            model_params=self._dummy_params(),
+            model_params=self.model_params,
             train_loader=self.train_loader,
             val_loader=self.val_loader,
             device="cpu",
@@ -296,7 +275,7 @@ class TestSchedulerParam(unittest.TestCase):
         """Omitting scheduler keeps the original ReduceLROnPlateau behaviour."""
         model = covar_trainer(
             model=BaseNetwork,
-            model_params=self._dummy_params(),
+            model_params=self.model_params,
             train_loader=self.train_loader,
             val_loader=self.val_loader,
             device="cpu",

@@ -1,21 +1,10 @@
 import unittest
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork, CovarNetwork
-
-
-class DummyBackbone(nn.Module):
-    def __init__(self, out_features):
-        super().__init__()
-        self.out_features = out_features
-        self.dummy = nn.Parameter(torch.zeros(1))
-
-    def forward(self, x):
-        # Flatten input to match num_features.
-        return x.view(x.size(0), -1)
+from tests.conftest import DummyBackbone
 
 
 class TestBaseNetwork(unittest.TestCase):
@@ -25,7 +14,9 @@ class TestBaseNetwork(unittest.TestCase):
         torch.manual_seed(0)
         self.out_features = 6
         self.backbone = DummyBackbone
-        self.backbone_params = {'out_features': self.out_features}
+        # Identity backbone: flattened (2, 3) inputs pass through unchanged.
+        self.backbone_params = {'in_features': 6, 'out_features': self.out_features,
+                                'identity': True}
         self.num_covariates = 0
         self.link = "identity"
         self.model = BaseNetwork(self.backbone, self.backbone_params, self.num_covariates, self.link)
@@ -103,7 +94,9 @@ class TestCovarNetwork(unittest.TestCase):
         torch.manual_seed(0)
         self.out_features = 6
         self.backbone = DummyBackbone
-        self.backbone_params = {'out_features': self.out_features}
+        # Identity backbone: flattened (2, 3) inputs pass through unchanged.
+        self.backbone_params = {'in_features': 6, 'out_features': self.out_features,
+                                'identity': True}
         self.num_covariates = 2
         self.link = "identity"
         self.model = CovarNetwork(self.backbone, self.backbone_params, self.num_covariates, self.link)
@@ -185,14 +178,14 @@ class TestGeneralizedLinkFunctions(unittest.TestCase):
     
     @torch.no_grad()   
     def test_identity_link(self):
-        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="identity")
+        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="identity")
         x = torch.randn(3, 2, 2)
         output = model.forward(x)
         self.assertTrue(torch.allclose(output, model.intercept + model.predict_fx(x)))
         
     @torch.no_grad()
     def test_logit_link(self):
-        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="logit")
+        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="logit")
         x = torch.randn(3, 2, 2)
         eta = model.intercept + model.predict_fx(x)
         output = model.forward(x)
@@ -201,7 +194,7 @@ class TestGeneralizedLinkFunctions(unittest.TestCase):
         
     @torch.no_grad()
     def test_log_link(self):
-        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="log")
+        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="log")
         x = torch.randn(3, 2, 2)
         eta = model.intercept + model.predict_fx(x)
         output = model.forward(x)
@@ -214,7 +207,7 @@ class TestLinkInternals(unittest.TestCase):
 
     @torch.no_grad()
     def test_identity(self):
-        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="identity")
+        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="identity")
         mu = torch.tensor([-1.0, 0.0, 0.5, 2.0])
         self.assertTrue(torch.allclose(model._link.forward(mu), mu, atol=1e-6))
         self.assertTrue(torch.allclose(model._link.derivative(mu), torch.ones_like(mu), atol=1e-6))
@@ -222,7 +215,7 @@ class TestLinkInternals(unittest.TestCase):
 
     @torch.no_grad()
     def test_logit(self):
-        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="logit")
+        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="logit")
         mu = torch.tensor([0.2, 0.4, 0.6, 0.8])
         expected_forward = torch.log(mu / (1 - mu))     # g(μ) = log(μ / (1-μ))
         expected_grad = mu * (1 - mu)                   # g'(μ) = μ(1-μ); V(μ) = μ(1-μ)
@@ -232,7 +225,7 @@ class TestLinkInternals(unittest.TestCase):
 
     @torch.no_grad()
     def test_log(self):
-        model = BaseNetwork(DummyBackbone, {'out_features': 4}, link="log")
+        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="log")
         mu = torch.tensor([0.5, 1.0, 2.0, 5.0])
         self.assertTrue(torch.allclose(model._link.forward(mu), torch.log(mu), atol=1e-5))     # g(μ) = log(μ)
         self.assertTrue(torch.allclose(model._link.derivative(mu), 1 / mu, atol=1e-5))         # g'(μ) = 1/μ

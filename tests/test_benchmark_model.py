@@ -9,16 +9,7 @@ from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork, CovarNetwork
 from cocodeel.trainer import covar_trainer
 from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
-
-
-class DummyBackbone(nn.Module):
-    def __init__(self, out_features):
-        super().__init__()
-        self.linear = nn.Linear(3, out_features)
-        self.out_features = out_features
-
-    def forward(self, x):
-        return self.linear(x)
+from tests.conftest import DummyBackbone
 
 
 class TestLinearBenchmarks(unittest.TestCase):
@@ -32,7 +23,7 @@ class TestLinearBenchmarks(unittest.TestCase):
         self.model_params = {
             'link': 'identity',
             'backbone': DummyBackbone,
-            'backbone_params': {'out_features': self.out_features},
+            'backbone_params': {'in_features': 3, 'out_features': self.out_features},
             'num_covariates': self.num_covariates
             }
         self.loss_fn = nn.MSELoss()
@@ -132,7 +123,7 @@ class TestLogisticBenchmarks(unittest.TestCase):
         self.model_params = {
             'link': 'logit',
             'backbone': DummyBackbone,
-            'backbone_params': {'out_features': self.out_features},
+            'backbone_params': {'in_features': 3, 'out_features': self.out_features},
             'num_covariates': self.num_covariates
             }
         self.loss_fn = nn.BCEWithLogitsLoss()
