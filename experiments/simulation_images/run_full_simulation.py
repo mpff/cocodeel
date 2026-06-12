@@ -1,8 +1,8 @@
 """Run the full paper simulation study under the split posthoc recipe.
 
-Reproduces the 6 notebook blocks in `1-simulation.ipynb` with the split
-recipe (disjoint halves for backbone vs posthoc refit) and the HP combo
-chosen by `hp_search.py`. Nsim = 50 per setting, 4 workers on cuda:1.
+Runs every simulation block with the split recipe (disjoint halves for
+backbone vs posthoc refit) and the HP combo chosen by `hp_search.py`.
+Nsim = 50 per setting, 4 workers on cuda:1.
 
 Outputs (per run directory):
     <run>/manifest.json         — config snapshot, git commit, start time
