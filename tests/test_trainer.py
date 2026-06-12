@@ -6,8 +6,9 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
-from cocodeel.model import BaseNetwork, CovarNetwork
+from cocodeel.model import BaseNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.benchmarking.model import CovarNetwork
 from cocodeel.benchmarking.posthoc_model import SemiStructuredNetwork
 from cocodeel.trainer import covar_trainer
 from tests.conftest import DummyBackbone

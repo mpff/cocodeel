@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 
-from cocodeel.model import BaseNetwork, CovarNetwork
+from cocodeel.benchmarking.model import CovarNetwork
+from cocodeel.model import BaseNetwork
 from cocodeel.transform import Center
 
 

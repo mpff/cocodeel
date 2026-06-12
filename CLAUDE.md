@@ -17,9 +17,9 @@ conda activate dl-mri
 ## Architecture Overview
 
 ### Package (`src/`)
-- `model.py` — `_BaseCovarNetwork` (base class with centering logic, GLM utilities), `BaseNetwork` (no covariates), `CovarNetwork` (end-to-end training with covariates)
+- `model.py` — `_BaseCovarNetwork` (base class with centering logic, GLM utilities), `BaseNetwork` (no covariates)
 - `posthoc_model.py` — `PostHocCovarNetwork`: the main contribution. Post-hoc IRLS backfitting with ridge penalty, X/Z internal standardization, glmnet-style λ path with adaptive expansion, coefficient-change convergence, and validation-based λ selection. Pure PyTorch.
-- `benchmarking/posthoc_model.py` — `PostHocOrthNetwork`, `SemiStructuredNetwork`: older comparison baselines used in simulation experiments.
+- `benchmarking/` — competitor methods, not part of the method itself: `model.py` (`CovarNetwork`: end-to-end NAM-style training with covariates), `posthoc_model.py` (`PostHocOrthNetwork`, `SemiStructuredNetwork`).
 - `transform.py` — `Center` (centering module stored as buffer), `LinearRegressOut` (regresses out Z from fX)
 - `dataset.py` — `CovarDataset`: returns batches as `{"X": ..., "Z": ..., "y": ...}`
 - `trainer.py` — `covar_trainer`: training loop with Adam, configurable LR scheduler, early stopping, optional bf16 autocast
@@ -41,8 +41,9 @@ conda activate dl-mri
 
 ### Standard Workflows
 
-**End-to-end:**
+**End-to-end (benchmark):**
 ```python
+from cocodeel.benchmarking.model import CovarNetwork
 model = covar_trainer(CovarNetwork, model_params, train_loader, val_loader, patience=12)
 model = model.center_effects(train_loader)
 ```

@@ -526,7 +526,7 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
     sgd_models = {}
     sgd_configs = block_cfg.get("sgd_configs", {})
     if sgd_configs:
-        from cocodeel.model import CovarNetwork
+        from cocodeel.benchmarking.model import CovarNetwork
         from experiments.simulation_images.concurvity_methods import (
             train_covar_with_concurvity_reg,
         )

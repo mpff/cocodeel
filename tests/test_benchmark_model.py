@@ -6,10 +6,98 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
-from cocodeel.model import BaseNetwork, CovarNetwork
+from cocodeel.model import BaseNetwork
 from cocodeel.trainer import covar_trainer
+from cocodeel.benchmarking.model import CovarNetwork
 from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
 from tests.conftest import DummyBackbone
+
+
+class TestCovarNetwork(unittest.TestCase):
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        self.out_features = 6
+        self.backbone = DummyBackbone
+        # Identity backbone: flattened (2, 3) inputs pass through unchanged.
+        self.backbone_params = {'in_features': 6, 'out_features': self.out_features,
+                                'identity': True}
+        self.num_covariates = 2
+        self.link = "identity"
+        self.model = CovarNetwork(self.backbone, self.backbone_params, self.num_covariates, self.link)
+
+    @torch.no_grad()
+    def test_initialization(self):
+        self.assertIsInstance(self.model.backbone, DummyBackbone)
+        self.assertEqual(self.model.backbone.out_features, self.out_features)
+        self.assertEqual(self.model.num_covariates, self.num_covariates)
+        self.assertEqual(self.model.link, self.link)
+        self.assertTrue(hasattr(self.model, 'intercept'))
+        self.assertTrue(torch.allclose(self.model.intercept, torch.zeros(1)))
+        self.assertTrue(hasattr(self.model, 'center_x'))
+        self.assertTrue(hasattr(self.model, 'center_z'))
+        self.assertTrue(hasattr(self.model, 'center_y'))
+        self.assertFalse(self.model.is_centered)
+
+    @torch.no_grad()
+    def test_forward_shape(self):
+        x = torch.randn(4, 2, 3)  # batch of 4 samples, reshaped to 6 features
+        z = torch.randn(4, self.num_covariates)  # batch of 4 samples, 2 covariates
+        y = self.model(x, z)
+        self.assertEqual(y.shape, (4, 1))
+
+    @torch.no_grad()
+    def test_center_features_updates_mean_and_intercept(self):
+        # Create fake data: features will average to 1.0 for each dim
+        X = torch.ones(10, 2, 3)  # 10 samples, flatten to shape (10, 6)
+        Z = torch.ones(10, self.num_covariates)  # 10 samples, 2 covariates
+        dataset = CovarDataset(X, Z, torch.ones(10))
+        loader = DataLoader(dataset, batch_size=5)
+        # Before centering.
+        predictions_before = self.model.forward(X, Z)
+        intercept_before = self.model.intercept.clone()
+        # Check initial centering state.
+        self.assertFalse(self.model.is_centered)
+        self.assertTrue(torch.allclose(self.model.center_x.mean, torch.zeros(self.out_features), atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.center_z.mean, torch.zeros(self.num_covariates), atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.center_y.mean, torch.tensor(0.0), atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.intercept, torch.tensor(0.0), atol=1e-6))
+        # Center the features.
+        self.model.center_effects(loader)
+        # Check updated centering state.
+        self.assertTrue(self.model.is_centered)
+        self.assertTrue(torch.allclose(self.model.center_x.mean, torch.ones(self.out_features), atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.center_z.mean, torch.ones(self.num_covariates), atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.center_y.mean, torch.tensor(1.0), atol=1e-6))
+        # Check that intercept is updated correctly.
+        expected_intercept = intercept_before + self.model.fx(self.model.center_x.mean) + self.model.fz(self.model.center_z.mean)
+        self.assertTrue(torch.allclose(self.model.intercept, expected_intercept, atol=1e-6))
+        # Check that fx is centered.
+        fx_after = self.model.predict_fx(X)
+        self.assertTrue(torch.allclose(fx_after.mean(), torch.tensor(0.0), atol=1e-6))
+        # Check that fz is centered.
+        fz_after = self.model.predict_fz(Z)
+        self.assertTrue(torch.allclose(fz_after.mean(), torch.tensor(0.0), atol=1e-6))
+        # Check that predictions are not affected by centering.
+        predictions_after = self.model.forward(X, Z)
+        self.assertTrue(torch.allclose(predictions_before, predictions_after, atol=1e-6))
+
+    @torch.no_grad()
+    def test_center_effects_is_idempotent(self):
+        # Calling center_effects twice must not shift the intercept twice.
+        X = torch.ones(10, 2, 3)
+        Z = torch.ones(10, self.num_covariates)
+        dataset = CovarDataset(X, Z, torch.ones(10))
+        loader = DataLoader(dataset, batch_size=5)
+
+        self.model.center_effects(loader)
+        intercept_after_first = self.model.intercept.clone()
+        pred_after_first = self.model.forward(X, Z).clone()
+
+        self.model.center_effects(loader)
+        self.assertTrue(torch.allclose(self.model.intercept, intercept_after_first, atol=1e-6))
+        self.assertTrue(torch.allclose(self.model.forward(X, Z), pred_after_first, atol=1e-6))
 
 
 class TestLinearBenchmarks(unittest.TestCase):

@@ -1,6 +1,6 @@
 """NAM with a true MLP shape function for the covariate effect f_z.
 
-`cocodeel.model.CovarNetwork` is a NAM in name only: f_x is a deep network
+`cocodeel.benchmarking.model.CovarNetwork` is a NAM in name only: f_x is a deep network
 (image backbone + linear last layer) but f_z is a single linear map of Z.
 For the concurvity-exploration sweep we want a "proper" NAM where f_z is
 also a small neural network, so both component shape functions are
@@ -21,7 +21,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from cocodeel.model import CovarNetwork
+from cocodeel.benchmarking.model import CovarNetwork
 
 
 class CovarNetworkMLPfz(CovarNetwork):

@@ -50,10 +50,11 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from cocodeel.model import BaseNetwork, CovarNetwork
+from cocodeel.model import BaseNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
+from cocodeel.benchmarking.model import CovarNetwork
 
 from experiments.simulation_images.backbone import TrafficBackbone
 from experiments.simulation_images.dataset import simulate_traffic_light_data
