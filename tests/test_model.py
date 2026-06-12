@@ -191,14 +191,6 @@ class TestGeneralizedLinkFunctions(unittest.TestCase):
         output = model.forward(x)
         expected = torch.sigmoid(eta)
         self.assertTrue(torch.allclose(output, expected, atol=1e-6))
-        
-    @torch.no_grad()
-    def test_log_link(self):
-        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="log")
-        x = torch.randn(3, 2, 2)
-        eta = model.intercept + model.predict_fx(x)
-        output = model.forward(x)
-        self.assertTrue(torch.allclose(output, torch.exp(eta), atol=1e-6))
 
 
 class TestLinkInternals(unittest.TestCase):
@@ -222,14 +214,6 @@ class TestLinkInternals(unittest.TestCase):
         self.assertTrue(torch.allclose(model._link.forward(mu), expected_forward, atol=1e-5))
         self.assertTrue(torch.allclose(model._link.derivative(mu), expected_grad, atol=1e-6))
         self.assertTrue(torch.allclose(model._link.variance(mu), expected_grad, atol=1e-6))
-
-    @torch.no_grad()
-    def test_log(self):
-        model = BaseNetwork(DummyBackbone, {'in_features': 4, 'out_features': 4, 'identity': True}, link="log")
-        mu = torch.tensor([0.5, 1.0, 2.0, 5.0])
-        self.assertTrue(torch.allclose(model._link.forward(mu), torch.log(mu), atol=1e-5))     # g(μ) = log(μ)
-        self.assertTrue(torch.allclose(model._link.derivative(mu), 1 / mu, atol=1e-5))         # g'(μ) = 1/μ
-        self.assertTrue(torch.allclose(model._link.variance(mu), mu, atol=1e-6))               # V(μ) = μ
 
 
 if __name__ == "__main__":

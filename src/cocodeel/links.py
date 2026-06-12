@@ -28,10 +28,4 @@ LINKS: dict[str, Link] = {
         derivative=lambda mu: mu * (1 - mu),
         variance=lambda mu: mu * (1 - mu),
     ),
-    "log": Link(
-        inverse=torch.exp,
-        forward=lambda mu: torch.log(mu + 1e-6),
-        derivative=lambda mu: 1 / (mu + 1e-6),
-        variance=lambda mu: mu,
-    ),
 }

@@ -38,7 +38,6 @@ conda activate dl-mri
 ### Supported Link Functions
 - `"identity"` — Gaussian/linear
 - `"logit"` — Bernoulli/binary classification
-- `"log"` — Poisson (not yet!)
 
 ### Standard Workflows
 
