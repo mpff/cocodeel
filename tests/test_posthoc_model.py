@@ -211,6 +211,79 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(model.intercept, reloaded.intercept, atol=1e-6))
 
    
+class TestClosedFormRidgeSolution(unittest.TestCase):
+    """Pin the identity-link ridge solve against its closed form.
+
+    `fit` standardizes X and Z internally, solves FWL + ridge on the
+    standardized scale, and de-standardizes the coefficients:
+
+        X~ = (X - mean X) / sd(X),   Z~ = (Z - mean Z) / sd(Z),   y~ = y - mean y
+        X⊥ = X~ - Z~ (Z~'Z~)⁻¹ Z~'X~,   y⊥ = y~ - Z~ (Z~'Z~)⁻¹ Z~'y~
+        β_fx = sd(X)⁻¹ ⊙ (X⊥'X⊥ + λI)⁻¹ X⊥'y⊥
+        β_fz = sd(Z)⁻¹ ⊙ (Z~'Z~)⁻¹ Z~'(y~ - X~ β_fx,std)
+        intercept = mean y
+
+    The sklearn comparisons elsewhere cannot pin the standardize /
+    de-standardize round-trip or the λ-scale convention (λ enters
+    unscaled on the standardized data); this test does. Tolerance 5e-4:
+    the solver's eps=1e-5 IRLS guards perturb coefficients by O(1e-5)
+    relative, anything beyond that is a real deviation.
+    """
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(7)
+        self.n_train, p, q = 120, 3, 2
+        n = 2 * self.n_train
+        self.X = torch.randn(n, p)
+        self.Z = torch.randn(n, q)
+        self.y = (2.0 * self.X[:, 0] - 1.0 * self.X[:, 2] + 3.0 * self.Z[:, 0]
+                  + 1.5 + 0.1 * torch.randn(n)).unsqueeze(1)
+        tr = CovarDataset(self.X[:self.n_train], self.Z[:self.n_train], self.y[:self.n_train])
+        va = CovarDataset(self.X[self.n_train:], self.Z[self.n_train:], self.y[self.n_train:])
+        self.train_loader = DataLoader(tr, batch_size=40)
+        self.val_loader = DataLoader(va, batch_size=40)
+        self.base = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={'in_features': p, 'out_features': p, 'identity': True},
+            num_covariates=q, link="identity",
+        )
+
+    @torch.no_grad()
+    def _closed_form(self, lam):
+        X, Z, y = self.X[:self.n_train], self.Z[:self.n_train], self.y[:self.n_train]
+        x_sd = X.std(dim=0, keepdim=True)
+        z_sd = Z.std(dim=0, keepdim=True)
+        Xs = (X - X.mean(dim=0)) / x_sd
+        Zs = (Z - Z.mean(dim=0)) / z_sd
+        yc = y - y.mean()
+
+        def regress_out_z(A):
+            return A - Zs @ torch.linalg.solve(Zs.T @ Zs, Zs.T @ A)
+
+        X_perp, y_perp = regress_out_z(Xs), regress_out_z(yc)
+        beta_fx = torch.linalg.solve(
+            X_perp.T @ X_perp + lam * torch.eye(Xs.shape[1]), X_perp.T @ y_perp)
+        beta_fz = torch.linalg.solve(Zs.T @ Zs, Zs.T @ (yc - Xs @ beta_fx))
+        return (beta_fx.squeeze() / x_sd.squeeze(),
+                beta_fz.squeeze() / z_sd.squeeze(),
+                y.mean())
+
+    @torch.no_grad()
+    def test_fit_matches_closed_form(self):
+        for lam in (0.0, 5.0, 50.0):
+            with self.subTest(lam=lam):
+                model = PostHocCovarNetwork(self.base, num_covariates=self.Z.shape[1])
+                model.fit(self.train_loader, self.val_loader, lam=lam)
+                beta_fx, beta_fz, intercept = self._closed_form(torch.tensor(lam))
+                torch.testing.assert_close(model.fx.weight.squeeze(), beta_fx,
+                                           rtol=5e-4, atol=5e-4)
+                torch.testing.assert_close(model.fz.weight.squeeze(), beta_fz,
+                                           rtol=5e-4, atol=5e-4)
+                torch.testing.assert_close(model.intercept.squeeze(), intercept,
+                                           rtol=5e-4, atol=5e-4)
+
+
 class TestPostHocLogisticCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()

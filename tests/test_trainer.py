@@ -286,5 +286,46 @@ class TestSchedulerParam(unittest.TestCase):
         self.assertIsNotNone(model)
 
 
+class TestDeterminism(unittest.TestCase):
+    """Same seed ⇒ bit-identical pipeline on CPU.
+
+    Covers every stochastic channel of the standard workflow: data draw,
+    weight init, train-loader shuffling (trainer), and the posthoc refit.
+    GPU runs are NOT claimed to be bit-exact (CUDA nondeterminism).
+    """
+
+    def _run_pipeline(self, seed):
+        torch.manual_seed(seed)
+        n = 240
+        X = torch.randn(n, 3)
+        Z = torch.randn(n, 2)
+        y = (2 * X[:, 0] + 3 * Z[:, 0] + 0.5 * torch.randn(n)).unsqueeze(1)
+        tr = DataLoader(CovarDataset(X[:120], Z[:120], y[:120]),
+                        batch_size=20, shuffle=True)
+        va = DataLoader(CovarDataset(X[120:], Z[120:], y[120:]),
+                        batch_size=20, shuffle=False)
+        model_params = {
+            "link": "identity",
+            "backbone": DummyBackbone,
+            "backbone_params": {"in_features": 3, "out_features": 3},
+            "num_covariates": 2,
+        }
+        base = covar_trainer(BaseNetwork, model_params, tr, va, device="cpu",
+                             loss_fn=nn.MSELoss(), epochs=3, lr=0.01)
+        posthoc = PostHocCovarNetwork(base, num_covariates=2)
+        posthoc.fit(tr, va, n_lambdas=3)
+        return posthoc.state_dict()
+
+    def test_same_seed_same_state_dict(self):
+        sd1 = self._run_pipeline(seed=123)
+        sd2 = self._run_pipeline(seed=123)
+        self.assertEqual(sd1.keys(), sd2.keys())
+        for key in sd1:
+            self.assertTrue(
+                torch.equal(sd1[key], sd2[key]),
+                f"state_dict['{key}'] differs across identically seeded runs",
+            )
+
+
 if __name__ == '__main__':
     unittest.main()
