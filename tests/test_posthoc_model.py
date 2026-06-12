@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
 from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.trainer import covar_trainer
 from tests.conftest import DummyBackbone
 
 rtol, atol = 1e-2, 1e-2
@@ -1081,6 +1082,70 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         torch.testing.assert_close(
             posthoc.center_z.mean, Z_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
         )
+
+
+class TestSampleSplitRecoversKnownEffects(unittest.TestCase):
+    """Split recipe (backbone trained on A, posthoc refit on disjoint B)
+    recovers known linear effects — continuous and binary outcome.
+
+    The refit runs unpenalized (lam=0): ridge shrinkage of fx would
+    attenuate fz under the logit link (non-collapsibility), which is a
+    penalization effect, not a property of the split estimator.
+
+    Calibrated over seeds 0-4: identity fz = 3.02 ± 0.02 (truth 3.0),
+    logit fz = 1.96 ± 0.13 (truth 2.0), corr(fx_hat, fx) >= 0.94.
+    """
+
+    N, D, SEEDS = 600, 3, (0, 1, 2)
+
+    def _split_fit(self, seed, link):
+        torch.manual_seed(seed)
+
+        def sample():
+            Z = torch.randn(self.N, 1)
+            X = torch.randn(self.N, self.D)
+            if link == "identity":
+                y = 2.0 * X[:, [0]] + 3.0 * Z + 0.5 * torch.randn(self.N, 1)
+            else:
+                y = torch.bernoulli(torch.sigmoid(1.0 * X[:, [0]] + 2.0 * Z + 0.5))
+            half = self.N // 2
+            tr = DataLoader(CovarDataset(X[:half], Z[:half], y[:half]),
+                            batch_size=32, shuffle=True)
+            va = DataLoader(CovarDataset(X[half:], Z[half:], y[half:]),
+                            batch_size=32, shuffle=False)
+            return X, Z, tr, va
+
+        _, _, tr_A, va_A = sample()
+        X_B, Z_B, tr_B, va_B = sample()
+        model_params = {
+            "link": link,
+            "backbone": DummyBackbone,
+            "backbone_params": {"in_features": self.D, "out_features": self.D},
+            "num_covariates": 0,
+        }
+        loss = torch.nn.MSELoss() if link == "identity" else torch.nn.BCELoss()
+        base = covar_trainer(BaseNetwork, model_params, tr_A, va_A, device="cpu",
+                             loss_fn=loss, epochs=60, lr=0.01, patience=20)
+        model = PostHocCovarNetwork(base, num_covariates=1).fit(tr_B, va_B, lam=0.0)
+
+        fx_hat = model.predict_fx(X_B, Z_B).squeeze()
+        corr = torch.corrcoef(torch.stack([fx_hat, X_B[:, 0]]))[0, 1].item()
+        return model.fz.weight.data[0, 0].item(), corr
+
+    def _assert_recovery(self, link, fz_true, fz_tol):
+        results = [self._split_fit(seed, link) for seed in self.SEEDS]
+        fz_mean = numpy.mean([fz for fz, _ in results])
+        self.assertLess(abs(fz_mean - fz_true), fz_tol,
+            msg=f"{link}: mean fz={fz_mean:.3f}, expected {fz_true} ± {fz_tol}")
+        for seed, (_, corr) in zip(self.SEEDS, results):
+            self.assertGreater(corr, 0.9,
+                msg=f"{link}, seed={seed}: corr(fx_hat, fx)={corr:.3f}")
+
+    def test_identity(self):
+        self._assert_recovery("identity", fz_true=3.0, fz_tol=0.1)
+
+    def test_binary(self):
+        self._assert_recovery("logit", fz_true=2.0, fz_tol=0.2)
 
 
 class TestIRLSConvergenceCriterion(unittest.TestCase):

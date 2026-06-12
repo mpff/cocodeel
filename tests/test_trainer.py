@@ -14,11 +14,11 @@ from tests.conftest import DummyBackbone
 
 
 class TestLinearTraining(unittest.TestCase):
- 
+
     @torch.no_grad()
     def setUp(self):
         torch.manual_seed(42)
-        self.n = 300
+        self.n = 300  # per sample
         self.out_features = 3
         self.num_covariates = 2
         self.model_params = {
@@ -28,30 +28,24 @@ class TestLinearTraining(unittest.TestCase):
             'num_covariates': self.num_covariates
             }
         self.loss_fn = nn.MSELoss()
-        # Data
-        self.X = torch.randn(self.n, 3)
-        self.Z = torch.randn(self.n, self.num_covariates)
-        self.y = 2 * self.X[:, 0] + 3 * self.Z[:, 0] + 1.5  # Known linear relation
-        self.y = self.y.unsqueeze(1)  # (n, 1)
-        # Split into train and val
-        self.train_loader = DataLoader(
-            CovarDataset(self.X[:140], self.Z[:140], self.y[:140]),
-            batch_size=20,
-            shuffle=True
-        )
-        self.val_loader = DataLoader(
-            CovarDataset(self.X[140:200], self.Z[140:200], self.y[140:200]),
-            batch_size=20,
-            shuffle=False
-        )
-        self.test_loader = DataLoader(
-            CovarDataset(self.X[200:], self.Z[200:], self.y[200:]),
-            batch_size=20,
-            shuffle=False
-        )
+
+        # Two disjoint samples: A trains the backbone, B hosts the posthoc
+        # refit (the recommended sample-split recipe).
+        def sample():
+            X = torch.randn(self.n, 3)
+            Z = torch.randn(self.n, self.num_covariates)
+            y = (2 * X[:, 0] + 3 * Z[:, 0] + 1.5).unsqueeze(1)
+            tr = DataLoader(CovarDataset(X[:150], Z[:150], y[:150]),
+                            batch_size=20, shuffle=True)
+            va = DataLoader(CovarDataset(X[150:], Z[150:], y[150:]),
+                            batch_size=20, shuffle=False)
+            return X, Z, y, tr, va
+
+        self.X, self.Z, self.y, self.train_loader, self.val_loader = sample()
+        self.X_B, self.Z_B, self.y_B, self.tr_B, self.va_B = sample()
 
     def test_train_linear_base_model(self):
-        # Fit Base model.
+        # Fit Base model on sample A.
         model = covar_trainer(
             model=BaseNetwork,
             model_params=self.model_params,
@@ -73,16 +67,18 @@ class TestLinearTraining(unittest.TestCase):
         self.assertTrue(torch.allclose(preds, preds_centered))
         self.assertEqual(model.is_centered, torch.tensor(True))
         self.assertAlmostEqual(model.intercept.item(), intercept + model.fx(model.center_x.mean))
-        # Fit posthoc model and check centering equal to mean of y.
+        # Posthoc refit on the disjoint sample B: intercept centres on B and
+        # the linear effects are recovered (noiseless DGP).
         posthoc_model = PostHocCovarNetwork(
-            model=model,    
+            model=model,
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.train_loader, self.val_loader)
-        self.assertAlmostEqual(posthoc_model.intercept.item(), self.y[:140].mean().item(), places=4)
+        posthoc_model.fit(self.tr_B, self.va_B)
+        self.assertAlmostEqual(posthoc_model.intercept.item(), self.y_B[:150].mean().item(), places=4)
+        self.assertAlmostEqual(posthoc_model.fz.weight.data[0, 0].item(), 3.0, places=2)
 
     def test_train_linear_model(self):
-        # Fit Post-hoc Covariate model.
+        # Fit end-to-end covariate model (single sample: no posthoc refit here).
         model = covar_trainer(
             model=CovarNetwork,
             model_params=self.model_params,
@@ -118,11 +114,11 @@ class TestLinearTraining(unittest.TestCase):
 
 
 class TestLogisticTraining(unittest.TestCase):
- 
+
     @torch.no_grad()
     def setUp(self):
         torch.manual_seed(42)
-        self.n = 1000
+        self.n = 1000  # per sample
         self.out_features = 3
         self.num_covariates = 2
         self.model_params = {
@@ -132,31 +128,25 @@ class TestLogisticTraining(unittest.TestCase):
             'num_covariates': self.num_covariates
             }
         self.loss_fn = nn.BCELoss()
-        # Data
-        self.X = torch.randn(self.n, 3)
-        self.Z = torch.randn(self.n, self.num_covariates)
-        self.eta = 2 * self.X[:, 0] + 3 * self.Z[:, 0] + 1.5  # Known linear relation
-        self.p = torch.sigmoid(self.eta.unsqueeze(1))  # (n, 1)
-        self.y = torch.bernoulli(self.p) # (n, 1)
-        # Split into train and val
-        self.train_loader = DataLoader(
-            CovarDataset(self.X[:600], self.Z[:600], self.y[:600]),
-            batch_size=20,
-            shuffle=True
-        )
-        self.val_loader = DataLoader(
-            CovarDataset(self.X[600:800], self.Z[600:800], self.y[600:800]),
-            batch_size=20,
-            shuffle=False
-        )
-        self.test_loader = DataLoader(
-            CovarDataset(self.X[800:], self.Z[800:], self.y[800:]),
-            batch_size=20,
-            shuffle=False
-        )
+
+        # Two disjoint samples: A trains the backbone, B hosts the posthoc
+        # refit (the recommended sample-split recipe).
+        def sample():
+            X = torch.randn(self.n, 3)
+            Z = torch.randn(self.n, self.num_covariates)
+            eta = 2 * X[:, 0] + 3 * Z[:, 0] + 1.5
+            y = torch.bernoulli(torch.sigmoid(eta.unsqueeze(1)))
+            tr = DataLoader(CovarDataset(X[:600], Z[:600], y[:600]),
+                            batch_size=20, shuffle=True)
+            va = DataLoader(CovarDataset(X[600:], Z[600:], y[600:]),
+                            batch_size=20, shuffle=False)
+            return X, Z, y, tr, va
+
+        self.X, self.Z, self.y, self.train_loader, self.val_loader = sample()
+        self.X_B, self.Z_B, self.y_B, self.tr_B, self.va_B = sample()
 
     def test_train_logistic_base_model(self):
-        # Fit Base model.
+        # Fit Base model on sample A.
         model = covar_trainer(
             model=BaseNetwork,
             model_params=self.model_params,
@@ -178,14 +168,17 @@ class TestLogisticTraining(unittest.TestCase):
         self.assertTrue(torch.allclose(preds, preds_centered))
         self.assertEqual(model.is_centered, torch.tensor(True))
         self.assertAlmostEqual(model.intercept.item(), intercept + model.fx(model.center_x.mean))
-        # Fit posthoc model and check centering equal to mean of y.
+        # Posthoc refit on the disjoint sample B: IRLS runs and recovers the
+        # Z effect within finite-sample noise (600 refit obs).
         posthoc_model = PostHocCovarNetwork(
-            model=model,    
+            model=model,
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.train_loader, self.val_loader)
-        preds_posthoc = model(self.X, self.Z)
-        self.assertEqual(preds_posthoc.shape, self.y.shape)
+        posthoc_model.fit(self.tr_B, self.va_B)
+        preds_posthoc = posthoc_model(self.X_B, self.Z_B)
+        self.assertEqual(preds_posthoc.shape, self.y_B.shape)
+        torch.testing.assert_close(posthoc_model.fz.weight.data[0, 0],
+                                   torch.tensor(3.0), rtol=0.2, atol=0.2)
 
     def test_train_logistic_covar_model(self):
         # Fit Post-hoc Covariate model.
