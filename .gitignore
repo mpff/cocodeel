@@ -18,6 +18,9 @@ Rplots.pdf
 results/simulation_images/runs/
 results/simulation_images/hp_search/
 
+# Concurvity exploration outputs (regenerate via run_concurvity_exploration.py)
+results/exploration/
+
 # UKBB / ADNI experiment runs — large checkpoints + per-run artefacts
 experiments/ukbb/runs/
 experiments/adni/runs/
