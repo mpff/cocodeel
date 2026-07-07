@@ -31,12 +31,12 @@ class _BaseCovarNetwork(nn.Module):
     def forward(self, x, z=None):
         raise NotImplementedError("Subclasses must implement `forward`.")
 
-    def predict_fx(self, x):
+    def predict_fx(self, x, z=None):
         raise NotImplementedError("Subclasses must implement `predict_fx`.")
 
     def predict_fz(self, z):
         raise NotImplementedError("Subclasses must implement `predict_fz`.")
-    
+
     def output_func(self, eta):
         """Apply g⁻¹: linear predictor η → predicted mean μ."""
         return self._link.inverse(eta)
