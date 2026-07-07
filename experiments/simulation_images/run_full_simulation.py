@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import gc
-import inspect
 import json
 import os
 import subprocess
@@ -319,15 +318,13 @@ def _gather_predictions(model, loader, device):
         for b in loader:
             x = b["X"].to(device)
             z = b["Z"].to(device)
-            y_hat = model(x, z) if "num_covariates" in model.__dict__ and model.num_covariates > 0 else model(x)
+            y_hat = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
             ys.append(y_hat.cpu())
             # predict_fx returns the model's configured image effect:
             # raw fx for orthogonalize=False, orthogonalized fx (= fr) for True.
             # Store the same tensor under both "fx" and "fr" — figures filter by
             # model name to pick the semantically correct row.
-            fx_pred = (model.predict_fx(x, z).cpu() if _accepts_two(model.predict_fx)
-                       else model.predict_fx(x).cpu())
-            fxs.append(fx_pred)
+            fxs.append(model.predict_fx(x, z).cpu())
             fzs.append(model.predict_fz(z).cpu())
     fx_arr = torch.cat(fxs, dim=0).view(-1).numpy().astype(np.float32)
     return {
@@ -336,13 +333,6 @@ def _gather_predictions(model, loader, device):
         "fr": fx_arr,
         "fz": torch.cat(fzs, dim=0).view(-1).numpy().astype(np.float32),
     }
-
-
-def _accepts_two(fn) -> bool:
-    try:
-        return len(inspect.signature(fn).parameters) >= 2
-    except (TypeError, ValueError):
-        return False
 
 
 class CrossFitAverageModel:
@@ -356,8 +346,7 @@ class CrossFitAverageModel:
     def __init__(self, m1, m2):
         self.m1 = m1
         self.m2 = m2
-        # _gather_predictions inspects __dict__ for num_covariates;
-        # surface it on the wrapper so the dispatch is uniform.
+        # Surface num_covariates so the wrapper dispatches like its sub-models.
         self.num_covariates = getattr(m1, "num_covariates", 0)
 
     def eval(self):
@@ -384,15 +373,9 @@ class CrossFitAverageModel:
 
 def _fit_posthoc(model_cls, backbone, fit_tr, fit_va, init_kwargs,
                  fit_kwargs, num_covariates, device):
-    """Construct and fit one post-hoc model. Dispatches on `fit()` arity:
-    PostHocOrthNetwork.fit takes 1 arg (train); PostHocCovarNetwork.fit
-    takes 2 args (train, val)."""
+    """Construct and fit one post-hoc model on the refit sample."""
     m = model_cls(backbone, num_covariates=num_covariates,
                   **init_kwargs).to(device)
-    if not hasattr(m, "fit"):
-        return m
-    if len(inspect.signature(m.fit).parameters) == 1:
-        return m.fit(fit_tr, **fit_kwargs)
     return m.fit(fit_tr, fit_va, **fit_kwargs)
 
 

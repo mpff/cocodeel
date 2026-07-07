@@ -26,7 +26,7 @@ class CovarNetwork(_BaseCovarNetwork):
         eta = self.intercept + self.predict_fx(x) + self.predict_fz(z)
         return self.output_func(eta)
 
-    def predict_fx(self, x):
+    def predict_fx(self, x, z=None):
         x = self.backbone(x)
         x = self.center_x(x)
         return self.fx(x)

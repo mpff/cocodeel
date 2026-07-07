@@ -60,7 +60,7 @@ from experiments.simulation_images.backbone import TrafficBackbone
 from experiments.simulation_images.dataset import simulate_traffic_light_data
 from experiments.simulation_images.utils import simulate_dataloaders_split
 from experiments.simulation_images.run_full_simulation import (
-    _fit_posthoc, CrossFitAverageModel, _accepts_two,
+    _fit_posthoc, CrossFitAverageModel,
 )
 
 from experiments.exploration.covar_mlp_fz import CovarNetworkMLPfz
@@ -117,10 +117,8 @@ def _gather(model, loader, device):
             x = b["X"].to(device)
             z = b["Z"].to(device)
             y_hat = model(x, z) if getattr(model, "num_covariates", 0) > 0 else model(x)
-            fx_pred = (model.predict_fx(x, z).cpu() if _accepts_two(model.predict_fx)
-                       else model.predict_fx(x).cpu())
             ys.append(y_hat.cpu())
-            fxs.append(fx_pred)
+            fxs.append(model.predict_fx(x, z).cpu())
             fzs.append(model.predict_fz(z).cpu())
     return {
         "y":  torch.cat(ys,  dim=0).view(-1).numpy().astype(np.float32),

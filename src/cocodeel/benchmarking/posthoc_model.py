@@ -7,15 +7,12 @@ from cocodeel.transform import Center
 
 
 class PostHocOrthNetwork(BaseNetwork):
+    """Post-hoc orthogonalization baseline (Weber recipe): centres effects
+    and removes the linear Z-component from fX via lstsq. No covariate
+    refit — fz is identically zero. Fit on the full sample.
+    """
+
     def __init__(self, model, num_covariates):
-        """ Neural Network with CENTRED effects and post-hoc ORTHOGONALIZATION.
-        Parameters:
-            model (BaseNetwork): Prefitted model with a backbone and fx layer.
-            num_covariates (int): The number of covariates used in the last layer.
-        Methods:
-            forward: Defines the forward computation at every call.
-            _fit: Fits the model to the training data.
-        """
         super().__init__(
             backbone=model.backbone.__class__,
             backbone_params=model.backbone_params,
@@ -44,7 +41,10 @@ class PostHocOrthNetwork(BaseNetwork):
         # return vector of (batch, 1) of zeros
         return torch.zeros(z.shape[0], 1, device=z.device)
 
-    def fit(self, train_dataloader):
+    def fit(self, train_dataloader, val_dataloader=None):
+        """Fit on the training data. `val_dataloader` is accepted for
+        interface uniformity with `PostHocCovarNetwork.fit` and ignored —
+        orthogonalization has no hyperparameter to validate."""
         self.center_effects(train_dataloader)
         self._fit_orthogonalization(train_dataloader)
         return self
@@ -55,7 +55,7 @@ class PostHocOrthNetwork(BaseNetwork):
 
         if self.is_centered:
             return self
-        
+
         X, Z, y = self._extract_features_from_loader(dataloader)
 
         self.center_x.fit(X)
@@ -85,14 +85,13 @@ class PostHocOrthNetwork(BaseNetwork):
 
 
 class SemiStructuredNetwork(CovarNetwork):
+    """Semi-structured network baseline (Rügamer et al.): wraps a fitted
+    CovarNetwork and adds a post-hoc orthogonalization term via
+    lstsq(Z, fX). Total η is unchanged — the term moves the linear
+    Z-component of fX into fz.
+    """
+
     def __init__(self, model):
-        """ SSN with CENTRED effects and post-hoc ORTHOGONALIZATION.
-        Parameters:
-            model (CovarNetwork): Prefitted model with a backbone and fx layer.
-        Methods:
-            forward: Defines the forward computation at every call.
-            _fit: Fits the model to the training data.
-        """
         super().__init__(
             backbone=model.backbone.__class__,
             backbone_params=model.backbone_params,
@@ -119,7 +118,10 @@ class SemiStructuredNetwork(CovarNetwork):
         fz = self.fz(z) + self.orth(z)
         return fz
 
-    def fit(self, train_dataloader):
+    def fit(self, train_dataloader, val_dataloader=None):
+        """Fit on the training data. `val_dataloader` is accepted for
+        interface uniformity with `PostHocCovarNetwork.fit` and ignored —
+        orthogonalization has no hyperparameter to validate."""
         self.center_effects(train_dataloader)
         self._fit_orthogonalization(train_dataloader)
         return self
@@ -130,7 +132,7 @@ class SemiStructuredNetwork(CovarNetwork):
 
         if self.is_centered:
             return self
-    
+
         X, Z, y = self._extract_features_from_loader(dataloader)
 
         self.center_x.fit(X)

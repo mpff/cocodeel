@@ -157,8 +157,9 @@ class TestLinearBenchmarks(unittest.TestCase):
         intercept = model.intercept.item()
         self.assertEqual(model.is_centered, False)
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=1e-6))
-        # Fit Web PHO.
-        model.fit(self.train_loader)
+        # Fit Web PHO. A val loader is accepted (and ignored) for interface
+        # uniformity with PostHocCovarNetwork.fit.
+        model.fit(self.train_loader, self.val_loader)
         self.assertEqual(model.is_centered, True)
         preds = model(self.X, self.Z)
         self.assertEqual(preds.shape, self.y.shape)
