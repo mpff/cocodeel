@@ -5,6 +5,9 @@
 **/results/*/archive/**
 cocodeel.Rproj
 
+# Generated NeurIPS submission artefact — not a source file
+32314_Controlling_for_Omitted__Supplementary Material.zip
+
 # Local research library (PDFs, cloned reference repos — kept locally, not versioned)
 research/papers/
 
