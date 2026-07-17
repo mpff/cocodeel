@@ -1,8 +1,8 @@
 # Project: Code for the Paper "Controlling for Omitted Variable Bias in Deep Neural Networks"
 
 ## Scientific Goal
-PyTorch implementation of post-hoc crossfitting with ridge penalization for additive DNNs with control variables. 
-Provides `PostHocCovarNetwork`: takes a pretrained backbone, refits the last layer to include covariate effects, with optional post-hoc orthogonalization.
+PyTorch implementation of post-hoc crossfitting with ridge penalization for additive DNNs with control variables and the simulation study, benchmark and application from the paper.
+
 
 ## Commands
 
@@ -19,7 +19,7 @@ conda activate dl-mri
 ### Package (`src/`)
 - `model.py` — `_BaseCovarNetwork` (base class with centering logic, GLM utilities), `BaseNetwork` (no covariates)
 - `posthoc_model.py` — `PostHocCovarNetwork`: the main contribution. Post-hoc IRLS backfitting with ridge penalty, X/Z internal standardization, glmnet-style λ path with adaptive expansion, coefficient-change convergence, and validation-based λ selection. Pure PyTorch.
-- `benchmarking/` — competitor methods, not part of the method itself: `model.py` (`CovarNetwork`: end-to-end NAM-style training with covariates), `posthoc_model.py` (`PostHocOrthNetwork`, `SemiStructuredNetwork`).
+- `benchmarking/` — competitor methods, not part of the method itself: `model.py` (`CovarNetwork`: end-to-end NAM-style training with covariates), `posthoc_model.py` (`PostHocOrthNetwork`, `SemiStructuredNetwork`), `adversarial_trainer.py` (`adversarial_trainer`: br-net/CF-Net style adversarial correlation penalty, Zhao et al. 2020, trained on top of `BaseNetwork`).
 - `transform.py` — `Center` (centering module stored as buffer), `LinearRegressOut` (regresses out Z from fX)
 - `dataset.py` — `CovarDataset`: returns batches as `{"X": ..., "Z": ..., "y": ...}`
 - `trainer.py` — `covar_trainer`: training loop with Adam, configurable LR scheduler, early stopping, optional bf16 autocast
@@ -46,6 +46,13 @@ conda activate dl-mri
 from cocodeel.benchmarking.model import CovarNetwork
 model = covar_trainer(CovarNetwork, model_params, train_loader, val_loader, patience=12)
 model = model.center_effects(train_loader)
+```
+
+**Adversarial (benchmark):**
+```python
+from cocodeel.benchmarking.adversarial_trainer import adversarial_trainer
+model = adversarial_trainer(BaseNetwork, model_params, num_covariates=1, train_loader=train_loader, val_loader=val_loader)
+model = model.center_effects(train_loader)  # same two-step contract as covar_trainer — required for comparability across benchmarks
 ```
 
 **Post-hoc (sample-split, recommended):**
