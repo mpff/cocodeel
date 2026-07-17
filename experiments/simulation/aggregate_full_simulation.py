@@ -1,7 +1,7 @@
 """Aggregate NPZ predictions from `run_full_simulation.py` into R-ready CSVs.
 
 For each block, reads every `<run>/<block>/preds/<sweep_key>/seed=*.npz`
-and emits `results/simulation_images/<block>.csv` with long-form columns:
+and emits `experiments/simulation/output/<block>.csv` with long-form columns:
 
     model, effect, metric, value, n, <sweep_var>
 
@@ -21,8 +21,8 @@ Per-point decomposition (test point i, method m, effect e):
 Then report `mean_i(...)` — standard bias/variance decomposition.
 
 Usage:
-    python experiments/simulation_images/aggregate_full_simulation.py \\
-        --run-dir results/simulation_images/runs/<stamp>_full_nsim50
+    python experiments/simulation/aggregate_full_simulation.py \\
+        --run-dir experiments/simulation/output/runs/<stamp>_full_nsim50
 """
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True, type=str)
     ap.add_argument("--out-dir", type=str,
-                    default="results/simulation_images")
+                    default="experiments/simulation/output")
     args = ap.parse_args()
 
     run_dir = Path(args.run_dir).resolve()

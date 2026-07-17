@@ -16,7 +16,7 @@ model, effect, n, sweep_value, mspe, bias2, var) is done in a separate
 
 Usage:
     /home/RDC/pfeuffma/.conda/envs/dl-mri/bin/python -u \
-        experiments/simulation_images/run_full_simulation.py
+        experiments/simulation/run_full_simulation.py
 """
 from __future__ import annotations
 
@@ -46,13 +46,13 @@ from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructur
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 
-from experiments.simulation_images.backbone import TrafficBackbone
-from experiments.simulation_images.dataset import (
+from experiments.simulation.backbone import TrafficBackbone
+from experiments.simulation.dataset import (
     simulate_traffic_light_data,
     simulate_data_nonlinear_fz,
     BSplineBasisTransform,
 )
-from experiments.simulation_images.utils import simulate_dataloaders_split
+from experiments.simulation.utils import simulate_dataloaders_split
 
 # Spline basis used by the `nonlinear_fz` block: cubic B-spline with 5
 # inner knots on [0, 1] → 9 basis functions. Built once at import time
@@ -72,9 +72,9 @@ Q_DEFAULT = 32
 TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000
-HP_PATH           = Path(__file__).resolve().parent / "chosen_hps.json"
-HP_PER_Q_PATH     = Path(__file__).resolve().parent / "chosen_hps_q.json"
-HP_PER_Q_NAM_PATH = Path(__file__).resolve().parent / "chosen_hps_q_nam.json"
+HP_PATH           = Path(__file__).resolve().parent / "hpsearch" / "chosen_hps.json"
+HP_PER_Q_PATH     = Path(__file__).resolve().parent / "hpsearch" / "chosen_hps_q.json"
+HP_PER_Q_NAM_PATH = Path(__file__).resolve().parent / "hpsearch" / "chosen_hps_q_nam.json"
 
 N_GRID            = [400, 800, 1600, 3200, 6400, 12800, 25600]
 N_GRID_CONCURVITY = N_GRID + [51200, 102400]  # two extra log-steps for Fig 2
@@ -247,7 +247,7 @@ def _git_commit() -> str:
 
 def setup_run_dir(suffix: str = "full") -> Path:
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out = ROOT / f"results/simulation_images/runs/{ts}_{suffix}_nsim{NSIM}"
+    out = ROOT / f"experiments/simulation/output/runs/{ts}_{suffix}_nsim{NSIM}"
     out.mkdir(parents=True, exist_ok=True)
     return out
 
@@ -510,7 +510,7 @@ def _run_one_sim(block_name: str, setting: dict, seed: int, run_dir: Path, hp: d
     sgd_configs = block_cfg.get("sgd_configs", {})
     if sgd_configs:
         from cocodeel.benchmarking.model import CovarNetwork
-        from experiments.simulation_images.concurvity_methods import (
+        from experiments.simulation.concurvity_methods import (
             train_covar_with_concurvity_reg,
         )
         for name, cfg in sgd_configs.items():

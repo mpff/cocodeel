@@ -53,6 +53,6 @@ p <- ggplot(df, aes(x = z, y = fz, group = bz, color = bz)) +
         legend.title = element_text(size = 6, hjust = 0.5,
                                     margin = margin(b = 1)))
 
-ggsave("graphics/Fig_nonlinear_fz_curve.pdf", p,
+ggsave("experiments/simulation/output/graphics/Fig_nonlinear_fz_curve.pdf", p,
        width = 3.0, height = 2.0, units = "in",
        dpi = 600, device = cairo_pdf)

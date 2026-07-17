@@ -12,7 +12,7 @@ library(patchwork)
 # colourbar over the params (in thousands), placed inside the top-left
 # panel.
 
-df <- read_csv("results/simulation_images/concurvity_q.csv") %>%
+df <- read_csv("experiments/simulation/output/concurvity_q.csv") %>%
   filter(model %in% c("covar", "posthoc_xfit"),
          q >= 8) %>%   # drop the two smallest backbones (q=2,4 too small to fit fx)
   mutate(
@@ -115,6 +115,6 @@ nam_var   <- nam_var   + theme(legend.position = "none")
 fig <- (ctrl_mspe | ctrl_bias | ctrl_var) /
        (nam_mspe  | nam_bias  | nam_var)
 
-ggsave("graphics/Fig_concurvity_q.pdf", fig,
+ggsave("experiments/simulation/output/graphics/Fig_concurvity_q.pdf", fig,
        width = 6.0, height = 3.4, units = "in",
        dpi = 600, device = cairo_pdf)

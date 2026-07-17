@@ -15,7 +15,7 @@ effect_names <- c(
   'fz' = 'Covariate Effect'
 )
 
-df_bz <- read_csv("results/simulation_images/concurvity.csv") %>%
+df_bz <- read_csv("experiments/simulation/output/concurvity.csv") %>%
   mutate(model = factor(
     model,
     levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10",
@@ -145,5 +145,5 @@ b <- (b1 + b2) +
   plot_layout(guides = "collect") &
   theme(legend.position = "right")
 
-ggsave("graphics/Fig2_Concurvity.pdf", b, width = 5.0, height = 1.5, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.0, height = 1.5, units = "in", dpi=600, device = cairo_pdf)
 

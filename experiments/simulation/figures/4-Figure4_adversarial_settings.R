@@ -16,7 +16,7 @@ effect_names <- c(
   'fz' = 'Covariate Effect'
 )
 
-df_q <- read_csv("results/simulation_images/increasing_q.csv") %>%
+df_q <- read_csv("experiments/simulation/output/increasing_q.csv") %>%
   mutate(model = factor(
     model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
@@ -29,7 +29,7 @@ df_q <- read_csv("results/simulation_images/increasing_q.csv") %>%
   filter(n < 50000, q > 2) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
-df_cv1 <- read_csv("results/simulation_images/increasing_cv.csv") %>%
+df_cv1 <- read_csv("experiments/simulation/output/increasing_cv.csv") %>%
   mutate(model = factor(
     model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
@@ -42,7 +42,7 @@ df_cv1 <- read_csv("results/simulation_images/increasing_cv.csv") %>%
   filter(n < 50000) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
-df_p <- read_csv("results/simulation_images/increasing_p.csv") %>%
+df_p <- read_csv("experiments/simulation/output/increasing_p.csv") %>%
   mutate(model = factor(
     model,
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
@@ -286,5 +286,5 @@ b <- (qDE + pDE + cDE) / (qRE + pRE + cRE)
 plot(b)
 
 
-ggsave("graphics/Fig4_simulation.pdf", b, width = 7.16, height = 3.0, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig4_simulation.pdf", b, width = 7.16, height = 3.0, units = "in", dpi=600, device = cairo_pdf)
 

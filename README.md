@@ -124,7 +124,7 @@ useful for checking the λ selection.
 
 ## Reproducing the paper's experiments
 
-- `experiments/simulation_images/` — the simulation study (paper Section
+- `experiments/simulation/` — the simulation study (paper Section
   5): a synthetic image DGP, the full sweep runner, and the R scripts that
   produce every simulation figure. See its `README.md`.
 - `experiments/ukbb/` — the UK Biobank application (paper Section 6):

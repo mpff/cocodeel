@@ -16,7 +16,7 @@ effect_names <- c(
   'fz' = 'Covariate Effect'
 )
 
-df_bz <- read_csv("results/simulation_images/increasing_bz.csv") %>%
+df_bz <- read_csv("experiments/simulation/output/increasing_bz.csv") %>%
   mutate(model = factor(
     model,
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
@@ -31,7 +31,7 @@ df_bz <- read_csv("results/simulation_images/increasing_bz.csv") %>%
 
 
 # Load example image
-img <- readPNG("results/simulation_images/example_image.png")
+img <- readPNG("experiments/simulation/output/example_image.png")
 g <- rasterGrob(img, interpolate=TRUE)
 
 
@@ -209,9 +209,9 @@ d <- b3 + c3
 
 d/b/c
 
-ggsave("graphics/Fig1b_bz_mspe.pdf", d, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig1b_bz_bias2.pdf", b, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig1b_bz_var.pdf", c, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig1b_bz_mspe.pdf", d, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig1b_bz_bias2.pdf", b, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig1b_bz_var.pdf", c, width = 4.16, height = 2.4, units = "in", dpi=600, device = cairo_pdf)
 
 
 fxBias <- make_plot(
@@ -243,7 +243,7 @@ fxVar <- make_plot(
 
 S1a <- fxBias / fxVar
 
-ggsave("graphics/FigS1a_bz_bias2.pdf", S1a, width = 3.5, height = 3.5, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/FigS1a_bz_bias2.pdf", S1a, width = 3.5, height = 3.5, units = "in", dpi=600, device = cairo_pdf)
 
 
 frBias <- make_plot(
@@ -275,7 +275,7 @@ frVar <- make_plot(
 
 S1b <- frBias / frVar
 
-ggsave("graphics/FigS1b_bz_var.pdf", S1b, width = 3.5, height = 3.5, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/FigS1b_bz_var.pdf", S1b, width = 3.5, height = 3.5, units = "in", dpi=600, device = cairo_pdf)
 
 
 
@@ -436,8 +436,8 @@ c <- b2 + c2
 
 b/c
 
-ggsave("graphics/FigS1b_fz_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/FigS1c_fz_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/FigS1b_fz_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/FigS1c_fz_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
 
 
 ### MSPE(yhat) and MSPE(fzhat) — two FigS1a-style PDFs (one unorth, one orth)
@@ -494,7 +494,7 @@ y_c <- make_y_plot(
   ylim = c(0.95, 7),
   vertical = TRUE
 )
-ggsave("graphics/Fig1b_bz_y_mspe.pdf", y_b + y_c,
+ggsave("experiments/simulation/output/graphics/Fig1b_bz_y_mspe.pdf", y_b + y_c,
        width = 4.16, height = 2.4, units = "in",
        dpi = 600, device = cairo_pdf)
 
@@ -516,7 +516,7 @@ fz_c <- make_plot(
   show_legend = TRUE,
   strip_labels = FALSE
 )
-ggsave("graphics/Fig1b_bz_fz_mspe.pdf", fz_b + fz_c,
+ggsave("experiments/simulation/output/graphics/Fig1b_bz_fz_mspe.pdf", fz_b + fz_c,
        width = 4.16, height = 2.4, units = "in",
        dpi = 600, device = cairo_pdf)
 

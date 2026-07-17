@@ -22,13 +22,13 @@ pick the combo with the shortest total wall time across the two N anchors.
 Usage
 -----
     /home/RDC/pfeuffma/.conda/envs/dl-mri/bin/python \
-        experiments/simulation_images/hp_search.py
+        experiments/simulation/hpsearch/hp_search.py
 
 Outputs
 -------
-    experiments/simulation_images/chosen_hps.json   (config — tracked)
-    results/simulation_images/hp_search/hp_search.csv
-    results/simulation_images/hp_search/manifest.json
+    experiments/simulation/hpsearch/chosen_hps.json   (config — tracked)
+    experiments/simulation/output/hp_search/hp_search.csv
+    experiments/simulation/output/hp_search/manifest.json
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ import torch
 import torch.multiprocessing as mp
 from torch.nn import MSELoss, BCELoss
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from cocodeel.model import BaseNetwork
@@ -56,9 +56,9 @@ from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 from torch.utils.data import DataLoader
 
-from experiments.simulation_images.backbone import TrafficBackbone
-from experiments.simulation_images.dataset import simulate_traffic_light_data
-from experiments.simulation_images.utils import simulate_dataloaders_split
+from experiments.simulation.backbone import TrafficBackbone
+from experiments.simulation.dataset import simulate_traffic_light_data
+from experiments.simulation.utils import simulate_dataloaders_split
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000   # never train longer than this
 
-OUT_DIR = ROOT / "results/simulation_images/hp_search"
+OUT_DIR = ROOT / "experiments/simulation/output/hp_search"
 
 
 # ── Fit one anchor under one combo ────────────────────────────────────────────

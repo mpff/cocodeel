@@ -18,8 +18,8 @@ research/papers/
 Rplots.pdf
 
 # Per-sim simulation outputs (regenerate via run_full_simulation.py)
-results/simulation_images/runs/
-results/simulation_images/hp_search/
+experiments/simulation/output/runs/
+experiments/simulation/output/hp_search/
 
 # UKBB experiment runs — large checkpoints + per-run artefacts
 experiments/ukbb/runs/

@@ -16,7 +16,7 @@ effect_names <- c(
   'fz' = 'Covariate Effect'
 )
 
-df_bz <- read_csv("results/simulation_images/binary_increasing_bz.csv") %>%
+df_bz <- read_csv("experiments/simulation/output/binary_increasing_bz.csv") %>%
   mutate(model = factor(
     model, 
     levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
@@ -30,7 +30,7 @@ df_bz <- read_csv("results/simulation_images/binary_increasing_bz.csv") %>%
 
 
 # Load example image
-img <- readPNG("results/simulation_images/example_image.png")
+img <- readPNG("experiments/simulation/output/example_image.png")
 g <- rasterGrob(img, interpolate=TRUE)
 
 
@@ -168,8 +168,8 @@ c <- b2 + c2
 
 b/c
 
-ggsave("graphics/Fig3a_binary_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
-ggsave("graphics/Fig3b_binary_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig3a_binary_bz_bias.pdf", b, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig3b_binary_bz_var.pdf", c, width = 4.16, height = 2.8, units = "in", dpi=600, device = cairo_pdf)
 
 
 # Shared theme 2
@@ -248,7 +248,7 @@ a <- make_plot2(
 
 a
 
-ggsave("graphics/Fig3_binary_bz.pdf", a, width = 3.5, height = 1.8, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig3_binary_bz.pdf", a, width = 3.5, height = 1.8, units = "in", dpi=600, device = cairo_pdf)
 
 
 # Build plots
@@ -268,6 +268,6 @@ b
 
 a/b
 
-ggsave("graphics/Fig3_binary_bz_full.pdf", a/b, width = 3.5, height = 3.6, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig3_binary_bz_full.pdf", a/b, width = 3.5, height = 3.6, units = "in", dpi=600, device = cairo_pdf)
 
 

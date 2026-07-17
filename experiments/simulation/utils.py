@@ -2,7 +2,7 @@ import torch
 
 from torch.utils.data import DataLoader
 from cocodeel.dataset import CovarDataset
-from experiments.simulation_images.dataset import simulate_traffic_light_data
+from experiments.simulation.dataset import simulate_traffic_light_data
 
 
 def simulate_dataloaders_split(simulation_params, seed=0,

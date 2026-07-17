@@ -18,42 +18,43 @@ end-to-end baselines under concurvity.
   partitions the sample-split recipe needs.
 - `concurvity_methods.py` — end-to-end NAM-style training with the Siems
   et al. (2023) concurvity regulariser, a published benchmark for Figure 2.
-- `hp_search.py`, `hp_search_q.py`, `hp_search_q_nam.py` — hyperparameter
-  search for, respectively, the main sweep, the per-backbone-size sweep
-  (`concurvity_q`), and its NAM baseline. Each writes a `chosen_hps*.json`
-  (committed) consumed by `run_full_simulation.py`.
+- `hpsearch/hp_search.py`, `hpsearch/hp_search_q.py`,
+  `hpsearch/hp_search_q_nam.py` — hyperparameter search for, respectively,
+  the main sweep, the per-backbone-size sweep (`concurvity_q`), and its NAM
+  baseline. Each writes a `hpsearch/chosen_hps*.json` (committed) consumed
+  by `run_full_simulation.py`.
 - `run_full_simulation.py` — runs every simulation block (`BLOCKS` dict)
   at `Nsim=50` seeds each, 4 worker processes. Writes raw predictions to
-  `results/simulation_images/runs/<stamp>/<block>/preds/`.
+  `output/runs/<stamp>/<block>/preds/`.
 - `aggregate_full_simulation.py` — reduces the raw per-seed predictions
   into the bias²/variance/MSPE CSVs the R scripts read.
 - `count_params.py`, `count_params_sweep.sh` — parameter counts of
   `BaseNetwork` at each backbone width `q`, used as the colour scale in
   Figure `concurvity_q`.
-- `4-Figure*.R`, `4-Rfunctions.R` — one script per figure, reading the
-  aggregated CSVs from `results/simulation_images/`.
+- `figures/4-Figure*.R`, `figures/4-Rfunctions.R` — one script per figure,
+  reading the aggregated CSVs from `output/`.
 
 ## Blocks → figures
 
 | Block (`BLOCKS` key) | CSV | Figure script |
 |---|---|---|
-| `increasing_bz` | `increasing_bz.csv` | `4-Figure1_simulation.R` |
-| `binary_increasing_bz` | `binary_increasing_bz.csv` | `4-Figure3_binary_output.R` |
-| `concurvity` | `concurvity.csv` | `4-Figure2_concurvity.R` |
-| `concurvity_q` | `concurvity_q.csv` | `4-Figure_concurvity_q.R` |
-| `increasing_q`, `increasing_cv`, `increasing_p` | `increasing_q.csv`, `increasing_cv.csv`, `increasing_p.csv` | `4-Figure4_adversarial_settings.R` |
-| `nonlinear_fz` | `nonlinear_fz.csv` | `4-Figure_nonlinear_fz.R` (+ `4-Figure_nonlinear_fz_curve.R` companion) |
-| `nonlinear_fz_misspec` | `nonlinear_fz_misspec.csv` | `4-Figure_nonlinear_fz_misspec.R` |
+| `increasing_bz` | `increasing_bz.csv` | `figures/4-Figure1_simulation.R` |
+| `binary_increasing_bz` | `binary_increasing_bz.csv` | `figures/4-Figure3_binary_output.R` |
+| `concurvity` | `concurvity.csv` | `figures/4-Figure2_concurvity.R` |
+| `concurvity_q` | `concurvity_q.csv` | `figures/4-Figure_concurvity_q.R` |
+| `increasing_q`, `increasing_cv`, `increasing_p` | `increasing_q.csv`, `increasing_cv.csv`, `increasing_p.csv` | `figures/4-Figure4_adversarial_settings.R` |
+| `nonlinear_fz` | `nonlinear_fz.csv` | `figures/4-Figure_nonlinear_fz.R` (+ `figures/4-Figure_nonlinear_fz_curve.R` companion) |
+| `nonlinear_fz_misspec` | `nonlinear_fz_misspec.csv` | `figures/4-Figure_nonlinear_fz_misspec.R` |
 
 ## Reproducing a figure
 
 Scripts run from `~/Research/ovb-ddns/code/` (`dl-mri` env required):
 
 ```
-python experiments/simulation_images/hp_search.py            # writes chosen_hps.json (skip if already present)
-python experiments/simulation_images/run_full_simulation.py  # --only-block <name> for a single block
-python experiments/simulation_images/aggregate_full_simulation.py --run-dir results/simulation_images/runs/<stamp>_full_nsim50
-Rscript experiments/simulation_images/4-Figure1_simulation.R
+python experiments/simulation/hpsearch/hp_search.py            # writes hpsearch/chosen_hps.json (skip if already present)
+python experiments/simulation/run_full_simulation.py           # --only-block <name> for a single block
+python experiments/simulation/aggregate_full_simulation.py --run-dir experiments/simulation/output/runs/<stamp>_full_nsim50
+Rscript experiments/simulation/figures/4-Figure1_simulation.R
 ```
 
 `run_full_simulation.py` resumes from `--run-dir` if interrupted (it skips
@@ -66,8 +67,9 @@ already-completed `(block, sweep_key, seed)` triples).
   in `environment.yml` — install them separately in the `dl-mri` R.
   `r-glmnet` and `rpy2`, which *are* in `environment.yml`, are not used
   anywhere in this experiment or in the `cocodeel` package.
-- `results/simulation_images/*.csv` (the aggregated, R-ready outputs) and
-  `results/simulation_images/hp_search_q*/` (per-q HP diagnostics) are
-  committed. `results/simulation_images/runs/` (raw per-seed predictions)
-  and `results/simulation_images/hp_search/` (main HP-search diagnostics)
+- `output/*.csv` (the aggregated, R-ready outputs), `output/example_image.png`,
+  and `output/hp_search_q/`, `output/hp_search_q_nam/` (per-q HP diagnostics)
+  are committed. So is `output/graphics/`, the PDF figures the R scripts
+  write (previously a repo-root `graphics/` directory). `output/runs/` (raw
+  per-seed predictions) and `output/hp_search/` (main HP-search diagnostics)
   are gitignored and regenerated by the commands above.

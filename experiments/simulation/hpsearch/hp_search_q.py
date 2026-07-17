@@ -19,12 +19,12 @@ Protocol
 
 Outputs
 -------
-    experiments/simulation_images/chosen_hps_q.json    (committed)
-    results/simulation_images/hp_search_q/hp_search_q.csv  (diagnostics, untracked)
+    experiments/simulation/hpsearch/chosen_hps_q.json    (committed)
+    experiments/simulation/output/hp_search_q/hp_search_q.csv  (diagnostics, untracked)
 
 Usage:
     ~/.conda/envs/dl-mri/bin/python -u \\
-        experiments/simulation_images/hp_search_q.py
+        experiments/simulation/hpsearch/hp_search_q.py
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ import torch.multiprocessing as mp
 from torch.nn import MSELoss
 from torch.utils.data import DataLoader
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from cocodeel.model import BaseNetwork
@@ -52,9 +52,9 @@ from cocodeel.posthoc_model import PostHocCovarNetwork
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 
-from experiments.simulation_images.backbone import TrafficBackbone
-from experiments.simulation_images.dataset import simulate_traffic_light_data
-from experiments.simulation_images.utils import simulate_dataloaders_split
+from experiments.simulation.backbone import TrafficBackbone
+from experiments.simulation.dataset import simulate_traffic_light_data
+from experiments.simulation.utils import simulate_dataloaders_split
 
 
 # ── Search config ────────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ SIM_DEFAULTS = dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.)
 
 HP_DEFAULT_PATH = Path(__file__).resolve().parent / "chosen_hps.json"
 HP_OUT_PATH     = Path(__file__).resolve().parent / "chosen_hps_q.json"
-DIAG_DIR        = ROOT / "results" / "simulation_images" / "hp_search_q"
+DIAG_DIR        = ROOT / "experiments" / "simulation" / "output" / "hp_search_q"
 
 
 # ── Worker ────────────────────────────────────────────────────────────────────
