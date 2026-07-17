@@ -1420,5 +1420,77 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
             f"old criterion ({n_old} iters) when true coefficients are near zero.")
 
 
+class TestRecenter(unittest.TestCase):
+    """recenter() re-expresses f_X/f_Z on a new sample without refitting.
+
+    Pins the identity from DESIGN.md: shifting (center_x, center_z) and
+    compensating the intercept leaves eta exactly unchanged for any input,
+    and makes f_X/f_Z exactly zero-mean on the new reference — for any
+    link, and independent of orthogonalize (the orth term cancels out of
+    eta regardless of centering, so recenter needs no orth-specific case).
+    """
+
+    def _fit_model(self, link, orthogonalize):
+        torch.manual_seed(0)
+        n, p, q = 200, 3, 1
+        X = torch.randn(n, p)
+        Z = torch.randn(n, q)
+        if link == "identity":
+            y = 2.0 * X[:, [0]] + 3.0 * Z + 0.3 * torch.randn(n, 1)
+        else:
+            y = torch.bernoulli(torch.sigmoid(1.0 * X[:, [0]] + 2.0 * Z))
+        tr = DataLoader(CovarDataset(X[:100], Z[:100], y[:100]), batch_size=50)
+        va = DataLoader(CovarDataset(X[100:], Z[100:], y[100:]), batch_size=50)
+        base = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={"in_features": p, "out_features": p, "identity": True},
+            num_covariates=q, link=link,
+        )
+        model = PostHocCovarNetwork(base, num_covariates=q, orthogonalize=orthogonalize)
+        model.fit(tr, va, lam=0.5)
+        return model
+
+    @staticmethod
+    def _pooled_loader(n=300, seed=7):
+        g = torch.Generator().manual_seed(seed)
+        X = torch.randn(n, 3, generator=g)
+        Z = torch.randn(n, 1, generator=g)
+        loader = DataLoader(CovarDataset(X, Z, torch.zeros(n, 1)), batch_size=100)
+        return loader, X, Z
+
+    @torch.no_grad()
+    def _check(self, link, orthogonalize):
+        model = self._fit_model(link, orthogonalize)
+        X_test = torch.randn(50, 3)
+        Z_test = torch.randn(50, 1)
+        eta_before = model.predict_eta(X_test, Z_test).clone()
+        pred_before = model(X_test, Z_test).clone()
+
+        pool_loader, X_pool, Z_pool = self._pooled_loader()
+        model.recenter(pool_loader)
+
+        eta_after = model.predict_eta(X_test, Z_test)
+        pred_after = model(X_test, Z_test)
+        torch.testing.assert_close(eta_before, eta_after, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(pred_before, pred_after, rtol=1e-4, atol=1e-4)
+
+        fx_pool = model.predict_fx(X_pool, Z_pool)
+        fz_pool = model.predict_fz(Z_pool)
+        self.assertTrue(torch.allclose(fx_pool.mean(dim=0), torch.zeros(1), atol=1e-4))
+        self.assertTrue(torch.allclose(fz_pool.mean(dim=0), torch.zeros(1), atol=1e-4))
+
+    def test_identity_link(self):
+        self._check("identity", orthogonalize=False)
+
+    def test_logit_link(self):
+        self._check("logit", orthogonalize=False)
+
+    def test_identity_link_orthogonalized(self):
+        self._check("identity", orthogonalize=True)
+
+    def test_logit_link_orthogonalized(self):
+        self._check("logit", orthogonalize=True)
+
+
 if __name__ == '__main__':
     unittest.main()

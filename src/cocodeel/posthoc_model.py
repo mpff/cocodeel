@@ -43,8 +43,12 @@ class PostHocCovarNetwork(BaseNetwork):
     # -------------------------------------------------------------------------
     # Forward & prediction methods
     # -------------------------------------------------------------------------
+    def predict_eta(self, x, z):
+        """Linear predictor eta = intercept + f_X(x) + f_Z(z), before the link."""
+        return self.intercept + self.predict_fx(x, z) + self.predict_fz(z)
+
     def forward(self, x, z):
-        eta = self.intercept + self.predict_fx(x, z) + self.predict_fz(z)
+        eta = self.predict_eta(x, z)
         return self.output_func(eta)
 
     def predict_fx(self, x, z=None):
@@ -96,6 +100,29 @@ class PostHocCovarNetwork(BaseNetwork):
         """
         self._fit_centers_from_loader(dataloader)
         self.is_centered.fill_(True)
+        return self
+
+    @torch.no_grad()
+    def recenter(self, loader):
+        """Re-express f_X, f_Z on `loader`'s sample without refitting.
+
+        Shifts the intercept to exactly compensate for the new center_x/
+        center_z, so eta (and every prediction) is unchanged for any input;
+        only the zero-point of the reported f_X/f_Z components moves. Exact
+        for any link, since eta is linear in the centered features and the
+        link only maps eta to mu, never entering eta's own definition. Used
+        to put several fold-fitted models on a common reference before
+        averaging them into a cross-fit ensemble (see crossfit.py).
+        """
+        X, Z, _ = self._extract_features_from_loader(loader)
+        cx_new = X.mean(dim=0)
+        cz_new = Z.mean(dim=0)
+        bX = self.fx.weight.data.flatten()
+        bZ = self.fz.weight.data.flatten()
+
+        self.intercept.data += (cx_new - self.center_x.mean) @ bX + (cz_new - self.center_z.mean) @ bZ
+        self.center_x.mean.copy_(cx_new)
+        self.center_z.mean.copy_(cz_new)
         return self
 
     # -------------------------------------------------------------------------
