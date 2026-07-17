@@ -130,11 +130,6 @@ useful for checking the λ selection.
 - `experiments/ukbb/` — the UK Biobank application (paper Section 6):
   synthetic confounding on real T1 structural MRI. See its `README.md`.
   UK Biobank data is access-controlled and not included here.
-- `experiments/adni/` — ADNI experiments kept for future work; **not**
-  part of the NeurIPS 2026 submission. See its `README.md`.
-- `experiments/exploration/` — further work beyond the paper (a
-  concurvity-vs-N sweep with additional end-to-end baselines). See its
-  `README.md`.
 
 ## Testing
 
