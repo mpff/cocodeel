@@ -11,7 +11,7 @@ regression analysis — include `Z` as a control variable — applied to the
 last layer of a pretrained DNN, since concurvity between `X` and `Z` makes
 joint end-to-end training of both effects unreliable.
 
-`PostHocCovarNetwork` refits a pretrained backbone's last layer as an
+`RefitCovarNetwork` refits a pretrained backbone's last layer as an
 additive model `η = β₀ + f_X(X) + f_Z(Z)`, with `f_X` linear in the
 backbone features and `f_Z` linear in `Z`. Fitting is a ridge-penalised
 backfit (glmnet-style λ path, IRLS for non-identity links), with an
@@ -45,7 +45,7 @@ from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 
 
@@ -87,7 +87,7 @@ base = covar_trainer(
 
 # 2. Refit the last layer on B: Z enters additively, with a ridge-penalised
 #    backfit and an optional orthogonalisation of f_X against Z.
-model = PostHocCovarNetwork(base, num_covariates=1, orthogonalize=True)
+model = RefitCovarNetwork(base, num_covariates=1, orthogonalize=True)
 model = model.fit(train_B, val_B)
 
 fx = model.predict_fx(X_B, Z_B)   # DNN-input effect, orthogonal to Z
@@ -105,7 +105,7 @@ useful for checking the λ selection.
   for `"identity"` and runs IRLS otherwise. See `cocodeel/links.py`.
 - **Centering.** `X`, `Z`, and `y` are centered before fitting so that
   `β₀` carries the population mean and the additive terms are
-  identifiable; `PostHocCovarNetwork.center_effects` fits these means on
+  identifiable; `RefitCovarNetwork.center_effects` fits these means on
   the refit sample. `predict_fx`/`predict_fz` stay zero-mean on that
   sample after fitting.
 - **Orthogonalization.** With `orthogonalize=True`, a secondary linear
@@ -114,8 +114,9 @@ useful for checking the λ selection.
   through `Z`. Without it, `f_X` and `f_Z` are still debiased for omitted
   variable bias, but a mediated effect of `Z` through `X` remains in `f_X`.
 - **Cross-fitting.** The two-sample split above uses half the data for
-  the backbone. `experiments/ukbb/run_k_crossfit.py` shows the K-fold
-  cross-fit ensemble (Chernozhukov et al., 2018) that recovers the rest.
+  the backbone. `cocodeel.crossfit.CrossFitEnsemble` combines K fold-wise
+  refits into the cross-fit ensemble (Chernozhukov et al., 2018) that
+  recovers the rest.
 - **Benchmarks, not the method.** `cocodeel.benchmarking` holds
   competitor baselines — `CovarNetwork` (end-to-end NAM-style joint
   training of `f_X` and `f_Z`) and `PostHocOrthNetwork` — used to show
