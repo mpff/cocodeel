@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
 from cocodeel.trainer import covar_trainer
-from cocodeel.benchmarking.model import CovarNetwork
+from cocodeel.benchmarking.model import CovarNetwork, MLPCovarNetwork
 from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
 from tests.conftest import DummyBackbone
 
@@ -98,6 +98,85 @@ class TestCovarNetwork(unittest.TestCase):
         self.model.center_effects(loader)
         self.assertTrue(torch.allclose(self.model.intercept, intercept_after_first, atol=1e-6))
         self.assertTrue(torch.allclose(self.model.forward(X, Z), pred_after_first, atol=1e-6))
+
+
+class TestMLPCovarNetwork(unittest.TestCase):
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        self.out_features = 6
+        self.num_covariates = 2
+        self.model = MLPCovarNetwork(
+            DummyBackbone,
+            {'in_features': 6, 'out_features': self.out_features, 'identity': True},
+            self.num_covariates,
+            'identity',
+        )
+
+    @torch.no_grad()
+    def test_forward_shape(self):
+        x = torch.randn(4, 2, 3)
+        z = torch.randn(4, self.num_covariates)
+        y = self.model(x, z)
+        self.assertEqual(y.shape, (4, 1))
+
+    @torch.no_grad()
+    def test_center_effects_zeroes_fz_and_preserves_predictions(self):
+        X = torch.randn(50, 2, 3)
+        Z = torch.randn(50, self.num_covariates)
+        loader = DataLoader(CovarDataset(X, Z, torch.randn(50, 1)), batch_size=10)
+        predictions_before = self.model(X, Z)
+        # center
+        self.model.center_effects(loader)
+        self.assertTrue(self.model.is_centered)
+        # fz is centered on its output, not its input
+        fz_after = self.model.predict_fz(Z)
+        self.assertTrue(torch.allclose(fz_after.mean(), torch.tensor(0.0), atol=1e-6))
+        expected_mean = self.model.fz(Z).mean()
+        self.assertTrue(torch.allclose(self.model.center_fz.mean, expected_mean, atol=1e-6))
+        # predictions unchanged, second call a no-op
+        predictions_after = self.model(X, Z)
+        self.assertTrue(torch.allclose(predictions_before, predictions_after, atol=1e-6))
+        intercept_after = self.model.intercept.clone()
+        self.model.center_effects(loader)
+        self.assertTrue(torch.allclose(self.model.intercept, intercept_after, atol=1e-6))
+
+    def test_recovers_linear_covariate_effect(self):
+        # y = 2*X0 + 3*Z0 + 1.5: the MLP fz must recover the linear truth
+        torch.manual_seed(0)
+        n = 1000
+        X = torch.randn(n, 3)
+        Z = torch.randn(n, self.num_covariates)
+        y = (2 * X[:, 0] + 3 * Z[:, 0] + 1.5).unsqueeze(1)
+        train_loader = DataLoader(CovarDataset(X[:600], Z[:600], y[:600]),
+                                  batch_size=50, shuffle=True)
+        val_loader = DataLoader(CovarDataset(X[600:800], Z[600:800], y[600:800]),
+                                batch_size=50, shuffle=False)
+        model_params = {
+            'link': 'identity',
+            'backbone': DummyBackbone,
+            'backbone_params': {'in_features': 3, 'out_features': 3},
+            'num_covariates': self.num_covariates,
+        }
+        model = covar_trainer(
+            model=MLPCovarNetwork,
+            model_params=model_params,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            device='cpu',
+            epochs=200,
+            lr=0.01,
+            patience=20,
+        )
+        model = model.center_effects(train_loader).eval()
+        # fz matches the centered truth on held-out covariates
+        with torch.no_grad():
+            fz_hat = model.predict_fz(Z[800:]).view(-1)
+        fz_true = 3 * Z[800:, 0]
+        fz_true = fz_true - fz_true.mean()
+        rel_mse = ((fz_hat - fz_true) ** 2).mean() / (fz_true ** 2).mean()
+        self.assertLess(rel_mse.item(), 0.05)
 
 
 class TestLinearBenchmarks(unittest.TestCase):
