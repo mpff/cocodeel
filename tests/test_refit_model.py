@@ -1492,5 +1492,50 @@ class TestRecenter(unittest.TestCase):
         self._check("logit", orthogonalize=True)
 
 
+class DuplicatedColumnBackbone(torch.nn.Module):
+    """Backbone whose output duplicates its input columns: exactly collinear features."""
+
+    def __init__(self, in_features):
+        super().__init__()
+        self.out_features = 2 * in_features
+
+    def forward(self, x):
+        return torch.cat([x, x], dim=1)
+
+
+class TestSingularRidgeSolve(unittest.TestCase):
+    """Exactly collinear features make the unregularized Gram singular; a
+    failed solve must surface as a clean path failure, never a raw solver
+    crash, and any positive lambda must still fit."""
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        n = 200
+        self.X = torch.randn(n, 3)
+        self.Z = torch.randn(n, 1)
+        self.y = 2 * self.X[:, [0]] + 3 * self.Z
+        tr = CovarDataset(self.X[:100], self.Z[:100], self.y[:100])
+        va = CovarDataset(self.X[100:], self.Z[100:], self.y[100:])
+        self.tr = DataLoader(tr, batch_size=50)
+        self.va = DataLoader(va, batch_size=50)
+        self.base = BaseNetwork(
+            backbone=DuplicatedColumnBackbone,
+            backbone_params={'in_features': 3},
+            num_covariates=1,
+            link="identity",
+        )
+
+    def test_lam_zero_raises_cleanly(self):
+        model = RefitCovarNetwork(self.base, num_covariates=1)
+        with self.assertRaises(RuntimeError):
+            model.fit(self.tr, self.va, lam=0.0)
+
+    def test_positive_lam_fits(self):
+        model = RefitCovarNetwork(self.base, num_covariates=1)
+        model.fit(self.tr, self.va, lam=0.1)
+        self.assertAlmostEqual(model.fz.weight.item(), 3.0, delta=0.3)
+
+
 if __name__ == '__main__':
     unittest.main()

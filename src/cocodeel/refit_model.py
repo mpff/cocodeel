@@ -163,15 +163,31 @@ class RefitCovarNetwork(BaseNetwork):
             for lambd in lambda_path:
 
                 # ---- Train at fixed λ ----
-                diag = self._solve_fixed_lambda(
-                    X_train,
-                    Z_train,
-                    y_train,
-                    lambd,
-                    max_iters,
-                    tol,
-                    penalty_z=penalty_z,
-                )
+                # A λ small enough to vanish against a collinear Gram matrix in
+                # float32 has no computable ridge solution: mark it failed on
+                # the path (never selectable), like any non-converged fit.
+                try:
+                    diag = self._solve_fixed_lambda(
+                        X_train,
+                        Z_train,
+                        y_train,
+                        lambd,
+                        max_iters,
+                        tol,
+                        penalty_z=penalty_z,
+                    )
+                except torch.linalg.LinAlgError:
+                    records.append({
+                        "expansion":    expansion_idx,
+                        "lambda":       float(lambd),
+                        "val_loss":     float("inf"),
+                        "converged":    False,
+                        "solve_failed": True,
+                    })
+                    self.fx.weight.data.zero_()
+                    self.fz.weight.data.zero_()
+                    self.intercept.data = self._link.forward(self.center_y.mean).view(1)
+                    continue
                 # Update fx/fz weights to account for X/Z standardization.
                 self.fx.weight.data /= X_std
                 self.fz.weight.data /= Z_std
@@ -230,6 +246,8 @@ class RefitCovarNetwork(BaseNetwork):
                 print("Warning: no converged solution found across lambda path — using best unconverged state.")
                 best_state = best_state_any
                 best_lambda = best_lambda_any
+            if best_state is None:
+                raise RuntimeError("No lambda on the path was solvable — every ridge solve failed.")
 
             # check if best lambda is at the edge of the path, if so expand the path and repeat.
             if len(lambda_path) == 1:
