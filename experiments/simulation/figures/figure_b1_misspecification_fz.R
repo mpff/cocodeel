@@ -6,18 +6,18 @@ library(tikzDevice)
 library(latex2exp)
 library(patchwork)
 
-# Mirrors the bias-bz figure (4-Figure1_simulation.R) in palette and
+# Mirrors the bias-bz figure (figure_a1_linear_bz.R) in palette and
 # theme: viridis for the direct estimator (DNN w. Controls), bz encoded
 # as colour position over the same domain c(-0.025, 4.25).
 #
-# Single method (DNN w. Controls = posthoc_xfit). Top row = direct
+# Single method (DNN w. Controls = refit). Top row = direct
 # image effect (fx); bottom row = nonlinear covariate effect (fz).
 # Columns: MSPE, Bias², Var.  Bottom row uses a tighter, lower y-range
 # since fz bias and variance are both small once the spline regression
 # converges.
 
 df <- read_csv("experiments/simulation/output/nonlinear_fz.csv") %>%
-  filter(model == "posthoc_xfit") %>%
+  filter(model == "refit") %>%
   mutate(effect = factor(effect, levels = c("y", "fx", "fr", "fz")))
 
 shared_theme <- theme_bw() +

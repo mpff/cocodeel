@@ -1,75 +1,60 @@
 # Simulation study — paper Section 5
 
-A synthetic "traffic-light" image DGP with a known confounder, used to
-verify that the post-hoc sample-split refit recovers the true image effect
-`f_X` and control-variable effect `f_Z`, and to compare it against
-end-to-end baselines under concurvity.
+A synthetic "traffic-light" image DGP with a known confounder. Three
+self-contained study scripts reproduce every simulation figure in the paper;
+each trains its own models and writes per-seed predictions that `aggregate.py`
+reduces to the CSVs the R figure scripts read.
 
-## What's here
+## Studies → figures
 
-- `dataset.py` — `simulate_traffic_light_data`: draws covariates `Z`,
-  builds `X` as grayscale images of three circles ("traffic lights") whose
-  positions/intensities encode `f_X`, `f_Z`, and a residual confounding
-  term, for continuous or binary outcomes.
-- `backbone.py` — `TrafficBackbone`, the conv–conv–pool–fc CNN used as the
-  DNN backbone in every block.
-- `utils.py` — `simulate_dataloaders_split`: draws one dataset and returns
-  `full`/`half_A`/`half_B` loader pairs; `half_A`/`half_B` are the disjoint
-  partitions the sample-split recipe needs.
-- `concurvity_methods.py` — end-to-end NAM-style training with the Siems
-  et al. (2023) concurvity regulariser, a published benchmark for Figure 2.
-- `hpsearch/hp_search.py`, `hpsearch/hp_search_q.py`,
-  `hpsearch/hp_search_q_nam.py` — hyperparameter search for, respectively,
-  the main sweep, the per-backbone-size sweep (`concurvity_q`), and its NAM
-  baseline. Each writes a `hpsearch/chosen_hps*.json` (committed) consumed
-  by `run_full_simulation.py`.
-- `run_full_simulation.py` — runs every simulation block (`BLOCKS` dict)
-  at `Nsim=50` seeds each, 4 worker processes. Writes raw predictions to
-  `output/runs/<stamp>/<block>/preds/`.
-- `aggregate_full_simulation.py` — reduces the raw per-seed predictions
-  into the bias²/variance/MSPE CSVs the R scripts read.
-- `count_params.py`, `count_params_sweep.sh` — parameter counts of
-  `BaseNetwork` at each backbone width `q`, used as the colour scale in
-  Figure `concurvity_q`.
-- `figures/4-Figure*.R`, `figures/4-Rfunctions.R` — one script per figure,
-  reading the aggregated CSVs from `output/`.
-
-## Blocks → figures
-
-| Block (`BLOCKS` key) | CSV | Figure script |
+| Script | Sweeps (CSV names) | Figure scripts |
 |---|---|---|
-| `increasing_bz` | `increasing_bz.csv` | `figures/4-Figure1_simulation.R` |
-| `binary_increasing_bz` | `binary_increasing_bz.csv` | `figures/4-Figure3_binary_output.R` |
-| `concurvity` | `concurvity.csv` | `figures/4-Figure2_concurvity.R` |
-| `concurvity_q` | `concurvity_q.csv` | `figures/4-Figure_concurvity_q.R` |
-| `increasing_q`, `increasing_cv`, `increasing_p` | `increasing_q.csv`, `increasing_cv.csv`, `increasing_p.csv` | `figures/4-Figure4_adversarial_settings.R` |
-| `nonlinear_fz` | `nonlinear_fz.csv` | `figures/4-Figure_nonlinear_fz.R` (+ `figures/4-Figure_nonlinear_fz_curve.R` companion) |
-| `nonlinear_fz_misspec` | `nonlinear_fz_misspec.csv` | `figures/4-Figure_nonlinear_fz_misspec.R` |
+| `study_a_linear_consistency.py` | `increasing_bz`, `binary_increasing_bz`, `increasing_q`, `increasing_cv`, `increasing_p` | `figures/figure_a1_linear_bz.R`, `figure_a2_binary_bz.R`, `figure_a3_adversarial_settings.R` |
+| `study_b_misspecification.py` | `nonlinear_fz`, `nonlinear_fz_misspec` | `figures/figure_b1_misspecification_fz.R` (+ `figure_b1_misspecification_fz_curve.R`), `figure_b2_misspecification_raw_z.R` |
+| `study_c_concurvity_benchmark.py` | `concurvity`, `concurvity_q` | `figures/figure_c1_concurvity.R`, `figure_c2_concurvity_backbone_width.R` |
+
+Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
+2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber), `nam` /
+`nam_conc_*` (CovarNetwork, optional Siems penalty), `ssn`, `adversarial`.
+
+## Layout
+
+- `common/` — code shared by all studies: `dgp.py` (image DGP), `backbone.py`
+  (CNN), `loaders.py` (cross-fit data partitioning), `grid_runner.py`
+  (resumable multiprocessing sweep runner).
+- `study_*.py` — one script per study; hyperparameters are hardcoded
+  constants (values from `hpsearch/chosen_hps*.json`).
+- `aggregate.py` — reduces per-seed NPZ predictions into `output/<sweep>.csv`
+  (bias²/variance/MSPE per method and effect).
+- `hpsearch/` — optional: re-derive the hardcoded hyperparameters
+  (`search_default.py`, `search_per_q.py`, `search_per_q_nam.py`, shared
+  driver `_grid_search.py`). The chosen values are committed as JSON.
+- `figures/` — one R script per figure, reading `output/*.csv`.
+- `count_params.py`, `count_params_sweep.sh` — parameter counts per backbone
+  width q (colour scale of `figure_c2`).
 
 ## Reproducing a figure
 
-Scripts run from `~/Research/ovb-ddns/code/` (`dl-mri` env required):
+From `~/Research/ovb-ddns/code/` in the `dl-mri` env:
 
 ```
-python experiments/simulation/hpsearch/hp_search.py            # writes hpsearch/chosen_hps.json (skip if already present)
-python experiments/simulation/run_full_simulation.py           # --only-block <name> for a single block
-python experiments/simulation/aggregate_full_simulation.py --run-dir experiments/simulation/output/runs/<stamp>_full_nsim50
-Rscript experiments/simulation/figures/4-Figure1_simulation.R
+python experiments/simulation/study_a_linear_consistency.py
+python experiments/simulation/aggregate.py
+Rscript experiments/simulation/figures/figure_a1_linear_bz.R
 ```
 
-`run_full_simulation.py` resumes from `--run-dir` if interrupted (it skips
-already-completed `(block, sweep_key, seed)` triples).
+Each study writes to a fixed, resumable run directory
+(`output/runs/study_*`): rerunning skips every `(sweep, setting, seed)`
+already on disk, so an interrupted run continues where it stopped and a
+completed run is a no-op. `NSIM=5` (env var) runs a reduced number of seeds
+for a quick trial; the default is 50, and a trial run's seeds are reused by
+the full run. `COCODEEL_DEVICE` overrides the GPU (default `cuda:1`).
 
 ## Status
 
 - The R packages the figure scripts need (`readr`, `dplyr`, `ggplot2`,
   `tikzDevice`, `latex2exp`, `png`, `grid`, `patchwork`) are **not** listed
   in `environment.yml` — install them separately in the `dl-mri` R.
-  `r-glmnet` and `rpy2`, which *are* in `environment.yml`, are not used
-  anywhere in this experiment or in the `cocodeel` package.
-- `output/*.csv` (the aggregated, R-ready outputs), `output/example_image.png`,
-  and `output/hp_search_q/`, `output/hp_search_q_nam/` (per-q HP diagnostics)
-  are committed. So is `output/graphics/`, the PDF figures the R scripts
-  write (previously a repo-root `graphics/` directory). `output/runs/` (raw
-  per-seed predictions) and `output/hp_search/` (main HP-search diagnostics)
-  are gitignored and regenerated by the commands above.
+- `output/*.csv`, `output/example_image.png`, `output/graphics/` (the PDF
+  figures), and `output/hp_search_q*/` are committed. `output/runs/` and
+  `output/hp_search/` are gitignored and regenerated by the commands above.

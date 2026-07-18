@@ -19,7 +19,7 @@ effect_names <- c(
 df_q <- read_csv("experiments/simulation/output/increasing_q.csv") %>%
   mutate(model = factor(
     model, 
-    levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
+    levels= c( "refit", "refit_orth", "base", "posthoc_web"),
     labels = c(
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
@@ -32,7 +32,7 @@ df_q <- read_csv("experiments/simulation/output/increasing_q.csv") %>%
 df_cv1 <- read_csv("experiments/simulation/output/increasing_cv.csv") %>%
   mutate(model = factor(
     model, 
-    levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
+    levels= c( "refit", "refit_orth", "base", "posthoc_web"),
     labels = c(
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
@@ -45,7 +45,7 @@ df_cv1 <- read_csv("experiments/simulation/output/increasing_cv.csv") %>%
 df_p <- read_csv("experiments/simulation/output/increasing_p.csv") %>%
   mutate(model = factor(
     model,
-    levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
+    levels= c( "refit", "refit_orth", "base", "posthoc_web"),
     labels = c(
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",

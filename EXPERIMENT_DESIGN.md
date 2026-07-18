@@ -26,17 +26,21 @@ shared dependency of one of them (see "Cross-experiment dependencies").
 
 Unlike dnn-shapes' proposed one-folder-one-file-per-concern contract
 (`data.py`/`run.py`/`figures.py`/`hpsearch.py`), `simulation/` —
-the most complete experiment here — splits differently, along the actual
-cost boundary: hyperparameter search is cheap and run once
-(`hp_search*.py`, writing a committed `chosen_hps*.json`), the sweep
-itself is expensive and resumable (`run_full_simulation.py`, one process
-pool, checkpointed by `(block, sweep_key, seed)` triples already on
-disk), and aggregation is a separate, fast, deterministic step
-(`aggregate_full_simulation.py`) so re-running it after a code fix
-doesn't require re-running the sweep. Figures are one R script per
-figure (`4-Figure*.R`), not one script per experiment, because several
-figures share the same aggregated CSVs but need independently tuned
-`ggplot` layouts.
+the most complete experiment here — splits along two boundaries. By
+study: one self-contained script per paper study
+(`study_a_linear_consistency.py`, `study_b_misspecification.py`,
+`study_c_concurvity_benchmark.py`), each owning its sweeps, method
+roster, and hardcoded hyperparameters, sharing only the DGP, backbone,
+loaders, and the resumable pool runner (`common/`). And by cost:
+hyperparameter search is cheap and run once (`hpsearch/search_*.py`,
+writing a committed `chosen_hps*.json` whose winners are hardcoded in
+the studies), the sweeps are expensive and resumable (fixed run dirs,
+checkpointed by `(sweep, sweep_key, seed)` triples on disk), and
+aggregation is a separate, fast, deterministic step (`aggregate.py`)
+so re-running it after a code fix doesn't require re-running a sweep.
+Figures are one R script per figure (`figures/figure_*.R`), not one
+script per experiment, because several figures share the same
+aggregated CSVs but need independently tuned `ggplot` layouts.
 
 `ukbb/` is simpler: a few runner scripts, a shared `ukbb_common.py` for
 loaders and defaults, and figure scripts read from the run's exported

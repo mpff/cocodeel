@@ -6,7 +6,7 @@ library(tikzDevice)
 library(latex2exp)
 library(patchwork)
 
-# Misspecification companion to 4-Figure_nonlinear_fz.R: same layout
+# Misspecification companion to figure_b1_misspecification_fz.R: same layout
 # (single method, fx top, fz bottom, MSPE | Bias² | Var), but reads
 # from `nonlinear_fz_misspec.csv` where the model is fed the raw 1-d
 # covariate Z (no spline basis). The MSPE values are roughly two
@@ -14,7 +14,7 @@ library(patchwork)
 # y-axis is widened to c(1e-4, 10).
 
 df <- read_csv("experiments/simulation/output/nonlinear_fz_misspec.csv") %>%
-  filter(model == "posthoc_xfit") %>%
+  filter(model == "refit") %>%
   mutate(effect = factor(effect, levels = c("y", "fx", "fr", "fz")))
 
 shared_theme <- theme_bw() +

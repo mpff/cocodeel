@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from cocodeel.model import BaseNetwork
-from experiments.simulation.backbone import TrafficBackbone
+from experiments.simulation.common.backbone import TrafficBackbone
 
 
 def count(module) -> int:

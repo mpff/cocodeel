@@ -19,7 +19,7 @@ effect_names <- c(
 df_bz <- read_csv("experiments/simulation/output/binary_increasing_bz.csv") %>%
   mutate(model = factor(
     model, 
-    levels= c( "posthoc", "posthoc_orth", "base", "posthoc_web"),
+    levels= c( "refit", "refit_orth", "base", "posthoc_web"),
     labels = c(
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",

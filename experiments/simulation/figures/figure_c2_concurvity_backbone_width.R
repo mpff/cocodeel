@@ -6,19 +6,19 @@ library(tikzDevice)
 library(latex2exp)
 library(patchwork)
 
-# Concurvity vs backbone size. Two methods (DNN with Controls = post-hoc
-# xfit refit, NAM = end-to-end SGD) sweep over (n, q). Top row = our
+# Concurvity vs backbone size. Two methods (DNN with Controls = cross-fitted
+# refit, NAM = end-to-end SGD) sweep over (n, q). Top row = our
 # method, bottom row = NAM baseline. Both rows share a single viridis
 # colourbar over the params (in thousands), placed inside the top-left
 # panel.
 
 df <- read_csv("experiments/simulation/output/concurvity_q.csv") %>%
-  filter(model %in% c("covar", "posthoc_xfit"),
+  filter(model %in% c("nam", "refit"),
          q >= 8) %>%   # drop the two smallest backbones (q=2,4 too small to fit fx)
   mutate(
     model = factor(
       model,
-      levels = c("posthoc_xfit", "covar"),         # top row first
+      levels = c("refit", "nam"),                  # top row first
       labels = c("DNN with Controls", "NAM")
     ),
     params_k = (4801 + 514 * q) / 1000             # backbone params in thousands

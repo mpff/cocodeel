@@ -18,8 +18,8 @@ effect_names <- c(
 df_bz <- read_csv("experiments/simulation/output/concurvity.csv") %>%
   mutate(model = factor(
     model,
-    levels = c("covar", "covar_conc_0.1", "covar_conc_1", "covar_conc_10",
-               "ssn", "posthoc_xfit", "posthoc_orth_xfit"),
+    levels = c("nam", "nam_conc_0.1", "nam_conc_1", "nam_conc_10",
+               "ssn", "refit", "refit_orth"),
     labels = c(
       "NAM [7]",
       "NAM + Reg. (0.1) [20]",
