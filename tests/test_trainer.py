@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.benchmarking.model import CovarNetwork
 from cocodeel.benchmarking.posthoc_model import SemiStructuredNetwork
 from cocodeel.trainer import covar_trainer
@@ -30,8 +30,8 @@ class TestLinearTraining(unittest.TestCase):
             }
         self.loss_fn = nn.MSELoss()
 
-        # Two disjoint samples: A trains the backbone, B hosts the posthoc
-        # refit (the recommended sample-split recipe).
+        # Two disjoint samples: A trains the backbone, B hosts the refit
+        # (the recommended sample-split recipe).
         def sample():
             X = torch.randn(self.n, 3)
             Z = torch.randn(self.n, self.num_covariates)
@@ -68,18 +68,18 @@ class TestLinearTraining(unittest.TestCase):
         self.assertTrue(torch.allclose(preds, preds_centered))
         self.assertEqual(model.is_centered, torch.tensor(True))
         self.assertAlmostEqual(model.intercept.item(), intercept + model.fx(model.center_x.mean))
-        # Posthoc refit on the disjoint sample B: intercept centres on B and
+        # Refit on the disjoint sample B: intercept centres on B and
         # the linear effects are recovered (noiseless DGP).
-        posthoc_model = PostHocCovarNetwork(
+        refit_model = RefitCovarNetwork(
             model=model,
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.tr_B, self.va_B)
-        self.assertAlmostEqual(posthoc_model.intercept.item(), self.y_B[:150].mean().item(), places=4)
-        self.assertAlmostEqual(posthoc_model.fz.weight.data[0, 0].item(), 3.0, places=2)
+        refit_model.fit(self.tr_B, self.va_B)
+        self.assertAlmostEqual(refit_model.intercept.item(), self.y_B[:150].mean().item(), places=4)
+        self.assertAlmostEqual(refit_model.fz.weight.data[0, 0].item(), 3.0, places=2)
 
     def test_train_linear_model(self):
-        # Fit end-to-end covariate model (single sample: no posthoc refit here).
+        # Fit end-to-end covariate model (single sample: no refit here).
         model = covar_trainer(
             model=CovarNetwork,
             model_params=self.model_params,
@@ -101,15 +101,15 @@ class TestLinearTraining(unittest.TestCase):
         self.assertTrue(torch.allclose(preds, preds_centered))
         self.assertEqual(model.is_centered, torch.tensor(True))
         self.assertAlmostEqual(model.intercept.item(), intercept + model.fx(model.center_x.mean) + model.fz(model.center_z.mean), places=4)
-        # Fit posthoc model and check centering equal to mean of y.
-        posthoc_model = SemiStructuredNetwork(
+        # Wrap in SSN and check centering equal to mean of y.
+        ssn_model = SemiStructuredNetwork(
             model=model
         )
-        posthoc_model.fit(self.train_loader)
-        preds_posthoc = posthoc_model(self.X, self.Z)
-        self.assertAlmostEqual(posthoc_model.intercept.item(), model.intercept.item(), places=4)
-        self.assertEqual(preds_posthoc.shape, self.y.shape)
-        self.assertTrue(torch.allclose(preds_posthoc, preds_centered, atol=1e-6))
+        ssn_model.fit(self.train_loader)
+        preds_ssn = ssn_model(self.X, self.Z)
+        self.assertAlmostEqual(ssn_model.intercept.item(), model.intercept.item(), places=4)
+        self.assertEqual(preds_ssn.shape, self.y.shape)
+        self.assertTrue(torch.allclose(preds_ssn, preds_centered, atol=1e-6))
 
 
 
@@ -130,8 +130,8 @@ class TestLogisticTraining(unittest.TestCase):
             }
         self.loss_fn = nn.BCELoss()
 
-        # Two disjoint samples: A trains the backbone, B hosts the posthoc
-        # refit (the recommended sample-split recipe).
+        # Two disjoint samples: A trains the backbone, B hosts the refit
+        # (the recommended sample-split recipe).
         def sample():
             X = torch.randn(self.n, 3)
             Z = torch.randn(self.n, self.num_covariates)
@@ -169,16 +169,16 @@ class TestLogisticTraining(unittest.TestCase):
         self.assertTrue(torch.allclose(preds, preds_centered))
         self.assertEqual(model.is_centered, torch.tensor(True))
         self.assertAlmostEqual(model.intercept.item(), intercept + model.fx(model.center_x.mean))
-        # Posthoc refit on the disjoint sample B: IRLS runs and recovers the
+        # Refit on the disjoint sample B: IRLS runs and recovers the
         # Z effect within finite-sample noise (600 refit obs).
-        posthoc_model = PostHocCovarNetwork(
+        refit_model = RefitCovarNetwork(
             model=model,
             num_covariates=self.num_covariates
         )
-        posthoc_model.fit(self.tr_B, self.va_B)
-        preds_posthoc = posthoc_model(self.X_B, self.Z_B)
-        self.assertEqual(preds_posthoc.shape, self.y_B.shape)
-        torch.testing.assert_close(posthoc_model.fz.weight.data[0, 0],
+        refit_model.fit(self.tr_B, self.va_B)
+        preds_refit = refit_model(self.X_B, self.Z_B)
+        self.assertEqual(preds_refit.shape, self.y_B.shape)
+        torch.testing.assert_close(refit_model.fz.weight.data[0, 0],
                                    torch.tensor(3.0), rtol=0.2, atol=0.2)
 
     def test_train_logistic_covar_model(self):
@@ -204,15 +204,15 @@ class TestLogisticTraining(unittest.TestCase):
         self.assertTrue(torch.allclose(preds, preds_centered))
         self.assertEqual(model.is_centered, torch.tensor(True))
         self.assertAlmostEqual(model.intercept.item(), intercept + model.fx(model.center_x.mean) + model.fz(model.center_z.mean), places=4)
-        # Fit posthoc model and check centering equal to mean of y.
-        posthoc_model = SemiStructuredNetwork(
+        # Wrap in SSN and check centering equal to mean of y.
+        ssn_model = SemiStructuredNetwork(
             model=model
         )
-        posthoc_model.fit(self.train_loader)
-        preds_posthoc = posthoc_model(self.X, self.Z)
-        self.assertAlmostEqual(posthoc_model.intercept.item(), model.intercept.item(), places=4)
-        self.assertEqual(preds_posthoc.shape, self.y.shape)
-        self.assertTrue(torch.allclose(preds_posthoc, preds_centered, atol=1e-6))
+        ssn_model.fit(self.train_loader)
+        preds_ssn = ssn_model(self.X, self.Z)
+        self.assertAlmostEqual(ssn_model.intercept.item(), model.intercept.item(), places=4)
+        self.assertEqual(preds_ssn.shape, self.y.shape)
+        self.assertTrue(torch.allclose(preds_ssn, preds_centered, atol=1e-6))
 
 class TestSchedulerParam(unittest.TestCase):
 
@@ -284,7 +284,7 @@ class TestDeterminism(unittest.TestCase):
     """Same seed ⇒ bit-identical pipeline on CPU.
 
     Covers every stochastic channel of the standard workflow: data draw,
-    weight init, train-loader shuffling (trainer), and the posthoc refit.
+    weight init, train-loader shuffling (trainer), and the refit.
     GPU runs are NOT claimed to be bit-exact (CUDA nondeterminism).
     """
 
@@ -306,9 +306,9 @@ class TestDeterminism(unittest.TestCase):
         }
         base = covar_trainer(BaseNetwork, model_params, tr, va, device="cpu",
                              loss_fn=nn.MSELoss(), epochs=3, lr=0.01)
-        posthoc = PostHocCovarNetwork(base, num_covariates=2)
-        posthoc.fit(tr, va, n_lambdas=3)
-        return posthoc.state_dict()
+        refit = RefitCovarNetwork(base, num_covariates=2)
+        refit.fit(tr, va, n_lambdas=3)
+        return refit.state_dict()
 
     def test_same_seed_same_state_dict(self):
         sd1 = self._run_pipeline(seed=123)

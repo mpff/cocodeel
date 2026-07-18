@@ -1,10 +1,4 @@
-"""End-to-end competitor model.
-
-`CovarNetwork` trains f(X) and f(Z) jointly by SGD (NAM-style). It is a
-benchmark for the post-hoc refit, not part of the method: under
-concurvity the jointly trained effects need not identify f(X) and f(Z)
-separately, which is the failure mode the paper's simulations expose.
-"""
+"""End-to-end competitor model: `CovarNetwork` trains f(X) and f(Z) jointly by SGD (NAM-style)."""
 import torch
 import torch.nn as nn
 

@@ -8,7 +8,7 @@ class DummyBackbone(nn.Module):
     `identity=True` initialises the linear map to the (rectangular)
     identity with zero bias, making the backbone an exact pass-through of
     the first `out_features` flattened input features — the analytical
-    setting used to validate the posthoc ridge solve against known
+    setting used to validate the refit ridge solve against known
     coefficients.
     """
 

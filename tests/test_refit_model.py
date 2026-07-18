@@ -11,14 +11,14 @@ from torch.utils.data import DataLoader
 
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 from tests.conftest import DummyBackbone
 
 rtol, atol = 1e-2, 1e-2
 
 
-class TestPostHocLinearCovarNetwork(unittest.TestCase):
+class TestRefitLinearCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def setUp(self):
@@ -47,7 +47,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def test_initialization(self):
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -70,7 +70,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def test_forward_shape(self):
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -81,8 +81,8 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertEqual(y.shape, (4, 1))
 
     @torch.no_grad()
-    def test_posthoc_with_lam0_gives_sensible_fit(self):
-        model = PostHocCovarNetwork(
+    def test_refit_with_lam0_gives_sensible_fit(self):
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -91,7 +91,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertEqual(model.is_centered, False)
         self.assertEqual(model.intercept, torch.zeros(1))
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=1e-6))
-        # Fit post-hoc model.
+        # Fit refit model.
         model.fit(self.train_dataloader, self.val_dataloader, lam=0.0)  # No penalty
         # Build comparison model for validation.
         val_model = LinearRegression()
@@ -104,8 +104,8 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         torch.testing.assert_close(model.fx.weight.data[0,0], torch.tensor(2.0).float(), rtol=rtol, atol=atol)
 
     @torch.no_grad()
-    def test_posthoc_gives_sensible_fit(self):
-        model = PostHocCovarNetwork(
+    def test_refit_gives_sensible_fit(self):
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -114,7 +114,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertEqual(model.is_centered, False)
         self.assertEqual(model.intercept, torch.zeros(1))
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=1e-6))
-        # Fit post-hoc model.
+        # Fit refit model.
         model.fit(self.train_dataloader, self.val_dataloader, n_lambdas=5) # Find optimal lam via GCV.
         # Refit val_model with best lam for comparison.
         val_model = Ridge(alpha=model.lam.item())
@@ -128,7 +128,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def test_effects_are_centered(self):
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -140,9 +140,9 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(fz_new.mean(dim=0), torch.zeros_like(fz_new.mean(dim=0)), atol=1e-5))
 
     @torch.no_grad()
-    def test_posthoc_penalty_z_shrinks_fz(self):
+    def test_refit_penalty_z_shrinks_fz(self):
         # Unpenalized baseline.
-        model_unpen = PostHocCovarNetwork(
+        model_unpen = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -151,7 +151,7 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         fz_unpen = model_unpen.fz.weight.data[0, 0].item()
 
         # Large penalty_z: fz should be shrunk towards zero.
-        model_pen = PostHocCovarNetwork(
+        model_pen = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -165,9 +165,9 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         self.assertGreater(abs(fz_unpen), abs(fz_pen))  # penalty shrinks fz toward zero
 
     @torch.no_grad()
-    def test_posthoc_save_and_reload_linear(self):
-        # Train posthoc model
-        model = PostHocCovarNetwork(
+    def test_refit_save_and_reload_linear(self):
+        # Train refit model
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -178,9 +178,9 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
         fx_before = model.predict_fx(self.X, self.Z)
         fz_before = model.predict_fz(self.Z)
 
-        # Save posthoc state_dict
+        # Save refit state_dict
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "posthoc_linear.pt")
+            path = os.path.join(tmpdir, "refit_linear.pt")
             torch.save(model.state_dict(), path)
 
             # Recreate BaseNetwork EXACTLY as in setUp
@@ -192,8 +192,8 @@ class TestPostHocLinearCovarNetwork(unittest.TestCase):
                 link=self.link
             )
 
-            # Create fresh posthoc model and load state_dict
-            reloaded = PostHocCovarNetwork(
+            # Create fresh refit model and load state_dict
+            reloaded = RefitCovarNetwork(
                 model=base_model_reloaded,
                 num_covariates=self.num_covariates,
                 orthogonalize=True
@@ -274,7 +274,7 @@ class TestClosedFormRidgeSolution(unittest.TestCase):
     def test_fit_matches_closed_form(self):
         for lam in (0.0, 5.0, 50.0):
             with self.subTest(lam=lam):
-                model = PostHocCovarNetwork(self.base, num_covariates=self.Z.shape[1])
+                model = RefitCovarNetwork(self.base, num_covariates=self.Z.shape[1])
                 model.fit(self.train_loader, self.val_loader, lam=lam)
                 beta_fx, beta_fz, intercept = self._closed_form(torch.tensor(lam))
                 torch.testing.assert_close(model.fx.weight.squeeze(), beta_fx,
@@ -285,7 +285,7 @@ class TestClosedFormRidgeSolution(unittest.TestCase):
                                            rtol=5e-4, atol=5e-4)
 
 
-class TestPostHocLogisticCovarNetwork(unittest.TestCase):
+class TestRefitLogisticCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def setUp(self):
@@ -315,7 +315,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
             
     @torch.no_grad()
     def test_initialization(self):
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -338,7 +338,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         
     @torch.no_grad()  
     def test_forward_shape(self):
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -350,8 +350,8 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.all((y >= 0) & (y <= 1)))  # Check output is in [0, 1]
 
     @torch.no_grad()
-    def test_posthoc_with_lam0_gives_sensible_fit(self):
-        model = PostHocCovarNetwork(
+    def test_refit_with_lam0_gives_sensible_fit(self):
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -360,7 +360,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.assertEqual(model.is_centered, False)
         self.assertEqual(model.intercept, torch.zeros(1))
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=1e-6))
-        # Fit post-hoc model.
+        # Fit refit model.
         model.fit(self.train_dataloader, self.val_dataloader, lam=0.0) # No penalization.
         # After fitting.
         self.assertEqual(model.is_centered, True)
@@ -369,8 +369,8 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         torch.testing.assert_close(model.fx.weight.data[0,0], torch.tensor(1.0).float(), rtol=0.1, atol=0.1)
 
     @torch.no_grad()
-    def test_posthoc_gives_sensible_fit(self):
-        model = PostHocCovarNetwork(
+    def test_refit_gives_sensible_fit(self):
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -379,7 +379,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.assertEqual(model.is_centered, False)
         self.assertEqual(model.intercept, torch.zeros(1))
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=1e-6))
-        # Fit post-hoc model.
+        # Fit refit model.
         model.fit(self.train_dataloader, self.val_dataloader, n_lambdas=5)
         # After fitting.
         self.assertEqual(model.is_centered, True)
@@ -389,7 +389,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
     def test_effects_are_centered(self):
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
         )
@@ -400,9 +400,9 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(fz_new.mean(dim=0), torch.zeros_like(fz_new.mean(dim=0)), atol=1e-5))
 
     @torch.no_grad()
-    def test_posthoc_penalty_z_shrinks_fz(self):
+    def test_refit_penalty_z_shrinks_fz(self):
         # Unpenalized baseline.
-        model_unpen = PostHocCovarNetwork(
+        model_unpen = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -411,7 +411,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         fz_unpen = model_unpen.fz.weight.data[0, 0].item()
 
         # Large penalty_z: fz should be shrunk towards zero.
-        model_pen = PostHocCovarNetwork(
+        model_pen = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=False
@@ -425,9 +425,9 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.assertGreater(abs(fz_unpen), abs(fz_pen))  # penalty shrinks fz toward zero
 
     @torch.no_grad()
-    def test_posthoc_save_and_reload_logistic(self):
-        # Train posthoc model
-        model = PostHocCovarNetwork(
+    def test_refit_save_and_reload_logistic(self):
+        # Train refit model
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -438,9 +438,9 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         fx_before = model.predict_fx(self.X[:self.n//2], self.Z[:self.n//2])
         fz_before = model.predict_fz(self.Z[:self.n//2])
 
-        # Save posthoc state_dict
+        # Save refit state_dict
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "posthoc_logistic.pt")
+            path = os.path.join(tmpdir, "refit_logistic.pt")
             torch.save(model.state_dict(), path)
 
             # Recreate BaseNetwork EXACTLY as in setUp
@@ -452,8 +452,8 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
                 link=self.link
             )
 
-            # Create fresh posthoc model and load state_dict
-            reloaded = PostHocCovarNetwork(
+            # Create fresh refit model and load state_dict
+            reloaded = RefitCovarNetwork(
                 model=base_model_reloaded,
                 num_covariates=self.num_covariates,
                 orthogonalize=True
@@ -472,7 +472,7 @@ class TestPostHocLogisticCovarNetwork(unittest.TestCase):
         self.assertTrue(torch.allclose(model.intercept, reloaded.intercept, atol=atol))
 
 
-class TestHighDimensionalPostHocFit(unittest.TestCase):
+class TestHighDimensionalRefit(unittest.TestCase):
 
     @torch.no_grad()
     def setUp(self):
@@ -510,8 +510,8 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
         )
 
     @torch.no_grad()
-    def test_posthoc_identifies_effects(self):
-        model = PostHocCovarNetwork(
+    def test_refit_identifies_effects(self):
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -520,7 +520,7 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
         self.assertEqual(model.is_centered, False)
         self.assertEqual(model.intercept, torch.zeros(1))
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=atol))
-        # Fit post-hoc model.
+        # Fit refit model.
         model.fit(self.train_dataloader, self.val_dataloader, n_lambdas=5)
         # After fitting.
         self.assertEqual(model.is_centered, True)
@@ -528,8 +528,8 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
         torch.testing.assert_close(model.fz.weight.data[0,0], torch.tensor(3.0).float(), rtol=rtol, atol=atol)
 
     @torch.no_grad()
-    def test_posthoc_identifies_effects_for_correlated_data(self):
-        model = PostHocCovarNetwork(
+    def test_refit_identifies_effects_for_correlated_data(self):
+        model = RefitCovarNetwork(
             model=self.base_model,
             num_covariates=self.num_covariates,
             orthogonalize=True
@@ -538,7 +538,7 @@ class TestHighDimensionalPostHocFit(unittest.TestCase):
         self.assertEqual(model.is_centered, False)
         self.assertEqual(model.intercept, torch.zeros(1))
         self.assertTrue(torch.allclose(model.orth.weight.data, torch.zeros(self.num_covariates, 1), atol=atol))
-        # Fit post-hoc model with penalty
+        # Fit refit model with penalty
         model.fit(self.train_dataloader_corr, self.val_dataloader_corr, n_lambdas=5)
         # After fitting.
         self.assertEqual(model.is_centered, True)
@@ -593,7 +593,7 @@ class TestHighDimRegression(unittest.TestCase):
         λ=2e5 >> 150: shrinkage factor σ_j / (σ_j² + λ) ≈ 0 for every direction.
         β_fx ≈ 0. This motivates restricting regularization to the identifiable subspace.
         """
-        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model = RefitCovarNetwork(self.base_model, num_covariates=1)
         model.fit(self.train_loader, self.val_loader, lam=2e5)
         fx = model.predict_fx(self.H[:self.ntrain], self.Z[:self.ntrain])
         self.assertLess(fx.std().item(), 0.1,
@@ -625,20 +625,20 @@ class TestHighDimRegression(unittest.TestCase):
                            backbone_params={'in_features': d, 'out_features': d,
                                             'identity': True},
                            num_covariates=1, link="identity")
-        model = PostHocCovarNetwork(base, num_covariates=1)
+        model = RefitCovarNetwork(base, num_covariates=1)
         model.fit(train_loader, val_loader)
         fz = model.fz.weight.data[0, 0].item()
         self.assertAlmostEqual(fz, 3.0, delta=0.3,
             msg=f"fz={fz:.3f}, expected ~3.0 ± 0.3")
 
     def test_refit_preserves_fx_signal(self):
-        """Post-hoc refit retains fx signal: std(fx) > 0.5 when a real effect exists.
+        """Refit retains fx signal: std(fx) > 0.5 when a real effect exists.
 
         d=64, N=200 (ntrain=150), lam=10 (lam/σ_max²≈7%). After FWL residualization
         and ridge regression, the estimated β_fx should pick up the true signal in
         H[:,0] and produce non-trivial predictions.
         """
-        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model = RefitCovarNetwork(self.base_model, num_covariates=1)
         model.fit(self.train_loader, self.val_loader, lam=10.0)
         fx = model.predict_fx(self.H[:self.ntrain], self.Z[:self.ntrain])
         self.assertGreater(fx.std().item(), 0.5,
@@ -651,7 +651,7 @@ class TestHighDimRegression(unittest.TestCase):
         β_fx (resid_X = X - Z(Z'Z)⁻¹Z'X) ensures the estimated fx is approximately
         orthogonal to Z. This holds whenever λ is not so large that fx ≈ 0.
         """
-        model = PostHocCovarNetwork(self.base_model, num_covariates=1)
+        model = RefitCovarNetwork(self.base_model, num_covariates=1)
         model.fit(self.train_loader, self.val_loader, lam=10.0)
         fx = model.predict_fx(self.H[:self.ntrain], self.Z[:self.ntrain]).squeeze()
         z  = self.Z[:self.ntrain].squeeze()
@@ -687,7 +687,7 @@ class TestHighDimRegression(unittest.TestCase):
                                backbone_params={'in_features': d, 'out_features': d,
                                                 'identity': True},
                                num_covariates=1, link="identity")
-            model = PostHocCovarNetwork(base, num_covariates=1)
+            model = RefitCovarNetwork(base, num_covariates=1)
             model.fit(train_loader, val_loader, lam=lam)
             fz_values.append(model.fz.weight.data[0, 0].item())
 
@@ -723,7 +723,7 @@ class TestHighDimRegression(unittest.TestCase):
                                backbone_params={'in_features': d, 'out_features': d,
                                                 'identity': True},
                                num_covariates=1, link="identity")
-            model = PostHocCovarNetwork(base, num_covariates=1)
+            model = RefitCovarNetwork(base, num_covariates=1)
             model.fit(train_loader, val_loader, lam=lam)
             fz_values.append(model.fz.weight.data[0, 0].item())
 
@@ -803,7 +803,7 @@ class TestHighDimRegression(unittest.TestCase):
         # --- A: Ridge (auto λ) ---
         import copy
         base_a = copy.deepcopy(base)
-        model_ridge = PostHocCovarNetwork(base_a, num_covariates=1)
+        model_ridge = RefitCovarNetwork(base_a, num_covariates=1)
         model_ridge.fit(tl, vl, n_lambdas=5)
         fx_ridge = model_ridge.predict_fx(H[:ntrain], Z[:ntrain]).squeeze().numpy()
         corr_z_ridge = numpy.corrcoef(z_train, fx_ridge)[0, 1]
@@ -811,7 +811,7 @@ class TestHighDimRegression(unittest.TestCase):
 
         # --- B: Near-zero λ (OLS-like) ---
         base_b = copy.deepcopy(base)
-        model_ols = PostHocCovarNetwork(base_b, num_covariates=1)
+        model_ols = RefitCovarNetwork(base_b, num_covariates=1)
         model_ols.fit(tl, vl, lam=0.01)
         fx_ols = model_ols.predict_fx(H[:ntrain], Z[:ntrain]).squeeze().numpy()
         corr_z_ols = numpy.corrcoef(z_train, fx_ols)[0, 1]
@@ -819,7 +819,7 @@ class TestHighDimRegression(unittest.TestCase):
 
         # --- C: Ridge + orthogonalization ---
         base_c = copy.deepcopy(base)
-        model_orth = PostHocCovarNetwork(base_c, num_covariates=1, orthogonalize=True)
+        model_orth = RefitCovarNetwork(base_c, num_covariates=1, orthogonalize=True)
         model_orth.fit(tl, vl, n_lambdas=5)
         fx_orth = model_orth.predict_fx(H[:ntrain], Z[:ntrain]).squeeze().numpy()
         corr_z_orth = numpy.corrcoef(z_train, fx_orth)[0, 1]
@@ -838,10 +838,10 @@ class TestHighDimRegression(unittest.TestCase):
         self.assertGreater(abs(corr_z_base), 0.3,
             msg=f"Base fx should be Z-correlated: corr={corr_z_base:.3f}")
 
-        # B. Ridge posthoc RETAINS Z-correlation — the true signal genuinely
+        # B. Ridge refit RETAINS Z-correlation — the true signal genuinely
         #    uses the Z-correlated feature (PC0). This is correct, not a bug.
         self.assertGreater(abs(corr_z_ridge), 0.15,
-            msg=f"Ridge posthoc should retain Z-correlation when signal shares "
+            msg=f"Ridge refit should retain Z-correlation when signal shares "
                 f"confounded direction: corr={corr_z_ridge:.3f}")
 
         # C. OLS also retains Z-correlation — same reason.
@@ -855,7 +855,7 @@ class TestHighDimRegression(unittest.TestCase):
 
     @torch.no_grad()
     def test_disentangle_ridge_vs_entanglement(self):
-        """Separates two causes of unchanged Corr(Z, fx) after posthoc refit.
+        """Separates two causes of unchanged Corr(Z, fx) after refit.
 
         Cause 1 (ridge): large λ lets through OVB → debiasing blocked.
         Cause 2 (entanglement): true signal shares confounded direction → nothing to debias.
@@ -892,7 +892,7 @@ class TestHighDimRegression(unittest.TestCase):
             w_noZ = torch.linalg.lstsq(H[:ntrain], y[:ntrain]).solution
             fx_base = (H[ntrain:] @ w_noZ).squeeze().numpy()
 
-            # Posthoc: FWL with given λ.
+            # Refit: FWL with given λ.
             base = BaseNetwork(backbone=DummyBackbone,
                                backbone_params={'in_features': d, 'out_features': d,
                                                 'identity': True},
@@ -904,7 +904,7 @@ class TestHighDimRegression(unittest.TestCase):
             vl = DataLoader(CovarDataset(H[ntrain:], Z[ntrain:], y[ntrain:]),
                             batch_size=64, shuffle=False)
 
-            phm = PostHocCovarNetwork(base, num_covariates=1)
+            phm = RefitCovarNetwork(base, num_covariates=1)
             phm.fit(tl, vl, lam=lam)
             fx_ph = phm.predict_fx(H[ntrain:], Z[ntrain:]).squeeze().numpy()
 
@@ -953,12 +953,12 @@ class TestHighDimRegression(unittest.TestCase):
                 f"— entanglement dominates regardless of λ")
 
 
-class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
-    """Regression test: PostHocCovarNetwork.fit works when the refit loader's
+class TestFitWithDisjointRefitLoader(unittest.TestCase):
+    """Regression test: RefitCovarNetwork.fit works when the refit loader's
     observations are disjoint from the sample used to pretrain the backbone.
 
     This is the `sample-split` recipe — the backbone was fit on sample A; the
-    posthoc is refitted on sample B. Exogeneity of H = phi(X_B; theta*) is then
+    refit is refitted on sample B. Exogeneity of H = phi(X_B; theta*) is then
     restored (Pagan 1984 generated regressors). The test verifies the API runs
     cleanly and recovers centered effects on a disjoint sample.
     """
@@ -998,10 +998,10 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         self.base = self.base.center_effects(self.tr_A)  # center on the A-sample
 
     @torch.no_grad()
-    def test_posthoc_runs_on_disjoint_refit_sample(self):
-        """Split recipe: backbone on A, posthoc refit on B. Must run and
+    def test_refit_runs_on_disjoint_refit_sample(self):
+        """Split recipe: backbone on A, refit on B. Must run and
         recover effects close to truth."""
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base,
             num_covariates=self.num_covariates,
             orthogonalize=False,
@@ -1022,10 +1022,10 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         )
 
     @torch.no_grad()
-    def test_posthoc_fx_centered_on_refit_sample(self):
+    def test_refit_fx_centered_on_refit_sample(self):
         """After refit on B, f̂_X and f̂_Z should be mean-zero on B (the refit
         sample's centering), not on A."""
-        model = PostHocCovarNetwork(
+        model = RefitCovarNetwork(
             model=self.base,
             num_covariates=self.num_covariates,
             orthogonalize=False,
@@ -1046,46 +1046,46 @@ class TestPostHocFitWithDisjointRefitLoader(unittest.TestCase):
         fires on every call. Once IRLS has set `fz.weight ≠ 0`, this silently
         shifts the intercept by `fz.weight · μ_z_B` — corrupting predictions.
         """
-        posthoc = PostHocCovarNetwork(
+        refit = RefitCovarNetwork(
             model=self.base,
             num_covariates=self.num_covariates,
             orthogonalize=False,
         )
-        posthoc.fit(self.tr_B, self.va_B, lam=0.0)
+        refit.fit(self.tr_B, self.va_B, lam=0.0)
 
-        intercept_before = posthoc.intercept.clone()
-        pred_before = posthoc(self.X_B[:20], self.Z_B[:20]).clone()
+        intercept_before = refit.intercept.clone()
+        pred_before = refit(self.X_B[:20], self.Z_B[:20]).clone()
 
-        posthoc.center_effects(self.tr_B)  # re-center on the same loader
+        refit.center_effects(self.tr_B)  # re-center on the same loader
 
-        torch.testing.assert_close(posthoc.intercept, intercept_before, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(refit.intercept, intercept_before, rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(
-            posthoc(self.X_B[:20], self.Z_B[:20]), pred_before, rtol=1e-5, atol=1e-5
+            refit(self.X_B[:20], self.Z_B[:20]), pred_before, rtol=1e-5, atol=1e-5
         )
 
     @torch.no_grad()
     def test_fit_on_B_uses_B_centered_means(self):
         """Invariant: after `.fit(B)` with `base.center_effects(A)`, the
-        posthoc's centering means must reflect B — not A. Intercept is fit on
+        refit's centering means must reflect B — not A. Intercept is fit on
         B (by IRLS), so the centers have to match B as well."""
-        posthoc = PostHocCovarNetwork(
+        refit = RefitCovarNetwork(
             model=self.base,
             num_covariates=self.num_covariates,
             orthogonalize=False,
         )
-        posthoc.fit(self.tr_B, self.va_B, lam=0.0)
+        refit.fit(self.tr_B, self.va_B, lam=0.0)
 
-        X_B_feat, Z_B_feat, _ = posthoc._extract_features_from_loader(self.tr_B)
+        X_B_feat, Z_B_feat, _ = refit._extract_features_from_loader(self.tr_B)
         torch.testing.assert_close(
-            posthoc.center_x.mean, X_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
+            refit.center_x.mean, X_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
         )
         torch.testing.assert_close(
-            posthoc.center_z.mean, Z_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
+            refit.center_z.mean, Z_B_feat.mean(dim=0), rtol=1e-5, atol=1e-5,
         )
 
 
 class TestSampleSplitRecoversKnownEffects(unittest.TestCase):
-    """Split recipe (backbone trained on A, posthoc refit on disjoint B)
+    """Split recipe (backbone trained on A, refit on disjoint B)
     recovers known linear effects — continuous and binary outcome.
 
     The refit runs unpenalized (lam=0): ridge shrinkage of fx would
@@ -1126,7 +1126,7 @@ class TestSampleSplitRecoversKnownEffects(unittest.TestCase):
         loss = torch.nn.MSELoss() if link == "identity" else torch.nn.BCELoss()
         base = covar_trainer(BaseNetwork, model_params, tr_A, va_A, device="cpu",
                              loss_fn=loss, epochs=60, lr=0.01, patience=20)
-        model = PostHocCovarNetwork(base, num_covariates=1).fit(tr_B, va_B, lam=0.0)
+        model = RefitCovarNetwork(base, num_covariates=1).fit(tr_B, va_B, lam=0.0)
 
         fx_hat = model.predict_fx(X_B, Z_B).squeeze()
         corr = torch.corrcoef(torch.stack([fx_hat, X_B[:, 0]]))[0, 1].item()
@@ -1275,7 +1275,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         """
         import copy
         train_dl, val_dl = self._make_loaders(self.y_no_x)
-        model = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model = RefitCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
         model.fit(train_dl, val_dl, lam=0.1, max_iters=50, tol=1e-2)
         rec = model.lambda_path_[0]
 
@@ -1292,7 +1292,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         """New criterion converges on standard logistic problem with both effects."""
         import copy
         train_dl, val_dl = self._make_loaders(self.y_both)
-        model = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model = RefitCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
         model.fit(train_dl, val_dl, lam=0.1, max_iters=50, tol=1e-2)
         rec = model.lambda_path_[0]
 
@@ -1318,7 +1318,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         lam, penalty_z, tol, eps = 1e4, torch.tensor([[1e4]]), 1e-2, 1e-5
 
         train_dl, _ = self._make_loaders(self.y_null)
-        model = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model = RefitCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
         model.center_effects(train_dl)
         X_raw, Z_raw, y_raw = model._extract_features_from_loader(train_dl)
         X_c = model.center_x(X_raw)
@@ -1394,12 +1394,12 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
         train_dl, val_dl = self._make_loaders(self.y_null)
 
         # ---- New criterion (via fit) ----
-        model_new = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model_new = RefitCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
         model_new.fit(train_dl, val_dl, lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z)
         n_new = model_new.lambda_path_[0]["n_iters"]
 
         # ---- Old criterion (direct call, same standardized data) ----
-        model_old = PostHocCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
+        model_old = RefitCovarNetwork(copy.deepcopy(self.base_model), num_covariates=1)
         model_old.center_effects(train_dl)
         X_raw, Z_raw, y_raw = model_old._extract_features_from_loader(train_dl)
         X_c = model_old.center_x(X_raw)
@@ -1446,7 +1446,7 @@ class TestRecenter(unittest.TestCase):
             backbone_params={"in_features": p, "out_features": p, "identity": True},
             num_covariates=q, link=link,
         )
-        model = PostHocCovarNetwork(base, num_covariates=q, orthogonalize=orthogonalize)
+        model = RefitCovarNetwork(base, num_covariates=q, orthogonalize=orthogonalize)
         model.fit(tr, va, lam=0.5)
         return model
 

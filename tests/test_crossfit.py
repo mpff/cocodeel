@@ -6,13 +6,13 @@ from torch.utils.data import DataLoader
 from cocodeel.crossfit import CrossFitEnsemble
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 from tests.conftest import DummyBackbone
 
 
 def _fold(seed_backbone, seed_refit, link, n=200):
-    """Sample-split recipe for one fold: backbone on A, posthoc refit on B."""
+    """Sample-split recipe for one fold: backbone on A, refit on B."""
     def sample(seed):
         g = torch.Generator().manual_seed(seed)
         X = torch.randn(n, 3, generator=g)
@@ -37,7 +37,7 @@ def _fold(seed_backbone, seed_refit, link, n=200):
         dict(backbone=DummyBackbone, backbone_params=dict(in_features=3, out_features=3), link=link),
         trA, vaA, device="cpu", loss_fn=loss, epochs=40, lr=0.01, patience=15,
     )
-    model = PostHocCovarNetwork(base, num_covariates=1, orthogonalize=False)
+    model = RefitCovarNetwork(base, num_covariates=1, orthogonalize=False)
     model.fit(trB, vaB, lam=0.1)
     return model, torch.cat([XA, XB]), torch.cat([ZA, ZB])
 

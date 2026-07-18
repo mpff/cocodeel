@@ -5,16 +5,8 @@ from cocodeel.model import BaseNetwork
 from cocodeel.transform import Center
 
 
-class PostHocCovarNetwork(BaseNetwork):
-    """
-    Post-hoc fitted Neural Network with centered features and linear covariate effects.
-    Optionally orthogonalizes covariates to feature effects.
-
-    Steps:
-    1. Centers features, covariates, and targets.
-    2. Fits a ridge regression (glmnet in R) combining feature and covariate contributions.
-    3. Optionally fits an orthogonalization matrix so that covariates are orthogonal to features.
-    """
+class RefitCovarNetwork(BaseNetwork):
+    """Refits a pretrained backbone's head as eta = intercept + f_X(X) + f_Z(Z) via ridge-penalized IRLS backfitting."""
 
     def __init__(self, model, num_covariates, orthogonalize=False):
         super().__init__(
@@ -73,16 +65,10 @@ class PostHocCovarNetwork(BaseNetwork):
     # Fitting methods
     # -------------------------------------------------------------------------
     def fit(self, train_dataloader, val_dataloader, lam=None, max_iters=50, tol=1e-2, penalty_z=None, n_lambdas=100):
-        """Fit post-hoc ridge regression (and optionally orthogonalization).
-
-        Args:
-            penalty_z: Optional fixed penalty matrix for fz, shape (num_covariates, num_covariates).
-                Build on the *standardized* Z scale (after center_z and Z_std division).
-                _solve_fixed_lambda receives already-standardized Z, so penalty_z is applied
-                in that scale directly.
-                _fit_orthogonalization still operates on the centered (not standardized) scale.
-                Typical use: P-spline roughness penalty for spline-expanded covariates.
-        """
+        """Fit centering, the ridge/IRLS effects, and (optionally) the orthogonalization term."""
+        # penalty_z (num_covariates x num_covariates), e.g. a P-spline roughness
+        # penalty, must be built on the standardized Z scale for _fit_effects;
+        # _fit_orthogonalization applies it on the centered (unstandardized) scale.
         self.center_effects(train_dataloader)
         self._fit_effects(train_dataloader, val_dataloader, lam=lam, max_iters=max_iters, tol=tol, penalty_z=penalty_z, n_lambdas=n_lambdas)
         if self.orthogonalize:
@@ -91,29 +77,17 @@ class PostHocCovarNetwork(BaseNetwork):
     
     @torch.no_grad()
     def center_effects(self, dataloader):
-        """Fit centering means on `dataloader`.
-
-        The intercept is intentionally NOT adjusted here: `_fit_effects`
-        refits the intercept via IRLS on the same dataloader, so the
-        intercept and the centering means end up derived from the same
-        fold (the split-sample invariant).
-        """
+        """Fit centering means on `dataloader`; the intercept is refit by IRLS on the same sample."""
         self._fit_centers_from_loader(dataloader)
         self.is_centered.fill_(True)
         return self
 
     @torch.no_grad()
     def recenter(self, loader):
-        """Re-express f_X, f_Z on `loader`'s sample without refitting.
-
-        Shifts the intercept to exactly compensate for the new center_x/
-        center_z, so eta (and every prediction) is unchanged for any input;
-        only the zero-point of the reported f_X/f_Z components moves. Exact
-        for any link, since eta is linear in the centered features and the
-        link only maps eta to mu, never entering eta's own definition. Used
-        to put several fold-fitted models on a common reference before
-        averaging them into a cross-fit ensemble (see crossfit.py).
-        """
+        """Re-express f_X, f_Z relative to `loader`'s sample means; eta is unchanged for every input."""
+        # The intercept shift compensates the new centers exactly, for any
+        # link: eta is linear in the centered features, and the link never
+        # enters eta's own definition.
         X, Z, _ = self._extract_features_from_loader(loader)
         cx_new = X.mean(dim=0)
         cz_new = Z.mean(dim=0)
@@ -153,7 +127,7 @@ class PostHocCovarNetwork(BaseNetwork):
         Z_val = self.center_z(Z_val)
 
         # ---- Build lambda path ---- (see glmnet paper)
-        lambda_max = self._get_lambda_max(X_train, Z_train, y_train)
+        lambda_max = self._get_lambda_max(X_train, y_train)
         if X_train.shape[0] < X_train.shape[1]:
             lambda_min = 1e-3 * lambda_max  # More aggressive regularization for high-dimensional case.
         else:
@@ -283,15 +257,14 @@ class PostHocCovarNetwork(BaseNetwork):
         return self
 
     @torch.no_grad()
-    def _get_lambda_max(self, X, Z, y):
-        """Compute lambda_max for ridge regression."""
-        # See glmnet paper for details on lambda path calculation.
-        # N * alpha * lambda_max = max_p |X_j'y| with centered X and y.
-        # for ridge: alpha = 0.001 in lambda max calculation.
+    def _get_lambda_max(self, X, y):
+        """Compute lambda_max for the ridge path (glmnet convention)."""
+        # N * alpha * lambda_max = max_j |X_j'y| with centered X and y;
+        # glmnet uses alpha = 0.001 in the ridge case.
         N = X.shape[0]
         y = self.center_y(y)
         alpha = 0.001
-        lambda_max = torch.max(torch.abs(X.T @ y)) / N / alpha 
+        lambda_max = torch.max(torch.abs(X.T @ y)) / N / alpha
         return lambda_max
 
     @torch.no_grad()

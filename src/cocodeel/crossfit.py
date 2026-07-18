@@ -1,24 +1,14 @@
-"""Cross-fitted ensemble of PostHocCovarNetwork models.
-
-Combines K already-fitted, disjoint-fold PostHocCovarNetworks into the
-paper's cross-fitted ensemble (Definition: Cross-fitted ensemble model).
-Owns no parameters and does no fitting itself — the caller trains each
-fold's backbone on the complementary K-1 folds and refits its
-PostHocCovarNetwork before construction (see DESIGN.md, Non-goals).
-"""
+"""Cross-fitted ensemble of already-fitted, disjoint-fold RefitCovarNetwork models."""
 import torch
 
 
 class CrossFitEnsemble:
-    """K-fold cross-fit ensemble: recenter every fold, then average.
+    """K-fold cross-fit ensemble: eta_hat = (1/K) sum_k eta_k, with the link applied once."""
 
-    eta_hat(X, Z) = (1/K) sum_k eta_k(X, Z), with the link applied once —
-    never per fold, since mean_k(sigmoid(eta_k)) != sigmoid(mean_k(eta_k))
-    under a nonlinear link (Jensen). Call `.recenter(loader)` before
-    reporting f_X/f_Z so every fold shares one reference population;
-    recentering never changes predictions (see PostHocCovarNetwork.recenter),
-    so calling it is optional for eta/forward alone.
-    """
+    # The link is never applied per fold: mean_k(g^-1(eta_k)) != g^-1(mean_k(eta_k))
+    # for a nonlinear link (Jensen). Call .recenter(loader) before reporting
+    # f_X/f_Z so all folds share one reference population; recentering never
+    # changes eta or predictions.
 
     def __init__(self, models):
         self.models = list(models)

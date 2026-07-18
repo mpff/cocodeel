@@ -42,9 +42,7 @@ class PostHocOrthNetwork(BaseNetwork):
         return torch.zeros(z.shape[0], 1, device=z.device)
 
     def fit(self, train_dataloader, val_dataloader=None):
-        """Fit on the training data. `val_dataloader` is accepted for
-        interface uniformity with `PostHocCovarNetwork.fit` and ignored —
-        orthogonalization has no hyperparameter to validate."""
+        """Fit on the training data; `val_dataloader` is accepted and ignored (interface parity with `RefitCovarNetwork.fit`)."""
         self.center_effects(train_dataloader)
         self._fit_orthogonalization(train_dataloader)
         return self
@@ -119,9 +117,7 @@ class SemiStructuredNetwork(CovarNetwork):
         return fz
 
     def fit(self, train_dataloader, val_dataloader=None):
-        """Fit on the training data. `val_dataloader` is accepted for
-        interface uniformity with `PostHocCovarNetwork.fit` and ignored —
-        orthogonalization has no hyperparameter to validate."""
+        """Fit on the training data; `val_dataloader` is accepted and ignored (interface parity with `RefitCovarNetwork.fit`)."""
         self.center_effects(train_dataloader)
         self._fit_orthogonalization(train_dataloader)
         return self
