@@ -182,7 +182,7 @@ class TestLogisticTraining(unittest.TestCase):
                                    torch.tensor(3.0), rtol=0.2, atol=0.2)
 
     def test_train_logistic_covar_model(self):
-        # Fit Post-hoc Covariate model.
+        # Fit end-to-end covariate model.
         model = covar_trainer(
             model=CovarNetwork,
             model_params=self.model_params,

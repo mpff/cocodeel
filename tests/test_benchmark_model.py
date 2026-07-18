@@ -169,7 +169,7 @@ class TestLinearBenchmarks(unittest.TestCase):
             places=6)
 
     def test_train_linear_covar_model(self):
-        # Fit Post-hoc Covariate model.
+        # Fit end-to-end covariate model, then wrap in SSN.
         base_model = covar_trainer(
             model=CovarNetwork,
             model_params=self.model_params,
@@ -270,7 +270,7 @@ class TestLogisticBenchmarks(unittest.TestCase):
             places=6)
 
     def test_train_linear_covar_model(self):
-        # Fit Post-hoc Covariate model.
+        # Fit end-to-end covariate model, then wrap in SSN.
         base_model = covar_trainer(
             model=CovarNetwork,
             model_params=self.model_params,
