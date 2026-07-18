@@ -165,8 +165,35 @@ class TestLinearBenchmarks(unittest.TestCase):
         self.assertEqual(preds.shape, self.y.shape)
         self.assertAlmostEqual(
             model.intercept.item(),
-            intercept + model.fx(model.center_x.mean).item() - model.orth(model.center_z.mean).item(),
+            intercept + model.fx(model.center_x.mean).item(),
             places=6)
+        # Orthogonalization is mean-zero on the fit sample: eta means match.
+        with torch.no_grad():
+            eta_base = base_model(self.X[:140], self.Z[:140])
+            eta_web = model(self.X[:140], self.Z[:140])
+        self.assertAlmostEqual(eta_base.mean().item(), eta_web.mean().item(), places=4)
+
+    def test_wrapping_centered_base_preserves_intercept(self):
+        # A base model that already ran center_effects must not be shifted
+        # a second time by the wrapper's fit.
+        base_model = covar_trainer(
+            model=BaseNetwork,
+            model_params=self.model_params,
+            train_loader=self.train_loader,
+            val_loader=self.val_loader,
+            device='cpu',
+            loss_fn=self.loss_fn,
+            epochs=2,
+            lr=0.01
+        ).eval()
+        base_model.center_effects(self.train_loader)
+        model = PostHocOrthNetwork(
+            model=base_model,
+            num_covariates=self.num_covariates
+        )
+        self.assertEqual(model.is_centered, True)
+        model.fit(self.train_loader, self.val_loader)
+        self.assertAlmostEqual(model.intercept.item(), base_model.intercept.item(), places=6)
 
     def test_train_linear_covar_model(self):
         # Fit end-to-end covariate model, then wrap in SSN.
@@ -266,7 +293,7 @@ class TestLogisticBenchmarks(unittest.TestCase):
         self.assertEqual(preds.shape, self.y.shape)
         self.assertAlmostEqual(
             model.intercept.item(),
-            intercept + model.fx(model.center_x.mean).item() - model.orth(model.center_z.mean).item(),
+            intercept + model.fx(model.center_x.mean).item(),
             places=6)
 
     def test_train_linear_covar_model(self):

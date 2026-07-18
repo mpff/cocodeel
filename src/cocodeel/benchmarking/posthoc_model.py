@@ -25,7 +25,6 @@ class PostHocOrthNetwork(BaseNetwork):
         self.orth.weight.data.fill_(0.0)  # Initialize orthogonalization to 0.
 
         self.center_z = Center(self.num_covariates)
-        self.register_buffer('is_centered', torch.tensor(False))
 
     def forward(self, x, z):
         return self.output_func(self.intercept + self.predict_fx(x, z))
@@ -50,36 +49,30 @@ class PostHocOrthNetwork(BaseNetwork):
     @torch.no_grad()
     def center_effects(self, dataloader):
         """Center X, Z, and y using the dataloader."""
-
-        if self.is_centered:
-            return self
-
         X, Z, y = self._extract_features_from_loader(dataloader)
-
-        self.center_x.fit(X)
         self.center_z.fit(Z)
         self.center_y.fit(y)
-
-        self.intercept.data += self.fx(self.center_x.mean)
-        self.is_centered.data = torch.tensor(True)
+        # A wrapped model that was already centered carries its intercept
+        # shift in the loaded state dict; shifting again would bias eta by
+        # fx(mean_x).
+        if not self.is_centered:
+            self.center_x.fit(X)
+            self.intercept.data += self.fx(self.center_x.mean)
+            self.is_centered.data = torch.tensor(True)
         return self
 
     @torch.no_grad()
     def _fit_orthogonalization(self, dataloader):
         """Fit linear orthogonalization term via least squares on (Z, fX)."""
-
         X, Z, _ = self._extract_features_from_loader(dataloader)
-
         X = self.center_x(X)
         Z = self.center_z(Z)
         fX = self.fx(X)
-
-        # Solve Z * beta = fX
+        # Solve Z * beta = fX. predict_fx subtracts orth on centered Z, a
+        # mean-zero term on the fit sample — the intercept needs no
+        # compensation.
         solution = torch.linalg.lstsq(Z, fX).solution
         self.orth.weight.copy_(solution.T)
-
-        # Update intercept to account for orthogonalization shift
-        self.intercept.data -= self.orth(self.center_z.mean)
 
 
 class SemiStructuredNetwork(CovarNetwork):
