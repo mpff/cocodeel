@@ -1,4 +1,4 @@
-"""Adversarial confound-predictor baseline (Zhao, Adeli & Pohl 2020; br-net).
+"""Adversarial confound-predictor baseline: CF-Net (Zhao, Adeli & Pohl 2020).
 
 Trains a Z-free `BaseNetwork` end-to-end while an auxiliary confound
 predictor is used adversarially to push backbone features toward zero
@@ -7,9 +7,10 @@ semi-structured baselines: it enforces E[f_X(X)|Z] = 0 during training
 instead of after the fact, but Proposition 2 shows both routes converge to
 the same biased estimate of f_X^re, not f_X. Not part of the method itself.
 
-Reimplements https://github.com/qingyuzhao/br-net/ against this package's
-`_BaseCovarNetwork`/`covar_trainer` conventions rather than porting the
-original Keras code line-for-line.
+Reimplements CF-Net (Nature Communications, DOI 10.1038/s41467-020-19784-9;
+reference code at https://github.com/qingyuzhao/br-net/) against this
+package's `_BaseCovarNetwork`/`covar_trainer` conventions rather than
+porting the original Keras code line-for-line.
 """
 import torch
 import torch.nn as nn
@@ -53,9 +54,9 @@ def adversarial_trainer(
     device=None,
     loss_fn=None,
     epochs=1000,
-    lr_task=1e-4,
-    lr_adv=2e-4,
+    lr_task=2e-4,
     lr_cp=2e-4,
+    lr_adv=2e-4,
     lam=1.0,
     cp_hidden=16,
     control_label=0,
@@ -65,9 +66,11 @@ def adversarial_trainer(
 
     Three separate Adam optimizers, mirroring the source's three Keras
     models: `lr_task` for (backbone, fx), `lr_adv` for backbone only (the
-    adversarial step), `lr_cp` for the confound predictor. `lam` scales the
-    adversarial loss, matching the paper's Eq. 3 (default 1.0 reproduces the
-    source, which has no explicit weighting term).
+    adversarial step), `lr_cp` for the confound predictor. The equal default
+    rates match the source's main experiments; since the effective
+    adversarial strength is `lam` times the `lr_adv`/`lr_task` ratio,
+    equal rates make `lam` the single strength knob. `lam` scales the
+    adversarial loss, matching the paper's Eq. 3 (default 1.0 as published).
 
     For `link="logit"`, the confound predictor and adversarial step are
     conditioned on `y == control_label`, matching Zhao et al.'s use of the
@@ -77,7 +80,10 @@ def adversarial_trainer(
     ever trains on binary case/control outcomes.
 
     Returns a model with the usual `val_losses_`/`best_epoch_`/`n_epochs_run_`
-    fit-history attributes, plus `confound_head_` (the fitted adversary) and
+    fit-history attributes, plus `confound_head_` (the fitted adversary),
+    `adv_grad_norms_` (per-epoch mean backbone gradient norm of the
+    adversarial step, before clipping — a diagnostic for how much the
+    clip at 1.0, absent in the source, compresses large-`lam` runs), and
     `lr_history_` as a `{"task", "adv", "cp"}` dict rather than a per-epoch
     list, since none of the three rates are scheduled.
     """
@@ -103,10 +109,13 @@ def adversarial_trainer(
     best_epoch = 0
     patience_counter = 0
     val_losses_ = []
+    adv_grad_norms_ = []
 
     for epoch in range(epochs):
         model.train()
         confound_head.train()
+        adv_norm_sum = torch.zeros((), device=device)
+        n_adv_steps = 0
         for batch in train_loader:
             x = batch["X"].to(device, non_blocking=True)
             z = batch["Z"].to(device, non_blocking=True)
@@ -138,8 +147,10 @@ def adversarial_trainer(
                 adv_loss = lam * _squared_corr(z_ctrl, z_pred)
                 adv_optimizer.zero_grad()
                 adv_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.backbone.parameters(), max_norm=1.0)
+                norm = torch.nn.utils.clip_grad_norm_(model.backbone.parameters(), max_norm=1.0)
                 adv_optimizer.step()
+                adv_norm_sum += norm
+                n_adv_steps += 1
                 for p in confound_head.parameters():
                     p.requires_grad_(True)
 
@@ -150,6 +161,8 @@ def adversarial_trainer(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(task_params, max_norm=1.0)
             task_optimizer.step()
+
+        adv_grad_norms_.append((adv_norm_sum / max(1, n_adv_steps)).item())
 
         # validation
         model.eval()
@@ -184,5 +197,6 @@ def adversarial_trainer(
     # dict, not the single per-epoch list covar_trainer attaches: three fixed
     # (unscheduled) rates rather than one scheduled one.
     model.lr_history_ = {"task": lr_task, "adv": lr_adv, "cp": lr_cp}
+    model.adv_grad_norms_ = adv_grad_norms_
     model.confound_head_ = confound_head
     return model.to(device)

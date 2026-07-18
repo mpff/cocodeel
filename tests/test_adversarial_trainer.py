@@ -131,6 +131,9 @@ class TestAdversarialTrainer(unittest.TestCase):
         self.assertTrue(hasattr(model, 'n_epochs_run_'))
         self.assertEqual(model.lr_history_.keys(), {"task", "adv", "cp"})
         self.assertIsInstance(model.confound_head_, ConfoundPredictor)
+        # one pre-clip adversarial gradient norm per epoch, all finite
+        self.assertEqual(len(model.adv_grad_norms_), model.n_epochs_run_)
+        self.assertTrue(all(n >= 0 for n in model.adv_grad_norms_))
 
 
 class TestAdversarialTrainerLogitLink(unittest.TestCase):
