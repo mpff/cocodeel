@@ -34,7 +34,7 @@ from experiments.simulation.hpsearch import _grid_search
 
 
 # ── search config ─────────────────────────────────────────────────────────────
-DEVICE = os.environ.get("COCODEEL_DEVICE", "cuda:1")
+DEVICE = os.environ.get("COCODEEL_DEVICE", "cuda:0")
 N_WORKERS = 4
 Q = 32
 SEED = 0

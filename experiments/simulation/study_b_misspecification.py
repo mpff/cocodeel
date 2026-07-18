@@ -37,7 +37,7 @@ from experiments.simulation.common import grid_runner
 
 
 # ── run config ────────────────────────────────────────────────────────────────
-DEVICE = os.environ.get("COCODEEL_DEVICE", "cuda:1")
+DEVICE = os.environ.get("COCODEEL_DEVICE", "cuda:0")
 N_WORKERS = 4
 NSIM = int(os.environ.get("NSIM", "50"))
 Q = 32
