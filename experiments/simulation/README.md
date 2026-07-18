@@ -14,8 +14,10 @@ reduces to the CSVs the R figure scripts read.
 | `study_c_concurvity_benchmark.py` | `concurvity`, `concurvity_q` | `figures/figure_c1_concurvity.R`, `figure_c2_concurvity_backbone_width.R` |
 
 Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
-2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber), `nam` /
-`nam_conc_*` (CovarNetwork, optional Siems penalty), `ssn`, `adversarial`.
+2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber), `nam`
+(CovarNetwork, linear f(Z)), `nam_mlp` / `nam_mlp_conc_*` (MLPCovarNetwork,
+optional Siems penalty), `ssn`, `cfnet_*` (CF-Net, Zhao et al. 2020, per
+adversarial strength).
 
 ## Layout
 
@@ -27,8 +29,9 @@ Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
 - `aggregate.py` — reduces per-seed NPZ predictions into `output/<sweep>.csv`
   (bias²/variance/MSPE per method and effect).
 - `hpsearch/` — optional: re-derive the hardcoded hyperparameters
-  (`search_default.py`, `search_per_q.py`, `search_per_q_nam.py`, shared
-  driver `_grid_search.py`). The chosen values are committed as JSON.
+  (`search_default.py` for studies A/B; `search_study_c.py` and
+  `search_study_c_q.py` for the per-anchor study-C searches; shared driver
+  `_grid_search.py`). The chosen values are committed as JSON.
 - `figures/` — one R script per figure, reading `output/*.csv`.
 - `count_params.py`, `count_params_sweep.sh` — parameter counts per backbone
   width q (colour scale of `figure_c2`).
@@ -48,7 +51,7 @@ Each study writes to a fixed, resumable run directory
 already on disk, so an interrupted run continues where it stopped and a
 completed run is a no-op. `NSIM=5` (env var) runs a reduced number of seeds
 for a quick trial; the default is 50, and a trial run's seeds are reused by
-the full run. `COCODEEL_DEVICE` overrides the GPU (default `cuda:1`).
+the full run. `COCODEEL_DEVICE` overrides the GPU (default `cuda:0`).
 
 ## Status
 
