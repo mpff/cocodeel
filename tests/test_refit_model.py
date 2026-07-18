@@ -1537,5 +1537,39 @@ class TestSingularRidgeSolve(unittest.TestCase):
         self.assertAlmostEqual(model.fz.weight.item(), 3.0, delta=0.3)
 
 
+class DeadColumnBackbone(torch.nn.Module):
+    """Backbone whose last output column is constant: zero std after centering."""
+
+    def __init__(self, in_features):
+        super().__init__()
+        self.out_features = in_features + 1
+
+    def forward(self, x):
+        return torch.cat([x, torch.ones(x.shape[0], 1)], dim=1)
+
+
+class TestDeadFeatureColumn(unittest.TestCase):
+    """A constant feature column must draw a zero coefficient, not NaN out the solve."""
+
+    def test_fit_succeeds_with_zero_weight_on_dead_column(self):
+        torch.manual_seed(0)
+        n = 200
+        X = torch.randn(n, 3)
+        Z = torch.randn(n, 1)
+        y = 2 * X[:, [0]] + 3 * Z
+        tr = DataLoader(CovarDataset(X[:100], Z[:100], y[:100]), batch_size=50)
+        va = DataLoader(CovarDataset(X[100:], Z[100:], y[100:]), batch_size=50)
+        base = BaseNetwork(
+            backbone=DeadColumnBackbone,
+            backbone_params={'in_features': 3},
+            num_covariates=1,
+            link="identity",
+        )
+        model = RefitCovarNetwork(base, num_covariates=1)
+        model.fit(tr, va, lam=0.1)
+        self.assertEqual(model.fx.weight.data[0, -1].item(), 0.0)
+        self.assertAlmostEqual(model.fz.weight.item(), 3.0, delta=0.3)
+
+
 if __name__ == '__main__':
     unittest.main()

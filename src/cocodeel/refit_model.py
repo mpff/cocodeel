@@ -115,8 +115,11 @@ class RefitCovarNetwork(BaseNetwork):
         X_train = self.center_x(X_train)
         Z_train = self.center_z(Z_train)
 
-        X_std = X_train.std(dim=0, keepdim=True)
-        Z_std = Z_train.std(dim=0, keepdim=True)
+        # Clamped: a constant (dead) feature column has exactly zero std;
+        # dividing by the clamp keeps it exactly zero, so it draws a zero
+        # ridge coefficient instead of poisoning every solve with NaN.
+        X_std = X_train.std(dim=0, keepdim=True).clamp_min(1e-6)
+        Z_std = Z_train.std(dim=0, keepdim=True).clamp_min(1e-6)
 
         X_train = X_train / X_std
         Z_train = Z_train / Z_std
