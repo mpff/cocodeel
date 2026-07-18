@@ -15,7 +15,7 @@ structural MRI.
   (current default).
 - `run_crossfit_prototype.py` — older K=2 A/B mirror; augments `final_v2`
   with role-flipped half.
-- `refit_posthoc.py` — post-hoc refit using existing `base_half` checkpoints.
+- `refit_from_checkpoints.py` — refit using existing `base_half` checkpoints.
 - `figures/UKBB_application_fig.R` — Panel A + B + appendix; reads CSVs
   from `runs/.../rexports/`.
 - `lrp/` — Layer-wise relevance propagation (Panel C) attribution maps.

@@ -28,7 +28,7 @@ sys.path.insert(1, str(code_root / "experiments" / "common"))     # for backbone
 
 from nitorch.transforms import IntensityRescale, ToTensor
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 from backbones import ResNet, Bottleneck
 

@@ -1,30 +1,5 @@
 #!/usr/bin/env python
-"""UKBB HighAlc — sample-split PostHoc final experiment (5-fold).
-
-Supersedes 2026-04-14_..._final/. Same config as that run, plus:
-  - cocodeel main is at a39f2d3 (10 PostHoc fixes since 2026-04-14)
-  - _eval_summary now reports bacc_marg / auc_marg (marginalized predictions);
-    raw_results.csv carries those columns
-
-Per (coef, fold) we fit four models:
-
-  base_full      — BaseNetwork on full training data (2 × 2500 = 5000)
-  base_half      — BaseNetwork on half_1 only (2500)
-  posthoc_age    — PostHocCovarNetwork(base_half) refitted on half_2 (2500), Z = age
-  posthoc_age_sex— PostHocCovarNetwork(base_half) refitted on half_2 (2500), Z = age + sex
-
-Data independence guarantee:  the original observation pool is split into pool_A
-and pool_B BEFORE any synthetic resampling.  half_1 is drawn from pool_A and
-half_2 from pool_B, so no original observation can appear in both halves.
-
-Config (hardcoded — final run):
-    COEFS           = [0.0, 2.0]
-    N_SPLITS        = 5
-    PILOT_FOLDS     = 5          (full CV; set to 1 for fold-0 pilot)
-    NTRAIN_PER_HALF = 2500   (5000 total)
-    NTEST           = 2500
-    GPU             = 0
-"""
+"""UKBB HighAlc sample-split experiment: base_full, base_half, refit_age, refit_age_sex over 5 folds × {coef=0, 2.0}."""
 import os
 import gc
 import json
@@ -47,7 +22,7 @@ from ukbb_common import (
     setup_run_dir, write_manifest,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -103,7 +78,7 @@ write_manifest(results_dir, {
     "NTEST": NTEST,
     "GPU": GPU,
     "BATCH_SIZE": BATCH_SIZE,
-    "methods": ["base_full", "base_half", "posthoc_age", "posthoc_age_sex"],
+    "methods": ["base_full", "base_half", "refit_age", "refit_age_sex"],
     "true_b_age_raw": TRUE_B_AGE_RAW,
     "true_b_sex_raw": TRUE_B_SEX_RAW,
 })
@@ -122,7 +97,7 @@ Z_te = Z_full_test[idx_test]
 
 
 def _test_ld():
-    """Build test DataLoader with raw Z (PostHocCovarNetwork standardizes internally)."""
+    """Build test DataLoader with raw Z (RefitCovarNetwork standardizes internally)."""
     ds = NumpyCovarDataset(X_te, y_te, Z_te, tform)
     return fast_loader(ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
 
@@ -141,14 +116,14 @@ def _collect_preds(model, loader):
             z = batch["Z"].to(device, non_blocking=True)
             if getattr(model, "num_covariates", 0) > 0:
                 # Slice z to the model's expected number of covariates.
-                # The test loader always carries full Z (age+sex); posthoc_age only needs age.
+                # The test loader always carries full Z (age+sex); refit_age only needs age.
                 z_model = z[:, :model.num_covariates]
                 y_hats.append(model(x, z_model).cpu().numpy())
             else:
                 y_hats.append(model(x).cpu().numpy())
             if hasattr(model, "predict_fx"):
                 # BaseNetwork.predict_fx(x) — no z argument.
-                # PostHocCovarNetwork.predict_fx(x, z=None) — z unused when orthogonalize=False.
+                # RefitCovarNetwork.predict_fx(x, z=None) — z unused when orthogonalize=False.
                 if getattr(model, "num_covariates", 0) > 0:
                     fx_hats.append(model.predict_fx(x, z=None).cpu().numpy())
                 else:
@@ -159,11 +134,8 @@ def _collect_preds(model, loader):
 
 
 def _collect_controlled_preds(model, loader, Z_train_raw):
-    """Marginalize over training Z distribution.
-
-    For each test obs: y_ctrl_i = mean_j[ sigmoid(intercept + fx_i + fz(z_j)) ]
-    where j indexes the PostHoc training set (half_2).
-    """
+    """Marginalize predictions over the refit training-Z distribution (half_2)."""
+    # y_ctrl_i = mean_j[ sigmoid(intercept + fx_i + fz(z_j)) ], j over Z_train_raw.
     model.eval()
     y_ctrl = []
     with torch.no_grad():
@@ -179,11 +151,7 @@ def _collect_controlled_preds(model, loader, Z_train_raw):
 
 
 def _eval_summary(name, y_hat, fx_hat, model=None, y_ctrl=None):
-    """Compute per-fold summary metrics.
-
-    When y_ctrl is provided (posthoc models), also compute the marginalized
-    AUC/bacc — the key success metric for confound control in prediction space.
-    """
+    """Per-fold summary metrics; adds marginalized AUC/bacc when y_ctrl is given (refit models)."""
     y_bin = (y_hat >= 0.5).astype(int)
     bacc = balanced_accuracy_score(y_te, y_bin)
     auc = roc_auc_score(y_te, y_hat)
@@ -199,7 +167,7 @@ def _eval_summary(name, y_hat, fx_hat, model=None, y_ctrl=None):
     lam = float("nan")
     if model is not None and hasattr(model, "fz"):
         w = model.fz.weight.data.flatten().cpu().numpy()
-        # fz.weight is de-standardized by PostHocCovarNetwork._fit_effects, so w is
+        # fz.weight is de-standardized by RefitCovarNetwork._fit_effects, so w is
         # already in centered-Z units (= raw-Z units, since centering doesn't change slope).
         # Comparable directly to TRUE_B_AGE_RAW / TRUE_B_SEX_RAW.
         b_age = float(w[0])
@@ -215,16 +183,7 @@ def _eval_summary(name, y_hat, fx_hat, model=None, y_ctrl=None):
 
 
 def _make_loaders(idx_all, fold_seed_inner, Z=None):
-    """Build train/val DataLoaders for a set of global observation indices.
-
-    Raw Z is passed — PostHocCovarNetwork standardizes Z internally during fit.
-    BaseNetwork ignores Z entirely (num_covariates=0).
-
-    idx_all: 1-D array of global indices into X, y, Z_full.
-    Z: covariate array aligned with the full dataset (shape n × ncov).
-       Defaults to Z_full (age + sex).  Pass Z_full[:, 0:1] for age-only loaders.
-    Returns: (tr_loader, va_loader, y_train_labels)
-    """
+    """Stratified train/val DataLoaders over global indices; raw Z (default age+sex) is standardized inside the refit."""
     if Z is None:
         Z = Z_full
     tr_loc, va_loc = train_test_split(
@@ -244,7 +203,7 @@ def _make_loaders(idx_all, fold_seed_inner, Z=None):
 preds_rows = []         # testset_predictions.csv
 ctrl_rows = []          # testset_predictions_controlled.csv
 coef_rows = []          # fitted_coefs.csv
-lambda_rows = []        # posthoc_lambda_paths.csv
+lambda_rows = []        # refit_lambda_paths.csv
 train_rows = []         # trainset_folds.csv
 results_rows = []       # raw_results.csv
 
@@ -365,21 +324,21 @@ for coef in COEFS:
             flush=True,
         )
 
-        # ── 6. PostHoc refit on half_2 ────────────────────────────────────
-        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting posthoc_age ...", flush=True)
-        phm_age = PostHocCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
+        # ── 6. Refit on half_2 ────────────────────────────────────────────
+        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting refit_age ...", flush=True)
+        phm_age = RefitCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
         phm_age = phm_age.fit(h2_age_tr_ld, h2_age_va_ld, max_iters=400, tol=1e-3)
         print(
-            f"[{datetime.datetime.now():%H:%M:%S}]  posthoc_age done. "
+            f"[{datetime.datetime.now():%H:%M:%S}]  refit_age done. "
             f"lam={float(phm_age.lam.data):.3e}",
             flush=True,
         )
 
-        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting posthoc_age_sex ...", flush=True)
-        phm_sex = PostHocCovarNetwork(base_half, num_covariates=2, orthogonalize=False).to(device)
+        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting refit_age_sex ...", flush=True)
+        phm_sex = RefitCovarNetwork(base_half, num_covariates=2, orthogonalize=False).to(device)
         phm_sex = phm_sex.fit(h2_sex_tr_ld, h2_sex_va_ld, max_iters=400, tol=1e-3)
         print(
-            f"[{datetime.datetime.now():%H:%M:%S}]  posthoc_age_sex done. "
+            f"[{datetime.datetime.now():%H:%M:%S}]  refit_age_sex done. "
             f"lam={float(phm_sex.lam.data):.3e}",
             flush=True,
         )
@@ -400,12 +359,12 @@ for coef in COEFS:
         y_ctrl_phsex = _collect_controlled_preds(phm_sex, test_ld, Z_full[full_idx])
 
         # ── 8. Summary metrics ────────────────────────────────────────────
-        # y_ctrl is only available for PostHoc models (base_* have no fz → no marginalization).
+        # y_ctrl is only available for refit models (base_* have no fz → no marginalization).
         for name, y_hat, fx_hat, model_obj, y_ctrl in [
             ("base_full",      y_hat_full,  fx_hat_full,  None,    None),
             ("base_half",      y_hat_half,  fx_hat_half,  None,    None),
-            ("posthoc_age",    y_hat_phage, fx_hat_phage, phm_age, y_ctrl_phage),
-            ("posthoc_age_sex",y_hat_phsex, fx_hat_phsex, phm_sex, y_ctrl_phsex),
+            ("refit_age",    y_hat_phage, fx_hat_phage, phm_age, y_ctrl_phage),
+            ("refit_age_sex",y_hat_phsex, fx_hat_phsex, phm_sex, y_ctrl_phsex),
         ]:
             row = _eval_summary(name, y_hat, fx_hat, model_obj, y_ctrl=y_ctrl)
             row.update({"coef": coef, "fold": fold})
@@ -424,22 +383,22 @@ for coef in COEFS:
         # ── 9. Accumulate per-obs exports ────────────────────────────────
         _append_preds("base_full",      coef, fold, y_hat_full,  fx_hat_full)
         _append_preds("base_half",      coef, fold, y_hat_half,  fx_hat_half)
-        _append_preds("posthoc_age",    coef, fold, y_hat_phage, fx_hat_phage)
-        _append_preds("posthoc_age_sex",coef, fold, y_hat_phsex, fx_hat_phsex)
-        _append_ctrl("posthoc_age",     coef, fold, y_ctrl_phage)
-        _append_ctrl("posthoc_age_sex", coef, fold, y_ctrl_phsex)
+        _append_preds("refit_age",    coef, fold, y_hat_phage, fx_hat_phage)
+        _append_preds("refit_age_sex",coef, fold, y_hat_phsex, fx_hat_phsex)
+        _append_ctrl("refit_age",     coef, fold, y_ctrl_phage)
+        _append_ctrl("refit_age_sex", coef, fold, y_ctrl_phsex)
 
         # Fitted coefficients — fz.weight de-standardized by _fit_effects, already raw-Z units.
         w_age = phm_age.fz.weight.data.flatten().cpu().numpy()
         coef_rows.append({
-            "method": "posthoc_age", "coef": coef, "fold": fold,
+            "method": "refit_age", "coef": coef, "fold": fold,
             "intercept": float(phm_age.intercept.data.cpu().numpy().squeeze()),
             "age": float(w_age[0]), "sex": float("nan"),
             "lam": float(phm_age.lam.data),
         })
         w_sex = phm_sex.fz.weight.data.flatten().cpu().numpy()
         coef_rows.append({
-            "method": "posthoc_age_sex", "coef": coef, "fold": fold,
+            "method": "refit_age_sex", "coef": coef, "fold": fold,
             "intercept": float(phm_sex.intercept.data.cpu().numpy().squeeze()),
             "age": float(w_sex[0]), "sex": float(w_sex[1]),
             "lam": float(phm_sex.lam.data),
@@ -451,16 +410,16 @@ for coef in COEFS:
                 "age": float("nan"), "sex": float("nan"), "lam": float("nan"),
             })
 
-        # Lambda paths for both PostHoc models
+        # Lambda paths for both refit models
         for rec in phm_age.lambda_path_:
-            lambda_rows.append({"method": "posthoc_age", "coef": coef, "fold": fold,
+            lambda_rows.append({"method": "refit_age", "coef": coef, "fold": fold,
                                  "selected_lambda": float(phm_age.lam.data), **rec})
         for rec in phm_sex.lambda_path_:
-            lambda_rows.append({"method": "posthoc_age_sex", "coef": coef, "fold": fold,
+            lambda_rows.append({"method": "refit_age_sex", "coef": coef, "fold": fold,
                                  "selected_lambda": float(phm_sex.lam.data), **rec})
 
         # Training fold Z distributions (for R)
-        for obs_idx in h2_idx:  # half_2 = PostHoc training set
+        for obs_idx in h2_idx:  # half_2 = refit training set
             train_rows.append({
                 "coef": coef, "fold": fold, "half": 2,
                 "y": int(y[obs_idx]), "age": float(Z_full[obs_idx, 0]),
@@ -472,8 +431,8 @@ for coef in COEFS:
         os.makedirs(ckpt_dir, exist_ok=True)
         torch.save(base_full.state_dict(),  ckpt_dir + "base_full.pt")
         torch.save(base_half.state_dict(),  ckpt_dir + "base_half.pt")
-        torch.save(phm_age.state_dict(),    ckpt_dir + "posthoc_age.pt")
-        torch.save(phm_sex.state_dict(),    ckpt_dir + "posthoc_age_sex.pt")
+        torch.save(phm_age.state_dict(),    ckpt_dir + "refit_age.pt")
+        torch.save(phm_sex.state_dict(),    ckpt_dir + "refit_age_sex.pt")
 
         del base_full, base_half, phm_age, phm_sex
         torch.cuda.empty_cache()
@@ -541,12 +500,12 @@ _write_csv(
     ["method", "coef", "fold", "intercept", "age", "sex", "lam"],
 )
 
-# posthoc_lambda_paths.csv — one row per (method, coef, fold, lambda)
+# refit_lambda_paths.csv — one row per (method, coef, fold, lambda)
 if lambda_rows:
     lambda_df = pd.DataFrame(lambda_rows)
-    lambda_df.to_csv(rexports_dir + "posthoc_lambda_paths.csv", index=False)
+    lambda_df.to_csv(rexports_dir + "refit_lambda_paths.csv", index=False)
     print(
-        f"[{datetime.datetime.now():%H:%M:%S}]  → {rexports_dir}posthoc_lambda_paths.csv",
+        f"[{datetime.datetime.now():%H:%M:%S}]  → {rexports_dir}refit_lambda_paths.csv",
         flush=True,
     )
 

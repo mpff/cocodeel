@@ -11,7 +11,7 @@
 # Columns (matching main-figure terminology):
 #   No Control (Balanced training)    — base_full @ coef=0
 #   No Control (Confounded training)  — base_full @ coef=2
-#   Age Control (Confounded training) — posthoc_age @ coef=2
+#   Age Control (Confounded training) — refit_age @ coef=2
 # Rows: sagittal, coronal, axial.
 #
 # Threshold: −log₁₀ p_fdr ≥ 1.30 (i.e. p_fdr ≤ 0.05) shown; below that,

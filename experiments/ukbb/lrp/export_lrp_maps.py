@@ -1,23 +1,7 @@
 #!/usr/bin/env python
-"""Export LRP relevance maps for the UKBB Panel C figure.
-
-Three models, fold 0:
-  base_full @ coef=0.0   → "Base (Bal)"
-  base_full @ coef=2.0   → "Base (Conf)"
-  posthoc_age @ coef=2.0 → "Refit (Conf)"
-
-Per model: take the first 100 test subjects with sex == 1, compute
-relevance via zennit `Gradient + EpsilonGammaBox`, transform per-subject
-with sqrt(abs(rel)), then mean across subjects.
-
-This averaging strategy is copied verbatim from the legacy notebook
-`_archive/notebooks/UKKBB_HighalcAgeSex_Synthetic.py:2120-2160`.
-Do not change without discussion — averaging strategy affects cross-model
-comparability of the resulting maps.
-
-Outputs three NIfTI volumes to <run_dir>/lrp_maps/, ready to be read by
-`UKBB_lrp_panel.R` for plotting.
-"""
+"""Export LRP relevance maps (base_bal, base_conf, refit) to <run_dir>/lrp_maps/ for the UKBB Panel C figure."""
+# Per subject: sqrt(abs(rel)) then mean across subjects. The averaging strategy
+# is fixed for cross-model comparability — do not change without discussion.
 import os
 import sys
 import gc
@@ -36,7 +20,7 @@ from ukbb_common import (
     fast_loader, default_model_params, default_transforms,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -50,16 +34,12 @@ RUN_DIR = (
 )
 
 
-# ── PostHoc forward shim ──────────────────────────────────────────────────────
-class PostHocImageOnly(torch.nn.Module):
-    """Wrap PostHocCovarNetwork to expose only the image contribution.
-
-    Mirrors the legacy `deep_forward` shim — LRP attributes only
-    `predict_fx(x, z=None)`, dropping intercept + linear covariate effect.
-    """
-    def __init__(self, posthoc_model):
+# ── Refit forward shim ────────────────────────────────────────────────────────
+class RefitImageOnly(torch.nn.Module):
+    """Expose only the refit's image contribution predict_fx(x, z=None) for LRP."""
+    def __init__(self, refit_model):
         super().__init__()
-        self.model = posthoc_model
+        self.model = refit_model
 
     def forward(self, x):
         return self.model.predict_fx(x, z=None)
@@ -139,17 +119,16 @@ def load_base(coef, fold, model_params, device):
     return net
 
 
-def load_posthoc_age(coef, fold, model_params, device):
-    """Reconstruct posthoc_age: BaseNetwork(half) backbone wrapped in
-    PostHocCovarNetwork with num_covariates=1, then load fitted state."""
+def load_refit_age(coef, fold, model_params, device):
+    """Reconstruct refit_age: RefitCovarNetwork(base_half, num_covariates=1) with its fitted state loaded."""
     backbone_ckpt = RUN_DIR + f"coef={coef}/fold={fold}/base_half.pt"
-    posthoc_ckpt  = RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age.pt"
+    refit_ckpt  = RUN_DIR + f"coef={coef}/fold={fold}/refit_age.pt"
 
     base_half = BaseNetwork(**model_params).to(device)
     base_half.load_state_dict(torch.load(backbone_ckpt, map_location=device))
 
-    phm = PostHocCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
-    phm.load_state_dict(torch.load(posthoc_ckpt, map_location=device))
+    phm = RefitCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
+    phm.load_state_dict(torch.load(refit_ckpt, map_location=device))
     phm.eval()
     return phm
 
@@ -183,7 +162,7 @@ def main():
     print(f"Loading models (fold={args.fold}) ...", flush=True)
     base_bal  = load_base(0.0, args.fold, model_params, device)
     base_conf = load_base(2.0, args.fold, model_params, device)
-    refit     = PostHocImageOnly(load_posthoc_age(2.0, args.fold, model_params, device))
+    refit     = RefitImageOnly(load_refit_age(2.0, args.fold, model_params, device))
 
     # Sanity probe: verify weight divergence + logit divergence on one subject.
     p_bal  = next(base_bal.parameters()).detach()

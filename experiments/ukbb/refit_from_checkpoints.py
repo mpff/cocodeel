@@ -1,26 +1,5 @@
 #!/usr/bin/env python
-"""Refit only the PostHoc step using the existing base_half checkpoints.
-
-Use case: cocodeel had a Z_val/Z_std bias bug (fixed in cocodeel commit 7d16b0a).
-The base_full / base_half checkpoints are independent of that bug, so we keep
-them as-is and rebuild only:
-
-    posthoc_age      → PostHocCovarNetwork(base_half, num_covariates=1)
-    posthoc_age_sex  → PostHocCovarNetwork(base_half, num_covariates=2)
-
-For each (coef, fold):
-  1. Load existing `base_half.pt`.
-  2. Rebuild h2 loaders (same fold seed → identical train/val split).
-  3. Refit phm_age and phm_sex.
-  4. Overwrite checkpoints + replace posthoc rows in all rexports CSVs.
-  5. Recompute test predictions, controlled predictions, summary metrics.
-
-Hardcoded to RUN_DIR. Other methods (base_full / base_half) are left untouched.
-
-Run:
-    cd experiments/ukbb/
-    conda run --no-capture-output -n dl-mri python refit_posthoc.py
-"""
+"""Rebuild refit_age / refit_age_sex from existing base_half checkpoints, hardcoded to RUN_DIR."""
 import os
 import gc
 import json
@@ -42,7 +21,7 @@ from ukbb_common import (
     default_model_params, default_trainer_params, default_transforms,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 
 # ── Config (mirror run_ukbb_experiment.py) ───────────────────────────────────
 COEFS = [0.0, 2.0]
@@ -65,7 +44,7 @@ RUN_DIR = (
 REXPORTS = RUN_DIR + "rexports/"
 PROGRESS = RUN_DIR + "progress_refit.log"
 
-POSTHOC_METHODS = {"posthoc_age", "posthoc_age_sex"}
+REFIT_METHODS = {"refit_age", "refit_age_sex"}
 
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -152,12 +131,12 @@ def _eval_summary(name, y_hat, fx_hat, model):
             "b_age": b_age, "b_sex": b_sex, "lam": lam}
 
 
-# ── Refit loop — accumulate new posthoc rows ─────────────────────────────────
-preds_new = []        # testset_predictions.csv (posthoc rows only)
-ctrl_new = []         # testset_predictions_controlled.csv (posthoc rows only)
-coef_new = []         # fitted_coefs.csv (posthoc rows only)
-lambda_new = []       # posthoc_lambda_paths.csv
-results_new = []      # raw_results.csv (posthoc rows only)
+# ── Refit loop — accumulate new refit rows ───────────────────────────────────
+preds_new = []        # testset_predictions.csv (refit rows only)
+ctrl_new = []         # testset_predictions_controlled.csv (refit rows only)
+coef_new = []         # fitted_coefs.csv (refit rows only)
+lambda_new = []       # refit_lambda_paths.csv
+results_new = []      # raw_results.csv (refit rows only)
 
 
 for coef in COEFS:
@@ -189,28 +168,27 @@ for coef in COEFS:
 
         full_idx = np.concatenate([h1_idx, h2_idx])
 
-        # Identical inner split seed → identical train/val partition as the
-        # original posthoc fits (only the cocodeel internals differ now).
+        # Identical inner split seed reproduces the same train/val partition.
         h2_age_tr_ld, h2_age_va_ld, _ = _make_loaders(h2_idx, fold_seed + 202, Z=Z_full[:, 0:1])
         h2_sex_tr_ld, h2_sex_va_ld, _ = _make_loaders(h2_idx, fold_seed + 202, Z=Z_full)
 
-        # Load base_half backbone (frozen during posthoc fit by the model).
+        # Load base_half backbone (frozen during refit by the model).
         base_half = BaseNetwork(**model_params).to(device)
         base_half.load_state_dict(torch.load(backbone_ckpt, map_location=device))
         base_half.eval()
 
-        # Refit posthoc_age.
-        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting posthoc_age ...", flush=True)
-        phm_age = PostHocCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
+        # Fit refit_age.
+        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting refit_age ...", flush=True)
+        phm_age = RefitCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
         phm_age = phm_age.fit(h2_age_tr_ld, h2_age_va_ld, max_iters=400, tol=1e-3)
-        print(f"[{datetime.datetime.now():%H:%M:%S}]  posthoc_age done. "
+        print(f"[{datetime.datetime.now():%H:%M:%S}]  refit_age done. "
               f"lam={float(phm_age.lam.data):.3e}", flush=True)
 
-        # Refit posthoc_age_sex.
-        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting posthoc_age_sex ...", flush=True)
-        phm_sex = PostHocCovarNetwork(base_half, num_covariates=2, orthogonalize=False).to(device)
+        # Fit refit_age_sex.
+        print(f"[{datetime.datetime.now():%H:%M:%S}]  Fitting refit_age_sex ...", flush=True)
+        phm_sex = RefitCovarNetwork(base_half, num_covariates=2, orthogonalize=False).to(device)
         phm_sex = phm_sex.fit(h2_sex_tr_ld, h2_sex_va_ld, max_iters=400, tol=1e-3)
-        print(f"[{datetime.datetime.now():%H:%M:%S}]  posthoc_age_sex done. "
+        print(f"[{datetime.datetime.now():%H:%M:%S}]  refit_age_sex done. "
               f"lam={float(phm_sex.lam.data):.3e}", flush=True)
 
         # Predictions on the shared balanced test set.
@@ -227,8 +205,8 @@ for coef in COEFS:
 
         # Summary metrics.
         for name, y_hat, fx_hat, mdl in [
-            ("posthoc_age",     y_hat_phage, fx_hat_phage, phm_age),
-            ("posthoc_age_sex", y_hat_phsex, fx_hat_phsex, phm_sex),
+            ("refit_age",     y_hat_phage, fx_hat_phage, phm_age),
+            ("refit_age_sex", y_hat_phsex, fx_hat_phsex, phm_sex),
         ]:
             row = _eval_summary(name, y_hat, fx_hat, mdl)
             row.update({"coef": coef, "fold": fold})
@@ -242,67 +220,67 @@ for coef in COEFS:
 
         # Per-obs prediction rows.
         for obs in range(len(y_hat_phage)):
-            preds_new.append({"obs_id": obs, "method": "posthoc_age",
+            preds_new.append({"obs_id": obs, "method": "refit_age",
                               "coef": coef, "fold": fold,
                               "y": float(y_hat_phage[obs]), "fx": float(fx_hat_phage[obs])})
-            preds_new.append({"obs_id": obs, "method": "posthoc_age_sex",
+            preds_new.append({"obs_id": obs, "method": "refit_age_sex",
                               "coef": coef, "fold": fold,
                               "y": float(y_hat_phsex[obs]), "fx": float(fx_hat_phsex[obs])})
-            ctrl_new.append({"obs_id": obs, "method": "posthoc_age",
+            ctrl_new.append({"obs_id": obs, "method": "refit_age",
                              "coef": coef, "fold": fold,
                              "y_controlled": float(y_ctrl_phage[obs])})
-            ctrl_new.append({"obs_id": obs, "method": "posthoc_age_sex",
+            ctrl_new.append({"obs_id": obs, "method": "refit_age_sex",
                              "coef": coef, "fold": fold,
                              "y_controlled": float(y_ctrl_phsex[obs])})
 
         # Fitted coefficients.
         w_age = phm_age.fz.weight.data.flatten().cpu().numpy()
-        coef_new.append({"method": "posthoc_age", "coef": coef, "fold": fold,
+        coef_new.append({"method": "refit_age", "coef": coef, "fold": fold,
                          "intercept": float(phm_age.intercept.data.cpu().numpy().squeeze()),
                          "age": float(w_age[0]), "sex": float("nan"),
                          "lam": float(phm_age.lam.data)})
         w_sex = phm_sex.fz.weight.data.flatten().cpu().numpy()
-        coef_new.append({"method": "posthoc_age_sex", "coef": coef, "fold": fold,
+        coef_new.append({"method": "refit_age_sex", "coef": coef, "fold": fold,
                          "intercept": float(phm_sex.intercept.data.cpu().numpy().squeeze()),
                          "age": float(w_sex[0]), "sex": float(w_sex[1]),
                          "lam": float(phm_sex.lam.data)})
 
         # Lambda paths.
         for rec in phm_age.lambda_path_:
-            lambda_new.append({"method": "posthoc_age", "coef": coef, "fold": fold,
+            lambda_new.append({"method": "refit_age", "coef": coef, "fold": fold,
                                "selected_lambda": float(phm_age.lam.data), **rec})
         for rec in phm_sex.lambda_path_:
-            lambda_new.append({"method": "posthoc_age_sex", "coef": coef, "fold": fold,
+            lambda_new.append({"method": "refit_age_sex", "coef": coef, "fold": fold,
                                "selected_lambda": float(phm_sex.lam.data), **rec})
 
-        # Overwrite posthoc checkpoints (base_full/base_half left untouched).
-        torch.save(phm_age.state_dict(), ckpt_dir + "posthoc_age.pt")
-        torch.save(phm_sex.state_dict(), ckpt_dir + "posthoc_age_sex.pt")
+        # Overwrite refit checkpoints (base_full/base_half left untouched).
+        torch.save(phm_age.state_dict(), ckpt_dir + "refit_age.pt")
+        torch.save(phm_sex.state_dict(), ckpt_dir + "refit_age_sex.pt")
 
         del base_half, phm_age, phm_sex, test_ld
         torch.cuda.empty_cache()
         gc.collect()
 
 
-# ── Splice posthoc rows into existing CSVs ───────────────────────────────────
+# ── Splice refit rows into existing CSVs ─────────────────────────────────────
 print(f"\n[{datetime.datetime.now():%H:%M:%S}] Splicing CSVs ...", flush=True)
 
 
-def _replace_posthoc_rows(path, new_rows, key="method"):
+def _replace_refit_rows(path, new_rows, key="method"):
     df_old = pd.read_csv(path)
-    df_kept = df_old[~df_old[key].isin(POSTHOC_METHODS)]
+    df_kept = df_old[~df_old[key].isin(REFIT_METHODS)]
     df_new = pd.DataFrame(new_rows, columns=df_old.columns)
     df = pd.concat([df_kept, df_new], ignore_index=True)
     df.to_csv(path, index=False)
-    print(f"  → {path}  (kept {len(df_kept)} non-posthoc rows, "
-          f"added {len(df_new)} posthoc rows)", flush=True)
+    print(f"  → {path}  (kept {len(df_kept)} non-refit rows, "
+          f"added {len(df_new)} refit rows)", flush=True)
 
 
-_replace_posthoc_rows(RUN_DIR + "raw_results.csv",                     results_new)
-_replace_posthoc_rows(REXPORTS + "testset_predictions.csv",            preds_new)
-_replace_posthoc_rows(REXPORTS + "testset_predictions_controlled.csv", ctrl_new)
-_replace_posthoc_rows(REXPORTS + "fitted_coefs.csv",                   coef_new)
-_replace_posthoc_rows(REXPORTS + "posthoc_lambda_paths.csv",           lambda_new)
+_replace_refit_rows(RUN_DIR + "raw_results.csv",                     results_new)
+_replace_refit_rows(REXPORTS + "testset_predictions.csv",            preds_new)
+_replace_refit_rows(REXPORTS + "testset_predictions_controlled.csv", ctrl_new)
+_replace_refit_rows(REXPORTS + "fitted_coefs.csv",                   coef_new)
+_replace_refit_rows(REXPORTS + "refit_lambda_paths.csv",           lambda_new)
 
 print(f"\n[{datetime.datetime.now():%H:%M:%S}] Done. "
-      f"Refit {len(results_new)} posthoc fits.", flush=True)
+      f"Rebuilt {len(results_new)} refit fits.", flush=True)

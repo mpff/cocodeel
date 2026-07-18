@@ -1,42 +1,9 @@
 #!/usr/bin/env python
-"""LRP-EpsilonPlus cohort-mean attribution maps for UKBB models.
-
-Reproduces the recipe used in the archived notebook
-`experiments/_archive/notebooks/UKKBB_HighalcAgeSex_Synthetic.ipynb` (cells
-99-106), updated for the current 4-model panel:
-
-    base_bal, base_conf, refit (sample-split), crossfit (cross-fit ensemble).
-
-Pipeline (per model m):
-    1. Per fold f:
-        - Compute LRP-EpsilonPlus relevance r_{f,i} for each cohort subject
-          i ∈ S (the n=100 subjects with sex==1 ∧ y==1).
-        - Mean across subjects, signed:  m_{f} = (1/|S|) Σ_i r_{f,i}.
-    2. Per voxel:
-          R_v = mean_f |m_{f,v}|
-       i.e. take |.| of each fold-mean map, then average across folds.
-
-Cross-fit handling: LRP isn't path-linear in arbitrary additive output
-combinations, so the 0.5(fx_A + fx_B) wrapper used for IG isn't safe here.
-Instead we run LRP separately on the A-side and B-side post-hoc models and
-average their per-subject relevance maps before fold aggregation:
-    r_{f,i}^{(crossfit)} = 0.5 (r_{f,i}^{A} + r_{f,i}^{B})
-
-Composite + canonizer follow the old notebook:
-    - base models      : EpsilonPlus(canonizers=[ResNetCanonizer()])
-    - post-hoc / cross : EpsilonPlus(canonizers=[SequentialMergeBatchNorm()])
-      (post-hoc forward is `predict_fx(x, z=None)` — a bare backbone +
-      learned head, so the ResNet residual structure has been collapsed by
-      the post-hoc head; ResNetCanonizer would re-canonicalise and
-      typically agrees here, but SequentialMergeBatchNorm matches the old
-      notebook for the post-hoc case.)
-
-Outputs into <run_dir>/lrp/:
-    <method>_lrp.nii.gz                — R_v   (final |.|-then-mean map)
-    <method>_lrp_{sagittal,coronal,axial}.csv  — central slices
-
-Cost: ~30 min for 4 methods × 5 folds × 100 subjects on a single A100.
-"""
+"""LRP-EpsilonPlus cohort-mean attribution maps for base_bal, base_conf, refit, and crossfit; writes |.|-then-mean-over-folds maps to <run_dir>/lrp/."""
+# Cross-fit: LRP is not path-linear, so the A/B sides are attributed separately
+# and their per-subject relevance is averaged before fold aggregation.
+# base models use ResNetCanonizer; refit/cross use SequentialMergeBatchNorm on the
+# predict_fx(x, z=None) forward (bare backbone + learned head).
 import os
 import sys
 import gc
@@ -56,7 +23,7 @@ from ukbb_common import (
     default_model_params, default_transforms,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 
 # ── Config ────────────────────────────────────────────────────────────────────
 N_SUBJECTS = 100
@@ -70,10 +37,10 @@ RUN_DIR = (
 )
 
 
-class PostHocImageOnly(torch.nn.Module):
-    def __init__(self, posthoc_model):
+class RefitImageOnly(torch.nn.Module):
+    def __init__(self, refit_model):
         super().__init__()
-        self.model = posthoc_model
+        self.model = refit_model
 
     def forward(self, x):
         return self.model.predict_fx(x, z=None)
@@ -87,13 +54,13 @@ def load_base(coef, fold, model_params, device):
     return net
 
 
-def load_posthoc_age(coef, fold, model_params, device):
+def load_refit_age(coef, fold, model_params, device):
     backbone_ckpt = RUN_DIR + f"coef={coef}/fold={fold}/base_half.pt"
-    posthoc_ckpt  = RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age.pt"
+    refit_ckpt  = RUN_DIR + f"coef={coef}/fold={fold}/refit_age.pt"
     base_half = BaseNetwork(**model_params).to(device)
     base_half.load_state_dict(torch.load(backbone_ckpt, map_location=device))
-    phm = PostHocCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
-    phm.load_state_dict(torch.load(posthoc_ckpt, map_location=device))
+    phm = RefitCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
+    phm.load_state_dict(torch.load(refit_ckpt, map_location=device))
     phm.eval()
     return phm
 
@@ -102,17 +69,17 @@ def load_crossfit_pair(coef, fold, model_params, device):
     base_A = BaseNetwork(**model_params).to(device)
     base_A.load_state_dict(torch.load(
         RUN_DIR + f"coef={coef}/fold={fold}/base_half.pt", map_location=device))
-    phm_A = PostHocCovarNetwork(base_A, num_covariates=1, orthogonalize=False).to(device)
+    phm_A = RefitCovarNetwork(base_A, num_covariates=1, orthogonalize=False).to(device)
     phm_A.load_state_dict(torch.load(
-        RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age.pt", map_location=device))
+        RUN_DIR + f"coef={coef}/fold={fold}/refit_age.pt", map_location=device))
     phm_A.eval()
 
     base_B = BaseNetwork(**model_params).to(device)
     base_B.load_state_dict(torch.load(
         RUN_DIR + f"coef={coef}/fold={fold}/base_half_B.pt", map_location=device))
-    phm_B = PostHocCovarNetwork(base_B, num_covariates=1, orthogonalize=False).to(device)
+    phm_B = RefitCovarNetwork(base_B, num_covariates=1, orthogonalize=False).to(device)
     phm_B.load_state_dict(torch.load(
-        RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age_BA.pt", map_location=device))
+        RUN_DIR + f"coef={coef}/fold={fold}/refit_age_BA.pt", map_location=device))
     phm_B.eval()
     return phm_A, phm_B
 
@@ -187,9 +154,9 @@ def main():
     print(f"cohort: {len(filt_ix)} subjects", flush=True)
 
     # Composites: ResNetCanonizer for the base DNN, BatchNorm-merge for the
-    # post-hoc forward (mirrors the old notebook).
+    # refit forward.
     comp_base    = EpsilonPlus(canonizers=[ResNetCanonizer()])
-    comp_posthoc = EpsilonPlus(canonizers=[SequentialMergeBatchNorm()])
+    comp_refit = EpsilonPlus(canonizers=[SequentialMergeBatchNorm()])
 
     model_params = default_model_params()
     fold_means = {m: [] for m in args.models}   # list of per-fold (D,H,W) maps
@@ -205,19 +172,19 @@ def main():
                 net = load_base(2.0, fold, model_params, device)
                 m_f = lrp_subject_mean(net, test_ds, filt_ix, comp_base, device)
             elif mname == "refit":
-                phm = load_posthoc_age(2.0, fold, model_params, device)
-                net = PostHocImageOnly(phm)
+                phm = load_refit_age(2.0, fold, model_params, device)
+                net = RefitImageOnly(phm)
                 m_f = lrp_subject_mean(net, test_ds, filt_ix,
-                                       comp_posthoc, device)
+                                       comp_refit, device)
             elif mname == "crossfit":
                 phm_A, phm_B = load_crossfit_pair(2.0, fold, model_params, device)
-                net_A = PostHocImageOnly(phm_A)
-                net_B = PostHocImageOnly(phm_B)
+                net_A = RefitImageOnly(phm_A)
+                net_B = RefitImageOnly(phm_B)
                 # LRP separately on A and B; average the signed per-fold mean.
                 m_A = lrp_subject_mean(net_A, test_ds, filt_ix,
-                                       comp_posthoc, device)
+                                       comp_refit, device)
                 m_B = lrp_subject_mean(net_B, test_ds, filt_ix,
-                                       comp_posthoc, device)
+                                       comp_refit, device)
                 m_f = 0.5 * (m_A + m_B)
                 # Tag for the cleanup below.
                 net = (net_A, net_B)

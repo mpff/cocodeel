@@ -1,32 +1,7 @@
 #!/usr/bin/env python
-"""Compute per-voxel χ² test statistic and p-value maps for IG attributions
-across all 5 CV folds.
-
-Pipeline:
-    1. For each fold f, each model m ∈ {base_full@coef=0, base_full@coef=2,
-       posthoc_age@coef=2 (sample-split), crossfit_age@coef=2 (cross-fit)}:
-       run IG over the 100-subject cohort (sex==1 ∧ y==1) and apply per-subject
-       Gaussian smoothing (σ=1).
-    2. Per subject i, average the smoothed maps across folds:
-           r̄_{i,v} = (1/F) Σ_f r_{f,i,v}
-    3. Per subject: estimate noise scale via MAD inside the brain:
-           σ̂_i = 1.4826 · MAD(r̄_{i,v} for v ∈ M)
-    4. Per voxel: aggregate across n=100 subjects:
-           T_v = Σ_i r̄_{i,v}² / σ̂_i² ~ χ²_n  under H0 (voxel not relevant)
-           p_v = 1 - F_{χ²_n}(T_v)
-       FDR-correct across in-brain voxels (Benjamini–Hochberg).
-
-The cross-fit model uses CrossFitPostHocImageOnly which returns
-½(predict_fx_A + predict_fx_B). Since IG is path-linear in the network output,
-the IG of this average equals the average of the per-side IGs.
-
-Outputs (per model) into <run_dir>/chi2/:
-    <model>_T.nii.gz             — chi-squared statistic
-    <model>_neg_log10_p.nii.gz   — −log10 p-value
-    <model>_neg_log10_pfdr.nii.gz — −log10 FDR-adjusted p-value
-
-Cost: ~30 min on a single GPU (5 folds × 4 models × 100 subjects × IG n_iter=20).
-"""
+"""Per-voxel χ² statistic and (FDR-adjusted) p-value maps from fold-averaged IG attributions for base_bal, base_conf, refit, and crossfit."""
+# crossfit uses CrossFitRefitImageOnly = ½(predict_fx_A + predict_fx_B); IG is
+# path-linear, so the IG of the average equals the average of the per-side IGs.
 import os
 import sys
 import gc
@@ -45,7 +20,7 @@ from ukbb_common import (
     default_model_params, default_transforms,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 
 # ── Config ────────────────────────────────────────────────────────────────────
 N_SUBJECTS    = 100
@@ -63,25 +38,25 @@ RUN_DIR = (
 )
 
 
-class PostHocImageOnly(torch.nn.Module):
-    def __init__(self, posthoc_model):
+class RefitImageOnly(torch.nn.Module):
+    def __init__(self, refit_model):
         super().__init__()
-        self.model = posthoc_model
+        self.model = refit_model
 
     def forward(self, x):
         return self.model.predict_fx(x, z=None)
 
 
-class CrossFitPostHocImageOnly(torch.nn.Module):
+class CrossFitRefitImageOnly(torch.nn.Module):
     """Cross-fit ensemble: ½(predict_fx_A + predict_fx_B).
 
     IG of an average equals the average of IGs (IG is path-linear in the
     network's output), so this wrapper produces principled ensemble attributions.
     """
-    def __init__(self, posthoc_A, posthoc_B):
+    def __init__(self, refit_A, refit_B):
         super().__init__()
-        self.A = posthoc_A
-        self.B = posthoc_B
+        self.A = refit_A
+        self.B = refit_B
 
     def forward(self, x):
         return 0.5 * (self.A.predict_fx(x, z=None) + self.B.predict_fx(x, z=None))
@@ -95,34 +70,33 @@ def load_base(coef, fold, model_params, device):
     return net
 
 
-def load_posthoc_age(coef, fold, model_params, device):
+def load_refit_age(coef, fold, model_params, device):
     backbone_ckpt = RUN_DIR + f"coef={coef}/fold={fold}/base_half.pt"
-    posthoc_ckpt  = RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age.pt"
+    refit_ckpt  = RUN_DIR + f"coef={coef}/fold={fold}/refit_age.pt"
     base_half = BaseNetwork(**model_params).to(device)
     base_half.load_state_dict(torch.load(backbone_ckpt, map_location=device))
-    phm = PostHocCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
-    phm.load_state_dict(torch.load(posthoc_ckpt, map_location=device))
+    phm = RefitCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
+    phm.load_state_dict(torch.load(refit_ckpt, map_location=device))
     phm.eval()
     return phm
 
 
 def load_crossfit_age(coef, fold, model_params, device):
-    """Load both A-side (base_half + posthoc_age) and B-side (base_half_B +
-    posthoc_age_BA) cross-fit posthoc models for ensembling."""
+    """Load the A-side (base_half + refit_age) and B-side (base_half_B + refit_age_BA) refit models for ensembling."""
     base_A = BaseNetwork(**model_params).to(device)
     base_A.load_state_dict(torch.load(
         RUN_DIR + f"coef={coef}/fold={fold}/base_half.pt", map_location=device))
-    phm_A = PostHocCovarNetwork(base_A, num_covariates=1, orthogonalize=False).to(device)
+    phm_A = RefitCovarNetwork(base_A, num_covariates=1, orthogonalize=False).to(device)
     phm_A.load_state_dict(torch.load(
-        RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age.pt", map_location=device))
+        RUN_DIR + f"coef={coef}/fold={fold}/refit_age.pt", map_location=device))
     phm_A.eval()
 
     base_B = BaseNetwork(**model_params).to(device)
     base_B.load_state_dict(torch.load(
         RUN_DIR + f"coef={coef}/fold={fold}/base_half_B.pt", map_location=device))
-    phm_B = PostHocCovarNetwork(base_B, num_covariates=1, orthogonalize=False).to(device)
+    phm_B = RefitCovarNetwork(base_B, num_covariates=1, orthogonalize=False).to(device)
     phm_B.load_state_dict(torch.load(
-        RUN_DIR + f"coef={coef}/fold={fold}/posthoc_age_BA.pt", map_location=device))
+        RUN_DIR + f"coef={coef}/fold={fold}/refit_age_BA.pt", map_location=device))
     phm_B.eval()
     return phm_A, phm_B
 
@@ -231,9 +205,9 @@ def main():
     all_loaders = {
         "base_bal":  lambda f: load_base(0.0, f, model_params, device),
         "base_conf": lambda f: load_base(2.0, f, model_params, device),
-        "refit":     lambda f: PostHocImageOnly(
-                                  load_posthoc_age(2.0, f, model_params, device)),
-        "crossfit":  lambda f: CrossFitPostHocImageOnly(
+        "refit":     lambda f: RefitImageOnly(
+                                  load_refit_age(2.0, f, model_params, device)),
+        "crossfit":  lambda f: CrossFitRefitImageOnly(
                                   *load_crossfit_age(2.0, f, model_params, device)),
     }
     model_loaders = {m: all_loaders[m] for m in args.models}

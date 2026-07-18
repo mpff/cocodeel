@@ -31,8 +31,8 @@ OLD_DIR  <- "experiments/ukbb/runs/2026-03-30_16-21-58/rexports/"
 OI_BLUE       <- "#0072B2"
 OI_ORANGE     <- "#E69F00"
 OI_VERMILLION <- "#D55E00"   # base / No Control primary
-OI_GREEN      <- "#009E73"   # posthoc_age / Age Control primary
-OI_PURPLE     <- "#CC79A7"   # posthoc_age_sex / Age+Sex Control primary
+OI_GREEN      <- "#009E73"   # refit_age / Age Control primary
+OI_PURPLE     <- "#CC79A7"   # refit_age_sex / Age+Sex Control primary
 OI_SKY        <- "#56B4E9"   # crossfit_age / Cross-fit Age Control primary
 GREY_REF      <- "grey30"
 # Pale (desaturated) variants — used for sample-split methods, where the
@@ -142,7 +142,7 @@ if (file.exists(k3_path)) {
 }
 
 # No-sample-split baseline: older run (2026-03-30) with n=2000 per fold and the
-# pre-split posthoc algorithm (backbone + posthoc fit on the same data). Schema
+# pre-split refit algorithm (backbone + refit fit on the same data). Schema
 # differs from current rexports (mname/model_type/y_controlled), so we compute
 # AUC_marg per (coef, fold) directly from raw predictions vs the testset.csv.
 old_test_path <- paste0(OLD_DIR, "testset.csv")
@@ -160,6 +160,7 @@ if (file.exists(old_test_path) && file.exists(old_pred_path)) {
     )
   build_nosplit <- function(mt, label) {
     old_auc %>%
+      # mname matches the value stored in the frozen 2026-03-30 CSV.
       filter(mname == "posthoc", model_type == mt) %>%
       transmute(
         method = label,
@@ -173,8 +174,8 @@ if (file.exists(old_test_path) && file.exists(old_pred_path)) {
         )
       )
   }
-  no_split_df     <- build_nosplit("age",     "nosplit_posthoc_age")
-  no_split_sex_df <- build_nosplit("age_sex", "nosplit_posthoc_age_sex")
+  no_split_df     <- build_nosplit("age",     "nosplit_refit_age")
+  no_split_sex_df <- build_nosplit("age_sex", "nosplit_refit_age_sex")
   message("Loaded no-sample-split baseline: ", nrow(no_split_df),
           " age rows, ", nrow(no_split_sex_df), " age+sex rows")
 } else {
@@ -344,14 +345,14 @@ TRUE_B_SEX <-  2.000
 STD_AGE    <-  2.0 / 0.298   # implied std factor, ≈ 6.71
 
 coefs_df <- read.csv(paste0(DATA_DIR, "fitted_coefs.csv")) %>%
-  filter(method %in% c("posthoc_age", "posthoc_age_sex")) %>%
+  filter(method %in% c("refit_age", "refit_age_sex")) %>%
   mutate(
     training = factor(
       if_else(coef == 0, "Balanced training", "Confounded training"),
       levels = c("Balanced training", "Confounded training")
     ),
     method_label = factor(method,
-                          levels = c("posthoc_age", "posthoc_age_sex"),
+                          levels = c("refit_age", "refit_age_sex"),
                           labels = c("Age Control", "Age + Sex Control"))
   )
 
@@ -404,7 +405,7 @@ all_estimators_coefs_df <- bind_rows(
   # Sample split — fitted_coefs.csv stores age/sex columns directly.
   build_estimator_coefs(
     read.csv(paste0(DATA_DIR, "fitted_coefs.csv")),
-    methods = c(age = "posthoc_age", age_sex = "posthoc_age_sex"),
+    methods = c(age = "refit_age", age_sex = "refit_age_sex"),
     estimator_label = "Sample split",
     b_age_col = "age", b_sex_col = "sex"
   ),
@@ -443,10 +444,10 @@ true_sex_df <- data.frame(
   true_val = c(TRUE_B_SEX, TRUE_B_SEX)
 )
 
-lambda_paths <- read.csv(paste0(DATA_DIR, "posthoc_lambda_paths.csv")) %>%
+lambda_paths <- read.csv(paste0(DATA_DIR, "refit_lambda_paths.csv")) %>%
   mutate(
     method_label = factor(method,
-                          levels = c("posthoc_age", "posthoc_age_sex"),
+                          levels = c("refit_age", "refit_age_sex"),
                           labels = c("Age Control", "Age + Sex Control")),
     training = factor(if_else(coef == 0, "Balanced", "Confounded"),
                       levels = c("Balanced", "Confounded")),
@@ -669,11 +670,11 @@ fx_corr_df <- tp %>%
     cor_sex = cor(fx, sex),
     .groups = "drop"
   ) %>%
-  filter(method %in% c("base_full", "posthoc_age", "posthoc_age_sex")) %>%
+  filter(method %in% c("base_full", "refit_age", "refit_age_sex")) %>%
   mutate(
     method_label = factor(
       method,
-      levels = c("base_full", "posthoc_age", "posthoc_age_sex"),
+      levels = c("base_full", "refit_age", "refit_age_sex"),
       labels = c("No Control", "Age Control", "Age + Sex Control")
     ),
     training = factor(
@@ -777,11 +778,11 @@ no_ctrl <- auc_df %>%
 # Sample-split vs cross-fit comparison data frames (marg AUC only).
 # Keep a `variant` column for the dodge logic in make_auc_panel.
 age_compare <- crossfit_df %>%
-  filter(method %in% c("posthoc_age", "crossfit_age"), marg == "controlled") %>%
+  filter(method %in% c("refit_age", "crossfit_age"), marg == "controlled") %>%
   mutate(variant = if_else(method == "crossfit_age", "primary", "reference"))
 
 age_sex_compare <- crossfit_df %>%
-  filter(method %in% c("posthoc_age_sex", "crossfit_age_sex"), marg == "controlled") %>%
+  filter(method %in% c("refit_age_sex", "crossfit_age_sex"), marg == "controlled") %>%
   mutate(variant = if_else(method == "crossfit_age_sex", "primary", "reference"))
 
 # Main figure: just cross-fit age control marg (single panel, two boxes).
@@ -858,8 +859,8 @@ pB_left_main  <- make_auc_panel_simple(
 )
 
 # Build 4-method data frame for the right plot:
-#   1. No sample split  (old run 2026-03-30, n=2000, posthoc/age controlled)
-#   2. Sample split     (current run, posthoc_age, A-side, marg AUC)
+#   1. No sample split  (old run 2026-03-30, n=2000, refit/age controlled)
+#   2. Sample split     (current run, refit_age, A-side, marg AUC)
 #   3. Cross-fit (K=2)  (current run, crossfit_age, marg AUC)
 #   4. Cross-fit (K=3)  (k3 sweep, crossfit_k3_age, marg AUC)
 # All four are AUC_marg ("controlled" / marginalized) on the balanced test set.
@@ -868,7 +869,7 @@ age_ctrl_compare <- bind_rows(
     select(coef, fold, auc, training) %>%
     mutate(estimator = "No sample split"),
   crossfit_df %>%
-    filter(method == "posthoc_age", marg == "controlled") %>%
+    filter(method == "refit_age", marg == "controlled") %>%
     select(coef, fold, auc, training) %>%
     mutate(estimator = "Sample split"),
   crossfit_df %>%
@@ -893,7 +894,7 @@ age_sex_ctrl_compare <- bind_rows(
     select(coef, fold, auc, training) %>%
     mutate(estimator = "No sample split"),
   crossfit_df %>%
-    filter(method == "posthoc_age_sex", marg == "controlled") %>%
+    filter(method == "refit_age_sex", marg == "controlled") %>%
     select(coef, fold, auc, training) %>%
     mutate(estimator = "Sample split"),
   crossfit_df %>%

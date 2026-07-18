@@ -152,10 +152,10 @@ pB_left <- ggplot(no_ctrl, aes(x = training, y = auc)) +
 
 # -- Right: Age Control marg, 3 estimators --
 age_ctrl <- bind_rows(
-  res %>% filter(method == "posthoc_nosamp_age") %>%
+  res %>% filter(method == "refit_nosamp_age") %>%
     select(coef, fold, auc = auc_marg, training) %>%
     mutate(estimator = "No sample split"),
-  res %>% filter(method == "posthoc_split_age") %>%
+  res %>% filter(method == "refit_split_age") %>%
     select(coef, fold, auc = auc_marg, training) %>%
     mutate(estimator = "Sample split"),
   res %>% filter(method == "crossfit_k2_age") %>%

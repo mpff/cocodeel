@@ -92,7 +92,7 @@ templates <- setNames(lapply(orients, read_template), orients)
 # Per-method symmetric colour limit (99.5th pctl of |r̄| in-brain, pooled
 # across the three orientations for that method). Each method renders on its
 # own scale — standard LRP-paper convention. The base DNN's logit-scale
-# attribution and the post-hoc fx-scale attribution differ by ~5×, so a
+# attribution and the refit fx-scale attribution differ by ~5×, so a
 # shared VMAX would wash out the base panels.
 brain_abs <- function(slice_df, tpl_df) {
   in_brain <- tpl_df$value > 1e-3

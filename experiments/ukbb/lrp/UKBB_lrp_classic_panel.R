@@ -120,7 +120,7 @@ draw_colorbar <- function() {
 
 build_panel_pdf <- function(out_path, model_subset, fig_width) {
   # Per-method scale: each method normalised by its own max (pooled across
-  # the three orientations of that method). Avoids the post-hoc max
+  # the three orientations of that method). Avoids the refit max
   # dominating the base panels when the relevance scales differ ~5×.
   vmax_per_model <- setNames(
     vapply(model_subset, function(m) {

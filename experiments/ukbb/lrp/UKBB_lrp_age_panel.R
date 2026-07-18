@@ -12,7 +12,7 @@
 #
 # Claim: if the confounded model attends to age-correlated anatomy, the
 # significance pattern should differ between Young and Old for `base_conf`;
-# for the post-hoc `refit` the patterns should look more similar across
+# for the `refit` the patterns should look more similar across
 # strata, since the linear age term has absorbed the age-related
 # contribution. `base_bal` (no confound injected) is the reference for
 # "what natural age-pattern variation looks like".

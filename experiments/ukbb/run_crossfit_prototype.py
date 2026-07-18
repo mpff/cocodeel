@@ -1,33 +1,5 @@
 #!/usr/bin/env python
-"""Cross-fit post-hoc prototype on UKBB.
-
-Augments the existing 2026-04-26_..._final_v2 run with B-side artifacts:
-
-  base_half_B            — BaseNetwork trained on h2_idx (mirror of base_half)
-  posthoc_age_BA         — PostHocCovarNetwork(base_half_B, num_covariates=1) fit on h1_idx
-  posthoc_age_sex_BA     — PostHocCovarNetwork(base_half_B, num_covariates=2) fit on h1_idx
-
-The A-side (base_half + posthoc_age + posthoc_age_sex) is reused from final_v2
-as-is — same seeds, same data partitions, identical fit. Only B-side is new.
-
-Per (coef, fold), six methods are reported:
-  posthoc_age, posthoc_age_BA, crossfit_age,
-  posthoc_age_sex, posthoc_age_sex_BA, crossfit_age_sex.
-
-The crossfit_* methods average η = intercept + fx + fz across A and B before
-applying sigmoid.
-
-Skip-if-exists: base_half_B.pt, posthoc_age_BA.pt, posthoc_age_sex_BA.pt are
-loaded from disk if present, only refit when missing.
-
-Usage:
-    cd experiments/ukbb/
-    conda run --no-capture-output -n dl-mri \
-        python run_crossfit_prototype.py --gpu 0 --coef 0.0 --folds 0
-    # or:
-    python run_crossfit_prototype.py --gpu 0 --coef 0.0           # all 5 folds
-    python run_crossfit_prototype.py --gpu 0 --coef 2.0           # all 5 folds
-"""
+"""Cross-fit prototype: add the B-side (base_half_B + refit_age_BA/refit_age_sex_BA) and report the A/B ensemble against the A-side refit."""
 import os
 import gc
 import json
@@ -50,7 +22,7 @@ from ukbb_common import (
     default_model_params, default_trainer_params, default_transforms,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 
 # ── Config (mirror run_ukbb_experiment.py) ───────────────────────────────────
@@ -215,8 +187,8 @@ for fold in FOLDS:
     fold_seed = RANDOM_STATE + fold
     ckpt_dir = RUN_DIR + f"coef={COEF}/fold={fold}/"
     assert os.path.exists(ckpt_dir + "base_half.pt"),     f"missing {ckpt_dir}base_half.pt"
-    assert os.path.exists(ckpt_dir + "posthoc_age.pt"),   f"missing {ckpt_dir}posthoc_age.pt"
-    assert os.path.exists(ckpt_dir + "posthoc_age_sex.pt"), f"missing {ckpt_dir}posthoc_age_sex.pt"
+    assert os.path.exists(ckpt_dir + "refit_age.pt"),   f"missing {ckpt_dir}refit_age.pt"
+    assert os.path.exists(ckpt_dir + "refit_age_sex.pt"), f"missing {ckpt_dir}refit_age_sex.pt"
 
     print(f"\n[{datetime.datetime.now():%H:%M:%S}] ══ coef={COEF} fold={fold} ══", flush=True)
 
@@ -229,7 +201,7 @@ for fold in FOLDS:
     h2_local = resample_synthetic(y[pool_B], Z_full[pool_B], NTRAIN_PER_HALF, COEF, fold_seed + 100)
     h2_idx = pool_B[h2_local]
 
-    # ── Loaders (B-side: backbone trained on h2, posthoc fit on h1) ──────────
+    # ── Loaders (B-side: backbone trained on h2, refit fit on h1) ────────────
     h2_tr_ld_B,    h2_va_ld_B,    y_h2_tr = _make_loaders(h2_idx, fold_seed + 201)
     h1_age_tr_ld,  h1_age_va_ld,  _ = _make_loaders(h1_idx, fold_seed + 203, Z=Z_full[:, 0:1])
     h1_sex_tr_ld,  h1_sex_va_ld,  _ = _make_loaders(h1_idx, fold_seed + 203, Z=Z_full)
@@ -241,12 +213,12 @@ for fold in FOLDS:
     base_half.link = "logit"
     base_half.eval()
 
-    phm_A_age = PostHocCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
-    phm_A_age.load_state_dict(torch.load(ckpt_dir + "posthoc_age.pt", map_location=device))
+    phm_A_age = RefitCovarNetwork(base_half, num_covariates=1, orthogonalize=False).to(device)
+    phm_A_age.load_state_dict(torch.load(ckpt_dir + "refit_age.pt", map_location=device))
     phm_A_age.eval()
 
-    phm_A_sex = PostHocCovarNetwork(base_half, num_covariates=2, orthogonalize=False).to(device)
-    phm_A_sex.load_state_dict(torch.load(ckpt_dir + "posthoc_age_sex.pt", map_location=device))
+    phm_A_sex = RefitCovarNetwork(base_half, num_covariates=2, orthogonalize=False).to(device)
+    phm_A_sex.load_state_dict(torch.load(ckpt_dir + "refit_age_sex.pt", map_location=device))
     phm_A_sex.eval()
 
     # ── B-side: train base_half_B (skip if checkpoint exists) ─────────────────
@@ -280,31 +252,31 @@ for fold in FOLDS:
               f"best_epoch={base_half_B.best_epoch_}", flush=True)
         torch.save(base_half_B.state_dict(), bhB_path)
 
-    # ── posthoc_age_BA (skip if exists) ───────────────────────────────────────
-    phm_B_age_path = ckpt_dir + "posthoc_age_BA.pt"
-    phm_B_age = PostHocCovarNetwork(base_half_B, num_covariates=1, orthogonalize=False).to(device)
+    # ── refit_age_BA (skip if exists) ───────────────────────────────────────
+    phm_B_age_path = ckpt_dir + "refit_age_BA.pt"
+    phm_B_age = RefitCovarNetwork(base_half_B, num_covariates=1, orthogonalize=False).to(device)
     if os.path.exists(phm_B_age_path):
-        print(f"[{datetime.datetime.now():%H:%M:%S}] posthoc_age_BA exists — loading.", flush=True)
+        print(f"[{datetime.datetime.now():%H:%M:%S}] refit_age_BA exists — loading.", flush=True)
         phm_B_age.load_state_dict(torch.load(phm_B_age_path, map_location=device))
         phm_B_age.eval()
     else:
-        print(f"[{datetime.datetime.now():%H:%M:%S}] Fitting posthoc_age_BA on h1 ...", flush=True)
+        print(f"[{datetime.datetime.now():%H:%M:%S}] Fitting refit_age_BA on h1 ...", flush=True)
         phm_B_age = phm_B_age.fit(h1_age_tr_ld, h1_age_va_ld, max_iters=400, tol=1e-3)
-        print(f"[{datetime.datetime.now():%H:%M:%S}] posthoc_age_BA done. "
+        print(f"[{datetime.datetime.now():%H:%M:%S}] refit_age_BA done. "
               f"lam={float(phm_B_age.lam.data):.3e}", flush=True)
         torch.save(phm_B_age.state_dict(), phm_B_age_path)
 
-    # ── posthoc_age_sex_BA (skip if exists) ──────────────────────────────────
-    phm_B_sex_path = ckpt_dir + "posthoc_age_sex_BA.pt"
-    phm_B_sex = PostHocCovarNetwork(base_half_B, num_covariates=2, orthogonalize=False).to(device)
+    # ── refit_age_sex_BA (skip if exists) ──────────────────────────────────
+    phm_B_sex_path = ckpt_dir + "refit_age_sex_BA.pt"
+    phm_B_sex = RefitCovarNetwork(base_half_B, num_covariates=2, orthogonalize=False).to(device)
     if os.path.exists(phm_B_sex_path):
-        print(f"[{datetime.datetime.now():%H:%M:%S}] posthoc_age_sex_BA exists — loading.", flush=True)
+        print(f"[{datetime.datetime.now():%H:%M:%S}] refit_age_sex_BA exists — loading.", flush=True)
         phm_B_sex.load_state_dict(torch.load(phm_B_sex_path, map_location=device))
         phm_B_sex.eval()
     else:
-        print(f"[{datetime.datetime.now():%H:%M:%S}] Fitting posthoc_age_sex_BA on h1 ...", flush=True)
+        print(f"[{datetime.datetime.now():%H:%M:%S}] Fitting refit_age_sex_BA on h1 ...", flush=True)
         phm_B_sex = phm_B_sex.fit(h1_sex_tr_ld, h1_sex_va_ld, max_iters=400, tol=1e-3)
-        print(f"[{datetime.datetime.now():%H:%M:%S}] posthoc_age_sex_BA done. "
+        print(f"[{datetime.datetime.now():%H:%M:%S}] refit_age_sex_BA done. "
               f"lam={float(phm_B_sex.lam.data):.3e}", flush=True)
         torch.save(phm_B_sex.state_dict(), phm_B_sex_path)
 
@@ -327,7 +299,7 @@ for fold in FOLDS:
 
     def _eval_pair(phm_A, phm_B, name_A, name_B, name_ens,
                    z_train_A_cols, z_train_B_cols):
-        """Run prediction + ensemble + metrics for one (A, B) post-hoc pair."""
+        """Run prediction + ensemble + metrics for one (A, B) refit pair."""
         eta_A = _collect_eta(phm_A, test_ld)
         eta_B = _collect_eta(phm_B, test_ld)
         eta_ens = 0.5 * (eta_A + eta_B)
@@ -398,13 +370,13 @@ for fold in FOLDS:
     # Age-only pair (Z = age)
     rows_age = _eval_pair(
         phm_A_age, phm_B_age,
-        "posthoc_age", "posthoc_age_BA", "crossfit_age",
+        "refit_age", "refit_age_BA", "crossfit_age",
         Z_full[h2_idx, 0:1], Z_full[h1_idx, 0:1],
     )
     # Age+sex pair (Z = age + sex)
     rows_sex = _eval_pair(
         phm_A_sex, phm_B_sex,
-        "posthoc_age_sex", "posthoc_age_sex_BA", "crossfit_age_sex",
+        "refit_age_sex", "refit_age_sex_BA", "crossfit_age_sex",
         Z_full[h2_idx, :], Z_full[h1_idx, :],
     )
 

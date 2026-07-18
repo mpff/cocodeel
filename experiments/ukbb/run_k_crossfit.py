@@ -1,50 +1,5 @@
 #!/usr/bin/env python
-"""K-fold cross-fit on UKBB — single source of truth for the figure.
-
-NTRAIN sets the total resampled-obs budget per outer fold; NTRAIN_PER_FOLD =
-NTRAIN // K is the per per-fold draw. Within-pool resampling uses
-resample_synthetic; `RESAMPLE_REPLACE` selects with- vs without-replacement
-NN matching.
-
-Per outer fold per coef, the script fits and evaluates four estimator regimes:
-
-  (i)   dnn                          — BaseNetwork on full_train_idx (5000),
-                                       no covariate control. Baseline.
-  (ii)  posthoc_nosamp_{age,age_sex} — PostHoc fitted on the SAME full 5000 obs
-                                       as base_full. Demonstrates the bias from
-                                       NOT sample-splitting backbone vs head.
-  (iii) posthoc_split_{age,age_sex}  — k=0 sub-model of the K=2 ensemble alone:
-                                       backbone on h_1 (2500), posthoc on h_0
-                                       (2500). One sample-split estimate.
-  (iv)  crossfit_k{K}_{age,age_sex}  — full K=2 ensemble (cross-fit).
-
-K-rotation training mechanics:
-  1. StratifiedKFold(n_splits=K) on train_ix → P_0..P_{K-1} disjoint sub-pools.
-  2. Per sub-pool: h_i = P_i[resample_synthetic(P_i, NTRAIN_PER_FOLD, COEF, ...,
-     replace=RESAMPLE_REPLACE)].
-  3. For each rotation k ∈ {0, ..., K-1}:
-       DNN training set = ∪_{j ≠ k} h_j
-       posthoc training = h_k
-       backbone_k ← covar_trainer on DNN training set
-       phm_k     ← PostHocCovarNetwork(backbone_k).fit on posthoc training set
-  4. Ensemble: η^cf = (1/K) Σ_k η_k, then sigmoid.
-  5. Post-ensemble centring on ∪_k h_k (full training sample) — see
-     app:crossfit-proof in cocodeel-paper.
-
-Skip-if-exists: every backbone and posthoc checkpoint is loaded from disk if
-present. K-independent fits live under coef={COEF}/fold={fold}/full/; K-specific
-fits under coef={COEF}/fold={fold}/k{K}/.
-
-Output:
-  k{K}_crossfit_results.csv — 7 method rows per (coef, fold).
-
-Usage:
-    cd experiments/ukbb/
-    conda run --no-capture-output -n dl-mri \
-        python run_k_crossfit.py --gpu 0 --coef 2.0 --folds 0    # gauge run
-    python run_k_crossfit.py --gpu 0 --coef 2.0                  # all 5 outer folds
-    python run_k_crossfit.py --gpu 0 --coef 0.0
-"""
+"""K-fold cross-fit on UKBB — source of truth for the figure: dnn, refit_nosamp, refit_split, and the crossfit_k{K} ensemble per (coef, outer fold)."""
 import os
 import gc
 import json
@@ -67,7 +22,7 @@ from ukbb_common import (
     default_model_params, default_trainer_params, default_transforms,
 )
 from cocodeel.model import BaseNetwork
-from cocodeel.posthoc_model import PostHocCovarNetwork
+from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.trainer import covar_trainer
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -295,7 +250,7 @@ for fold in FOLDS:
           f"({len(np.unique(full_train_idx))} unique) → h_idx sizes: "
           f"{[len(h) for h in h_idx]}", flush=True)
 
-    # ── 2b. K-independent fits on the full 5000 (dnn baseline + no-samp posthoc).
+    # ── 2b. K-independent fits on the full 5000 (dnn baseline + no-samp refit).
     #       Stored under coef/fold/full/ so they're shared across K=2, K=3, ...
     full_dir = RUN_DIR + f"coef={COEF}/fold={fold}/full/"
     os.makedirs(full_dir, exist_ok=True)
@@ -335,48 +290,48 @@ for fold in FOLDS:
         torch.save(base_full.state_dict(), bb_full_path)
     del bb_full_tr_ld, bb_full_va_ld; gc.collect()
 
-    # posthoc_full_age, posthoc_full_age_sex: fitted on the SAME 5000 obs as
+    # refit_full_age, refit_full_age_sex: fitted on the SAME 5000 obs as
     # base_full. By construction this violates sample-splitting; the bias of
     # this estimator is the comparison the figure is meant to expose.
-    ph_full_age_path = full_dir + "posthoc_full_age.pt"
+    ph_full_age_path = full_dir + "refit_full_age.pt"
     ph_full_age_tr_ld, ph_full_age_va_ld, _ = _make_loaders(
         full_train_idx, fold_seed + 700, Z=Z_full[:, 0:1]
     )
-    phm_full_age = PostHocCovarNetwork(base_full, num_covariates=1, orthogonalize=False).to(device)
+    phm_full_age = RefitCovarNetwork(base_full, num_covariates=1, orthogonalize=False).to(device)
     if os.path.exists(ph_full_age_path):
-        print(f"[{datetime.datetime.now():%H:%M:%S}]   posthoc_full_age exists — loading.", flush=True)
+        print(f"[{datetime.datetime.now():%H:%M:%S}]   refit_full_age exists — loading.", flush=True)
         phm_full_age.load_state_dict(torch.load(ph_full_age_path, map_location=device))
         phm_full_age.eval()
     else:
-        print(f"[{datetime.datetime.now():%H:%M:%S}]   fitting posthoc_full_age on "
+        print(f"[{datetime.datetime.now():%H:%M:%S}]   fitting refit_full_age on "
               f"{len(full_train_idx)} obs ...", flush=True)
         phm_full_age = phm_full_age.fit(ph_full_age_tr_ld, ph_full_age_va_ld, max_iters=400, tol=1e-3)
-        print(f"[{datetime.datetime.now():%H:%M:%S}]   posthoc_full_age done. "
+        print(f"[{datetime.datetime.now():%H:%M:%S}]   refit_full_age done. "
               f"lam={float(phm_full_age.lam.data):.3e}", flush=True)
         torch.save(phm_full_age.state_dict(), ph_full_age_path)
     del ph_full_age_tr_ld, ph_full_age_va_ld; gc.collect()
 
-    ph_full_sex_path = full_dir + "posthoc_full_age_sex.pt"
+    ph_full_sex_path = full_dir + "refit_full_age_sex.pt"
     ph_full_sex_tr_ld, ph_full_sex_va_ld, _ = _make_loaders(
         full_train_idx, fold_seed + 800, Z=Z_full
     )
-    phm_full_sex = PostHocCovarNetwork(base_full, num_covariates=2, orthogonalize=False).to(device)
+    phm_full_sex = RefitCovarNetwork(base_full, num_covariates=2, orthogonalize=False).to(device)
     if os.path.exists(ph_full_sex_path):
-        print(f"[{datetime.datetime.now():%H:%M:%S}]   posthoc_full_age_sex exists — loading.", flush=True)
+        print(f"[{datetime.datetime.now():%H:%M:%S}]   refit_full_age_sex exists — loading.", flush=True)
         phm_full_sex.load_state_dict(torch.load(ph_full_sex_path, map_location=device))
         phm_full_sex.eval()
     else:
-        print(f"[{datetime.datetime.now():%H:%M:%S}]   fitting posthoc_full_age_sex on "
+        print(f"[{datetime.datetime.now():%H:%M:%S}]   fitting refit_full_age_sex on "
               f"{len(full_train_idx)} obs ...", flush=True)
         phm_full_sex = phm_full_sex.fit(ph_full_sex_tr_ld, ph_full_sex_va_ld, max_iters=400, tol=1e-3)
-        print(f"[{datetime.datetime.now():%H:%M:%S}]   posthoc_full_age_sex done. "
+        print(f"[{datetime.datetime.now():%H:%M:%S}]   refit_full_age_sex done. "
               f"lam={float(phm_full_sex.lam.data):.3e}", flush=True)
         torch.save(phm_full_sex.state_dict(), ph_full_sex_path)
     del ph_full_sex_tr_ld, ph_full_sex_va_ld; gc.collect()
 
-    # ── 3. Per rotation: train backbone on ∪_{j≠k} h_j, fit posthoc on h_k. ──
-    phms_age = []  # Posthoc models controlling for age.
-    phms_sex = []  # Posthoc models controlling for age + sex. (Sanity check)
+    # ── 3. Per rotation: train backbone on ∪_{j≠k} h_j, fit refit on h_k. ──
+    phms_age = []  # Refit models controlling for age.
+    phms_sex = []  # Refit models controlling for age + sex. (Sanity check)
     for k in range(K):
         dnn_idx = np.concatenate([h_idx[j] for j in range(K) if j != k])
         post_idx = h_idx[k]
@@ -416,41 +371,41 @@ for fold in FOLDS:
             torch.save(backbone_k.state_dict(), bb_path)
         del bb_ld_tr, bb_ld_va; gc.collect()
 
-        # ── 3b. Posthoc (age-only) on post_idx ───────────────────────────────
-        ph_age_path = ckpt_dir + f"posthoc_age_k{k}.pt"
+        # ── 3b. Refit (age-only) on post_idx ─────────────────────────────────
+        ph_age_path = ckpt_dir + f"refit_age_k{k}.pt"
         ph_age_tr_ld, ph_age_va_ld, _ = _make_loaders(
             post_idx, fold_seed + 2000 + k, Z=Z_full[:, 0:1]
         )
-        phm_k_age = PostHocCovarNetwork(backbone_k, num_covariates=1, orthogonalize=False).to(device)
+        phm_k_age = RefitCovarNetwork(backbone_k, num_covariates=1, orthogonalize=False).to(device)
         if os.path.exists(ph_age_path):
-            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: posthoc_age exists — loading.", flush=True)
+            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: refit_age exists — loading.", flush=True)
             phm_k_age.load_state_dict(torch.load(ph_age_path, map_location=device))
             phm_k_age.eval()
         else:
-            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: fitting posthoc_age on "
+            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: fitting refit_age on "
                   f"{len(post_idx)} obs ...", flush=True)
             phm_k_age = phm_k_age.fit(ph_age_tr_ld, ph_age_va_ld, max_iters=400, tol=1e-3)
-            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: posthoc_age done. "
+            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: refit_age done. "
                   f"lam={float(phm_k_age.lam.data):.3e}", flush=True)
             torch.save(phm_k_age.state_dict(), ph_age_path)
         phms_age.append(phm_k_age)
         del ph_age_tr_ld, ph_age_va_ld; gc.collect()
 
-        # ── 3c. Posthoc (age+sex) on post_idx ────────────────────────────────
-        ph_sex_path = ckpt_dir + f"posthoc_age_sex_k{k}.pt"
+        # ── 3c. Refit (age+sex) on post_idx ──────────────────────────────────
+        ph_sex_path = ckpt_dir + f"refit_age_sex_k{k}.pt"
         ph_sex_tr_ld, ph_sex_va_ld, _ = _make_loaders(
             post_idx, fold_seed + 3000 + k, Z=Z_full
         )
-        phm_k_sex = PostHocCovarNetwork(backbone_k, num_covariates=2, orthogonalize=False).to(device)
+        phm_k_sex = RefitCovarNetwork(backbone_k, num_covariates=2, orthogonalize=False).to(device)
         if os.path.exists(ph_sex_path):
-            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: posthoc_age_sex exists — loading.", flush=True)
+            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: refit_age_sex exists — loading.", flush=True)
             phm_k_sex.load_state_dict(torch.load(ph_sex_path, map_location=device))
             phm_k_sex.eval()
         else:
-            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: fitting posthoc_age_sex on "
+            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: fitting refit_age_sex on "
                   f"{len(post_idx)} obs ...", flush=True)
             phm_k_sex = phm_k_sex.fit(ph_sex_tr_ld, ph_sex_va_ld, max_iters=400, tol=1e-3)
-            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: posthoc_age_sex done. "
+            print(f"[{datetime.datetime.now():%H:%M:%S}]   k={k}: refit_age_sex done. "
                   f"lam={float(phm_k_sex.lam.data):.3e}", flush=True)
             torch.save(phm_k_sex.state_dict(), ph_sex_path)
         phms_sex.append(phm_k_sex)
@@ -466,14 +421,8 @@ for fold in FOLDS:
         return float(w[0]), float(w[1]) if w.size > 1 else float("nan")
 
     def _eval_ensemble(phms, name_ens):
-        """Evaluate K-fold ensemble.
-
-        ŷ_marg(X*) = (1/N_train) Σ_j σ((1/K) Σ_k η_k(X*, z_j))
-
-        Also valid for a single-phm "ensemble" (len(phms) == 1): all means
-        collapse to identity, so this evaluates that one phm with the same
-        marginalisation pipeline. Used for posthoc_nosamp_* and posthoc_split_*.
-        """
+        """Evaluate a K-fold ensemble (len==1 degenerates to a single-phm eval via the same pipeline)."""
+        # ŷ_marg(X*) = (1/N_train) Σ_j σ((1/K) Σ_k η_k(X*, z_j)); used for refit_nosamp_* and refit_split_*.
         # ── Recenter each phm on the full train set.
         for p in phms:
             _recenter_ensemble(p, full_train_idx)
@@ -529,13 +478,13 @@ for fold in FOLDS:
         pf.write(json.dumps(m_dnn) + "\n")
     results_rows.append(m_dnn)
 
-    # ── 6. No-samp posthocs (single-phm "ensemble" — backbone & head share data).
-    results_rows.append(_eval_ensemble([phm_full_age], "posthoc_nosamp_age"))
-    results_rows.append(_eval_ensemble([phm_full_sex], "posthoc_nosamp_age_sex"))
+    # ── 6. No-samp refits (single-phm "ensemble" — backbone & head share data).
+    results_rows.append(_eval_ensemble([phm_full_age], "refit_nosamp_age"))
+    results_rows.append(_eval_ensemble([phm_full_sex], "refit_nosamp_age_sex"))
 
     # ── 7. Sample-split: k=0 sub-model of K=2 alone (backbone on h_1, head on h_0).
-    results_rows.append(_eval_ensemble([phms_age[0]], "posthoc_split_age"))
-    results_rows.append(_eval_ensemble([phms_sex[0]], "posthoc_split_age_sex"))
+    results_rows.append(_eval_ensemble([phms_age[0]], "refit_split_age"))
+    results_rows.append(_eval_ensemble([phms_sex[0]], "refit_split_age_sex"))
 
     # ── 8. Cross-fit ensembles (K-rotation mean).
     results_rows.append(_eval_ensemble(phms_age, f"crossfit_k{K}_age"))
