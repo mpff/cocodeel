@@ -77,15 +77,24 @@ HP_ANCHORS = {
 }
 # selected by hpsearch/search_study_c_q.py (chosen_hps_study_c_q.json)
 HP_Q_ANCHORS = {
-    (400, 4): None,
-    (400, 64): None,
-    (400, 1024): None,
-    (3200, 4): None,
-    (3200, 64): None,
-    (3200, 1024): None,
-    (25600, 4): None,
-    (25600, 64): None,
-    (25600, 1024): None,
+    (400, 4): dict(backbone=dict(lr=3e-3, wd=1e-5), nam=dict(lr=3e-3, wd=1e-5),
+                   nam_mlp=dict(lr=1e-2, wd=1e-4)),
+    (400, 64): dict(backbone=dict(lr=1e-3, wd=1e-5), nam=dict(lr=1e-3, wd=1e-4),
+                    nam_mlp=dict(lr=1e-2, wd=1e-4)),
+    (400, 1024): dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=3e-4, wd=1e-4),
+                      nam_mlp=dict(lr=3e-3, wd=1e-5)),
+    (3200, 4): dict(backbone=dict(lr=1e-3, wd=1e-4), nam=dict(lr=1e-2, wd=1e-5),
+                    nam_mlp=dict(lr=3e-3, wd=1e-4)),
+    (3200, 64): dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=1e-2, wd=1e-4),
+                     nam_mlp=dict(lr=1e-3, wd=1e-4)),
+    (3200, 1024): dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=3e-3, wd=1e-4),
+                       nam_mlp=dict(lr=3e-3, wd=1e-5)),
+    (25600, 4): dict(backbone=dict(lr=3e-4, wd=1e-4), nam=dict(lr=3e-3, wd=1e-5),
+                     nam_mlp=dict(lr=1e-3, wd=1e-4)),
+    (25600, 64): dict(backbone=dict(lr=3e-4, wd=1e-4), nam=dict(lr=3e-3, wd=1e-4),
+                      nam_mlp=dict(lr=3e-4, wd=1e-4)),
+    (25600, 1024): dict(backbone=dict(lr=3e-4, wd=1e-4), nam=dict(lr=3e-3, wd=1e-4),
+                        nam_mlp=dict(lr=3e-4, wd=1e-4)),
 }
 
 
