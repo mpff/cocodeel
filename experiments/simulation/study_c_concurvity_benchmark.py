@@ -1,15 +1,20 @@
 """Study C — concurvity benchmark: the cross-fitted refit against end-to-end competitors.
 
-Sweep concurvity (Fig 2): n grows to 102400; methods are refit / refit_orth
-(2-fold cross-fit), the uncontrolled base DNN, Weber's posthoc_web, NAM with
-and without the Siems et al. (2023) concurvity penalty, SSN (Ruegamer et al.),
-and the adversarial trainer (Zhao et al. 2020). Sweep concurvity_q (Fig c2):
-refit vs NAM as backbone width q grows, with per-q learning rates.
+Sweep concurvity (Fig c1): n grows to 102400; the roster spans refit /
+refit_orth (2-fold cross-fit), the uncontrolled base DNN, Weber's
+posthoc_web, NAMs with linear and MLP covariate effect, the Siems et al.
+(2023) concurvity penalty on the MLP NAM at three strengths, SSN
+(Ruegamer et al.), and CF-Net (Zhao et al. 2020) at three adversarial
+strengths. Sweep concurvity_q (Fig c2): refit vs both NAMs as backbone
+width q grows. Hyperparameters come from the replicated per-anchor
+searches in hpsearch/; every setting inherits its nearest anchor on the
+log scale.
 
-Usage:  NSIM=5 python experiments/simulation/study_c_concurvity_benchmark.py
+Usage:  NSIM=5 python experiments/simulation/study_c_concurvity_benchmark.py [sweep ...]
 """
 import gc
 import json
+import math
 import os
 import sys
 import time
@@ -27,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 from cocodeel.model import BaseNetwork
 from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.crossfit import CrossFitEnsemble
-from cocodeel.benchmarking.model import CovarNetwork
+from cocodeel.benchmarking.model import CovarNetwork, MLPCovarNetwork
 from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
 from cocodeel.benchmarking.adversarial_trainer import adversarial_trainer
 from cocodeel.trainer import covar_trainer
@@ -47,15 +52,11 @@ Q_DEFAULT = 32
 TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000
+WARMUP_FRAC = 0.05
 RUN_DIR = ROOT / "experiments/simulation/output/runs/study_c"
 
-# selected by hpsearch/search_default.py (hpsearch/chosen_hps.json)
-HP = dict(lr=3e-3, wd=1e-5, early_pat=6, sched_pat=5)
-# per-q learning rates: hpsearch/search_per_q.py (backbone) and search_per_q_nam.py (NAM)
-LR_Q = {2: 1e-3, 4: 1e-3, 8: 1e-3, 16: 1e-3, 32: 1e-2,
-        64: 3e-3, 128: 3e-3, 256: 1e-2, 512: 3e-3, 1024: 1e-3}
-LR_Q_NAM = {2: 1e-2, 4: 1e-2, 8: 1e-2, 16: 3e-3, 32: 1e-2,
-            64: 3e-3, 128: 3e-3, 256: 1e-2, 512: 1e-2, 1024: 3e-3}
+SIEMS_LAMS = [0.01, 0.1, 1.0]
+CFNET_LAMS = [0.5, 1.0, 5.0]
 
 N_GRID = [400, 800, 1600, 3200, 6400, 12800, 25600]
 N_GRID_CONCURVITY = N_GRID + [51200, 102400]
@@ -63,20 +64,56 @@ Q_GRID = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
 
 SIM_DEFAULTS = dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.)
 
+# selected by hpsearch/search_study_c.py (chosen_hps_study_c.json); the
+# penalized NAM variants inherit the unpenalized nam_mlp winner and CF-Net
+# runs all three optimizers at cfnet_lr for every strength
+HP_ANCHORS = {
+    400: dict(backbone=dict(lr=1e-3, wd=1e-4), nam=dict(lr=1e-2, wd=1e-4),
+              nam_mlp=dict(lr=3e-3, wd=1e-4), cfnet_lr=1e-3),
+    6400: dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=1e-2, wd=1e-4),
+               nam_mlp=dict(lr=3e-3, wd=1e-5), cfnet_lr=1e-3),
+    102400: dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=1e-3, wd=1e-5),
+                 nam_mlp=dict(lr=3e-4, wd=1e-4), cfnet_lr=1e-3),
+}
+# selected by hpsearch/search_study_c_q.py (chosen_hps_study_c_q.json)
+HP_Q_ANCHORS = {
+    (400, 4): None,
+    (400, 64): None,
+    (400, 1024): None,
+    (3200, 4): None,
+    (3200, 64): None,
+    (3200, 1024): None,
+    (25600, 4): None,
+    (25600, 64): None,
+    (25600, 1024): None,
+}
+
+
+def nearest_hp(n):
+    """Anchor winners for n, nearest on the log scale (ties to the smaller anchor)."""
+    anchor = min(HP_ANCHORS, key=lambda a: abs(math.log(n / a)))
+    return HP_ANCHORS[anchor]
+
+
+def nearest_hp_q(n, q):
+    """Anchor-cell winners for (n, q), nearest in (log n, log q)."""
+    anchor = min(HP_Q_ANCHORS,
+                 key=lambda c: math.log(n / c[0]) ** 2 + math.log(q / c[1]) ** 2)
+    return HP_Q_ANCHORS[anchor]
+
+
 SWEEPS = {
     # full benchmark roster at default q
     "concurvity": dict(
         settings=[dict(n=n) for n in N_GRID_CONCURVITY],
         sweep_key_fn=lambda s: f"n={s['n']}",
-        nam_lams=[0.0, 0.1, 1.0, 10.0],
-        with_web=True, with_ssn=True, with_adversarial=True, with_refit_orth=True,
+        full_roster=True,
     ),
-    # refit vs plain NAM as backbone capacity grows
+    # refit vs both NAMs as backbone capacity grows
     "concurvity_q": dict(
         settings=[dict(n=n, q=q) for n in N_GRID for q in Q_GRID],
         sweep_key_fn=lambda s: f"n={s['n']}_q={s['q']}",
-        nam_lams=[0.0],
-        with_web=False, with_ssn=False, with_adversarial=False, with_refit_orth=False,
+        full_roster=False,
     ),
 }
 
@@ -93,7 +130,7 @@ def concurvity_penalty(fx_out, fz_out):
 def train_covar_with_concurvity_reg(
         model_cls, model_params, train_loader, val_loader, lam_reg,
         device=None, loss_fn=None, epochs=1000, lr=1e-3, weight_decay=1e-4,
-        patience=12, scheduler=None, scheduler_kwargs=None,
+        patience=12, scheduler=None, scheduler_kwargs=None, warmup_frac=0.05,
         use_amp=False, amp_dtype=torch.bfloat16):
     """covar_trainer with `lam_reg * |Corr(fx, fz)|` added to each batch loss (Siems et al. 2023)."""
     device = torch.device(device or "cpu")
@@ -109,6 +146,12 @@ def train_covar_with_concurvity_reg(
             optimizer, mode="min", patience=max(1, patience // 3), factor=0.5)
     amp_enabled = use_amp and device.type == "cuda"
 
+    # penalty warm-up: unpenalized for the first warmup_frac of the epoch cap
+    # (Siems et al. 2023, "for stability"); model selection and early stopping
+    # start with the penalty, else the unpenalized phase would always win on
+    # validation prediction loss
+    warmup_epochs = int(round(warmup_frac * epochs)) if lam_reg > 0 else 0
+
     best_val_loss = float("inf")
     best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     best_epoch = 0
@@ -116,6 +159,8 @@ def train_covar_with_concurvity_reg(
     val_losses_, lr_history_ = [], []
 
     for epoch in range(epochs):
+        penalty_on = epoch >= warmup_epochs
+
         # train epoch
         model.train()
         for batch in train_loader:
@@ -127,7 +172,9 @@ def train_covar_with_concurvity_reg(
                 fx = model.predict_fx(x)
                 fz = model.predict_fz(z)
                 preds = model.output_func(model.intercept + fx + fz)
-                loss = loss_fn(preds, y) + lam_reg * concurvity_penalty(fx, fz)
+                loss = loss_fn(preds, y)
+                if penalty_on:
+                    loss = loss + lam_reg * concurvity_penalty(fx, fz)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -148,6 +195,12 @@ def train_covar_with_concurvity_reg(
         val_loss = (val_loss_sum / max(1, n_val)).item()
         val_losses_.append(val_loss)
         lr_history_.append(optimizer.param_groups[0]["lr"])
+        # scheduling, model selection and early stopping all start with the
+        # penalty: stepping the plateau scheduler on unpenalized losses would
+        # anchor its best below anything the penalized phase can reach and
+        # decay the learning rate before the penalty is ever active
+        if not penalty_on:
+            continue
         if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             scheduler.step(val_loss)
         else:
@@ -173,16 +226,16 @@ def train_covar_with_concurvity_reg(
 
 
 # ── shared fitting pieces ─────────────────────────────────────────────────────
-def trainer_params(lr):
+def trainer_params(hp):
     return dict(
         device=torch.device(DEVICE),
         loss_fn=MSELoss(),
         epochs=EPOCHS_CAP,
-        lr=lr,
-        weight_decay=HP["wd"],
-        patience=HP["early_pat"],
+        lr=hp["lr"],
+        weight_decay=hp["wd"],
+        patience=6,
         scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau,
-        scheduler_kwargs={"mode": "min", "patience": HP["sched_pat"], "factor": 0.5},
+        scheduler_kwargs={"mode": "min", "patience": 5, "factor": 0.5},
         use_amp=True,
     )
 
@@ -231,24 +284,25 @@ def run_one(sweep, setting, seed):
     hA_tr, hA_va = half_A
     hB_tr, hB_va = half_B
 
-    # backbones
+    # anchor hyperparameters
     q = setting.get("q", Q_DEFAULT)
-    lr_backbone = LR_Q[q] if sweep == "concurvity_q" else HP["lr"]
-    lr_nam = LR_Q_NAM[q] if sweep == "concurvity_q" else HP["lr"]
+    hp = nearest_hp_q(setting["n"], q) if sweep == "concurvity_q" else nearest_hp(setting["n"])
     model_params = dict(
         backbone=TrafficBackbone,
         backbone_params={"out_features": q},
         num_covariates=1,
         link="identity",
     )
-    tp = trainer_params(lr_backbone)
-    base_A = covar_trainer(BaseNetwork, model_params, train_loader=hA_tr, val_loader=hA_va, **tp)
+
+    # backbones
+    tp_backbone = trainer_params(hp["backbone"])
+    base_A = covar_trainer(BaseNetwork, model_params, train_loader=hA_tr, val_loader=hA_va, **tp_backbone)
     base_A = base_A.center_effects(hA_tr)
-    base_B = covar_trainer(BaseNetwork, model_params, train_loader=hB_tr, val_loader=hB_va, **tp)
+    base_B = covar_trainer(BaseNetwork, model_params, train_loader=hB_tr, val_loader=hB_va, **tp_backbone)
     base_B = base_B.center_effects(hB_tr)
 
     # refit variants (2-fold cross-fit)
-    refit_variants = [("refit", False)] + ([("refit_orth", True)] if cfg["with_refit_orth"] else [])
+    refit_variants = [("refit", False)] + ([("refit_orth", True)] if cfg["full_roster"] else [])
     models = {}
     for name, orth in refit_variants:
         m_AB = RefitCovarNetwork(base_A, num_covariates=1, orthogonalize=orth).to(device)
@@ -257,37 +311,43 @@ def run_one(sweep, setting, seed):
         m_BA = m_BA.fit(hA_tr, hA_va)
         models[name] = CrossFitEnsemble([m_AB, m_BA]).recenter(pooled)
 
-    # full-sample baselines
-    if cfg["with_web"]:
-        base_full = covar_trainer(BaseNetwork, model_params, train_loader=full_tr, val_loader=full_va, **tp)
+    # NAM variants (end-to-end on the full sample)
+    nam = covar_trainer(CovarNetwork, model_params, train_loader=full_tr, val_loader=full_va,
+                        **trainer_params(hp["nam"]))
+    models["nam"] = nam.center_effects(full_tr)
+    nam_mlp = covar_trainer(MLPCovarNetwork, model_params, train_loader=full_tr, val_loader=full_va,
+                            **trainer_params(hp["nam_mlp"]))
+    models["nam_mlp"] = nam_mlp.center_effects(full_tr)
+
+    if cfg["full_roster"]:
+        # full-sample baselines
+        base_full = covar_trainer(BaseNetwork, model_params, train_loader=full_tr, val_loader=full_va, **tp_backbone)
         base_full = base_full.center_effects(full_tr)
         models["base"] = base_full
         web = PostHocOrthNetwork(base_full, num_covariates=1).to(device)
         models["posthoc_web"] = web.fit(full_tr, full_va)
 
-    # NAM variants (end-to-end on the full sample)
-    tp_nam = trainer_params(lr_nam)
-    for lam_reg in cfg["nam_lams"]:
-        name = "nam" if lam_reg == 0.0 else f"nam_conc_{lam_reg:g}"
-        m = train_covar_with_concurvity_reg(
-            CovarNetwork, model_params, full_tr, full_va, lam_reg=lam_reg, **tp_nam)
-        models[name] = m.center_effects(full_tr)
-
-    # SSN wraps the plain NAM
-    if cfg["with_ssn"]:
+        # SSN wraps the linear NAM
         ssn = SemiStructuredNetwork(models["nam"]).to(device)
         models["ssn"] = ssn.fit(full_tr)
 
-    # adversarial trainer (Zhao et al. 2020) on the full sample
-    # source-paper protocol: three fixed Adam rates and patience 12
-    # (the trainer's defaults), not the HP-searched backbone settings
-    if cfg["with_adversarial"]:
-        adv = adversarial_trainer(
-            BaseNetwork, model_params, num_covariates=1,
-            train_loader=full_tr, val_loader=full_va,
-            device=device, loss_fn=MSELoss(), epochs=EPOCHS_CAP,
-        )
-        models["adversarial"] = adv.center_effects(full_tr)
+        # Siems penalty on the MLP NAM, HPs inherited from the unpenalized winner
+        for lam in SIEMS_LAMS:
+            m = train_covar_with_concurvity_reg(
+                MLPCovarNetwork, model_params, full_tr, full_va, lam_reg=lam,
+                warmup_frac=WARMUP_FRAC, **trainer_params(hp["nam_mlp"]))
+            models[f"nam_mlp_conc_{lam:g}"] = m.center_effects(full_tr)
+
+        # CF-Net (Zhao et al. 2020), equal rates so lam is the strength knob
+        for lam in CFNET_LAMS:
+            adv = adversarial_trainer(
+                BaseNetwork, model_params, num_covariates=1,
+                train_loader=full_tr, val_loader=full_va,
+                device=device, loss_fn=MSELoss(), epochs=EPOCHS_CAP,
+                lr_task=hp["cfnet_lr"], lr_cp=hp["cfnet_lr"], lr_adv=hp["cfnet_lr"],
+                lam=lam,
+            )
+            models[f"cfnet_{lam:g}"] = adv.center_effects(full_tr)
 
     # test evaluation
     test_sim = dict(sim_params, n=TEST_N)
@@ -323,20 +383,23 @@ def _worker(task):
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
-def main():
+def main(sweep_names):
+    sweeps = {name: SWEEPS[name] for name in (sweep_names or SWEEPS)}
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     grid_runner.write_manifest(RUN_DIR, dict(
         study="c_concurvity_benchmark", device=DEVICE, n_workers=N_WORKERS,
         nsim=NSIM, q_default=Q_DEFAULT, test=dict(seed=TEST_SEED, n=TEST_N),
-        hp=HP, lr_q=LR_Q, lr_q_nam=LR_Q_NAM,
-        sweeps={s: len(c["settings"]) for s, c in SWEEPS.items()},
+        hp_anchors=HP_ANCHORS,
+        hp_q_anchors={f"n={n}_q={q}": v for (n, q), v in HP_Q_ANCHORS.items()},
+        siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS, warmup_frac=WARMUP_FRAC,
+        sweeps={s: len(c["settings"]) for s, c in sweeps.items()},
     ))
-    grid_runner.write_settings_csv(RUN_DIR, {s: c["settings"] for s, c in SWEEPS.items()},
-                                   {s: c["sweep_key_fn"] for s, c in SWEEPS.items()})
+    grid_runner.write_settings_csv(RUN_DIR, {s: c["settings"] for s, c in sweeps.items()},
+                                   {s: c["sweep_key_fn"] for s, c in sweeps.items()})
 
     done = grid_runner.already_done(RUN_DIR)
     tasks = [dict(sweep=sweep, setting=setting, seed=seed)
-             for sweep, cfg in SWEEPS.items()
+             for sweep, cfg in sweeps.items()
              for setting in cfg["settings"]
              for seed in range(NSIM)
              if (sweep, cfg["sweep_key_fn"](setting), seed) not in done]
@@ -345,4 +408,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

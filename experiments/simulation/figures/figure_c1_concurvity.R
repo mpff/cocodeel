@@ -15,20 +15,39 @@ effect_names <- c(
   'fz' = 'Covariate Effect'
 )
 
-df_bz <- read_csv("experiments/simulation/output/concurvity.csv") %>%
-  mutate(model = factor(
-    model,
-    levels = c("nam", "nam_conc_0.1", "nam_conc_1", "nam_conc_10",
-               "ssn", "refit", "refit_orth"),
-    labels = c(
-      "NAM [7]",
-      "NAM + Reg. (0.1) [20]",
-      "NAM + Reg. (1) [20]",
-      "NAM + Reg. (10) [20]",
-      "SSN [8]",
-      "DNN with Controls",
-      "DNN with Controls\n+ Orthogonalisation")
-  )) %>%
+df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
+
+# Of the three regularisation strengths per family (Siems penalty on the
+# MLP NAM; CF-Net), only the best is plotted — all six would drown the
+# panel. Best = lowest mean log10 MSPE(f_X) across n, the metric of the
+# left panel.
+pick_best <- function(df, prefix) {
+  df %>%
+    filter(startsWith(model, prefix), effect == "fx", metric == "mspe") %>%
+    group_by(model) %>%
+    summarise(score = mean(log10(value)), .groups = "drop") %>%
+    slice_min(score, n = 1, with_ties = FALSE) %>%
+    pull(model)
+}
+best_siems <- pick_best(df_raw, "nam_mlp_conc_")
+best_cfnet <- pick_best(df_raw, "cfnet_")
+siems_lam <- sub("nam_mlp_conc_", "", best_siems)
+cfnet_lam <- sub("cfnet_", "", best_cfnet)
+
+model_levels <- c("nam", "nam_mlp", best_siems, "ssn", "posthoc_web",
+                  best_cfnet, "refit", "refit_orth")
+model_labels <- c(
+  "NAM [7]",
+  "NAM-MLP [7]",
+  sprintf("NAM-MLP + Reg. (%s) [20]", siems_lam),
+  "SSN [8]",
+  "DNN (Baseline) + Orth. [17]",
+  sprintf("CF-Net (%s)", cfnet_lam),
+  "DNN with Controls",
+  "DNN with Controls\n+ Orthogonalisation")
+
+df_bz <- df_raw %>%
+  mutate(model = factor(model, levels = model_levels, labels = model_labels)) %>%
   filter(!is.na(model)) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
 
@@ -58,15 +77,16 @@ bz_anchor_color <- function(option) {
                       option = option)(1)
 }
 
-method_colors <- c(
-  "NAM [7]"                 = "#440154",  # viridis(0.00) — deep purple
-  "NAM + Reg. (0.1) [20]"   = "#3B528B",  # viridis(0.25) — blue
-  "NAM + Reg. (1) [20]"     = "#287C8E",  # viridis(0.40) — teal-blue
-  "NAM + Reg. (10) [20]"    = "#26828E",  # viridis(0.50) — teal
-  "SSN [8]"                 = "#9C179E",  # plasma(0.40)  — magenta
-  "DNN with Controls"         = bz_anchor_color("viridis"),
-  "DNN with Controls\n+ Orthogonalisation" = bz_anchor_color("magma")
-)
+method_colors <- setNames(c(
+  "#440154",                    # NAM — viridis(0.00), deep purple
+  "#3B528B",                    # NAM-MLP — viridis(0.25), blue
+  "#26828E",                    # NAM-MLP + Reg. — viridis(0.50), teal
+  "#9C179E",                    # SSN — plasma(0.40), magenta
+  "#7F7F7F",                    # Weber post-hoc — neutral grey
+  "#ED7953",                    # CF-Net — plasma(0.70), coral
+  bz_anchor_color("viridis"),   # DNN with Controls
+  bz_anchor_color("magma")      # DNN with Controls + Orth.
+), model_labels)
 
 
 
@@ -123,9 +143,7 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
 }
 
 # Build plots
-METHODS <- c("NAM [7]", "NAM + Reg. (0.1) [20]", "NAM + Reg. (1) [20]",
-             "NAM + Reg. (10) [20]", "SSN [8]", "DNN with Controls",
-             "DNN with Controls\n+ Orthogonalisation")
+METHODS <- model_labels
 
 b1 <- make_plot(
   df_bz %>% filter(effect == "fx", metric == "mspe", model %in% METHODS),
