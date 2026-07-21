@@ -1537,6 +1537,42 @@ class TestSingularRidgeSolve(unittest.TestCase):
         self.assertAlmostEqual(model.fz.weight.item(), 3.0, delta=0.3)
 
 
+class TestSingularOrthogonalization(unittest.TestCase):
+    """Exactly collinear covariate columns make Z'Z singular; the
+    orthogonalization solve must return a finite min-norm solution."""
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        n = 200
+        self.X = torch.randn(n, 3)
+        z = torch.randn(n, 1)
+        self.Z = torch.cat([z, z], dim=1)
+        self.y = 2 * self.X[:, [0]] + 3 * z
+        tr = CovarDataset(self.X[:100], self.Z[:100], self.y[:100])
+        va = CovarDataset(self.X[100:], self.Z[100:], self.y[100:])
+        self.tr = DataLoader(tr, batch_size=50)
+        self.va = DataLoader(va, batch_size=50)
+        self.base = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={'in_features': 3, 'out_features': 3},
+            num_covariates=2,
+            link="identity",
+        )
+
+    def test_orthogonalization_fits_min_norm(self):
+        model = RefitCovarNetwork(self.base, num_covariates=2, orthogonalize=True)
+        model.fit(self.tr, self.va, lam=0.1)
+        self.assertTrue(torch.isfinite(model.orth.weight).all())
+        # the min-norm solution still satisfies the normal equations
+        with torch.no_grad():
+            X, Z, _ = model._extract_features_from_loader(self.tr)
+            fX = model.fx(model.center_x(X))
+            Zc = model.center_z(Z)
+            resid = fX - model.orth(Zc)
+        self.assertLess((Zc.T @ resid).abs().max().item(), 1e-2)
+
+
 class DeadColumnBackbone(torch.nn.Module):
     """Backbone whose last output column is constant: zero std after centering."""
 

@@ -392,6 +392,9 @@ class RefitCovarNetwork(BaseNetwork):
 
         P = penalty_z.to(Z.device) if penalty_z is not None \
             else torch.zeros(Z.shape[1], Z.shape[1], device=Z.device)
-        solution = torch.linalg.solve(Z.T @ Z + P, Z.T @ fX)
+        # min-norm lstsq on cpu: a rank-deficient Z'Z (e.g. collinear basis
+        # columns) must not fail, and CUDA lstsq assumes full rank
+        solution = torch.linalg.lstsq((Z.T @ Z + P).cpu(), (Z.T @ fX).cpu(),
+                                      driver="gelsd").solution.to(Z.device)
         self.orth.weight.copy_(solution.T)
         return self
