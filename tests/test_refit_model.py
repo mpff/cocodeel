@@ -1561,8 +1561,11 @@ class TestSingularOrthogonalization(unittest.TestCase):
         )
 
     def test_orthogonalization_fits_min_norm(self):
+        # exact collinearity fails the main (Z-unpenalized) ridge path by
+        # design, so exercise the orthogonalization solve directly
         model = RefitCovarNetwork(self.base, num_covariates=2, orthogonalize=True)
-        model.fit(self.tr, self.va, lam=0.1)
+        model.center_effects(self.tr)
+        model._fit_orthogonalization(self.tr)
         self.assertTrue(torch.isfinite(model.orth.weight).all())
         # the min-norm solution still satisfies the normal equations
         with torch.no_grad():
