@@ -17,10 +17,11 @@ effect_names <- c(
 
 df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 
-# Of the three regularisation strengths per family (Siems penalty on the
-# MLP NAM; CF-Net), only the best is plotted — all six would drown the
-# panel. Best = lowest mean log10 MSPE(f_X) across n, the metric of the
-# left panel.
+# Of the three Siems penalty strengths, only the best is plotted — all
+# would drown the panel. Best = lowest mean log10 MSPE(f_X) across n, the
+# metric of the left panel. CF-Net is pinned to its as-published strength:
+# its three strengths are indistinguishable on that score (spread < 0.01),
+# so a data-driven pick would be a coin flip.
 pick_best <- function(df, prefix) {
   df %>%
     filter(startsWith(model, prefix), effect == "fx", metric == "mspe") %>%
@@ -30,16 +31,16 @@ pick_best <- function(df, prefix) {
     pull(model)
 }
 best_siems <- pick_best(df_raw, "nam_mlp_conc_")
-best_cfnet <- pick_best(df_raw, "cfnet_")
+best_cfnet <- "cfnet_1"
 siems_lam <- sub("nam_mlp_conc_", "", best_siems)
 cfnet_lam <- sub("cfnet_", "", best_cfnet)
 
 model_levels <- c("nam", "nam_mlp", best_siems, "ssn", "posthoc_web",
                   best_cfnet, "refit", "refit_orth")
 model_labels <- c(
+  "NAM (lin. fz) [7]",
   "NAM [7]",
-  "NAM-MLP [7]",
-  sprintf("NAM-MLP + Reg. (%s) [20]", siems_lam),
+  sprintf("NAM + Concurvity Reg. (%s) [20]", siems_lam),
   "SSN [8]",
   "DNN (Baseline) + Orth. [17]",
   sprintf("CF-Net (%s)", cfnet_lam),
