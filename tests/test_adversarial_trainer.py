@@ -135,6 +135,19 @@ class TestAdversarialTrainer(unittest.TestCase):
         self.assertEqual(len(model.adv_grad_norms_), model.n_epochs_run_)
         self.assertTrue(all(n >= 0 for n in model.adv_grad_norms_))
 
+    def test_source_protocol_runs_fixed_budget(self):
+        # patience=None + max_grad_norm=None: the published protocol — every
+        # epoch runs, no clipping, final weights returned
+        model = adversarial_trainer(
+            model=BaseNetwork, model_params=self.model_params, num_covariates=1,
+            train_loader=self.train_loader, val_loader=self.val_loader,
+            device='cpu', loss_fn=self.loss_fn, epochs=7,
+            patience=None, max_grad_norm=None,
+        )
+        self.assertEqual(model.n_epochs_run_, 7)
+        self.assertEqual(model.best_epoch_, 6)
+        self.assertEqual(len(model.val_losses_), 7)
+
 
 class TestAdversarialTrainerLogitLink(unittest.TestCase):
 

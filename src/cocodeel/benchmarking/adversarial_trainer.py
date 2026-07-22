@@ -61,6 +61,7 @@ def adversarial_trainer(
     cp_hidden=16,
     control_label=0,
     patience=12,
+    max_grad_norm=1.0,
 ):
     """Alternating task/adversary/confound-predictor training loop.
 
@@ -79,11 +80,18 @@ def adversarial_trainer(
     the full batch is used instead — a deviation from the source, which only
     ever trains on binary case/control outcomes.
 
+    The source protocol runs a fixed iteration budget with no early stopping,
+    no model selection and no gradient clipping; `patience=None` (train all
+    `epochs`, return the final weights) together with `max_grad_norm=None`
+    (no clipping) reproduces it. The defaults instead early-stop on
+    validation prediction loss and clip at 1.0, matching the other
+    benchmark trainers.
+
     Returns a model with the usual `val_losses_`/`best_epoch_`/`n_epochs_run_`
     fit-history attributes, plus `confound_head_` (the fitted adversary),
     `adv_grad_norms_` (per-epoch mean backbone gradient norm of the
     adversarial step, before clipping — a diagnostic for how much the
-    clip at 1.0, absent in the source, compresses large-`lam` runs), and
+    clip, absent in the source, compresses large-`lam` runs), and
     `lr_history_` as a `{"task", "adv", "cp"}` dict rather than a per-epoch
     list, since none of the three rates are scheduled.
     """
@@ -136,7 +144,8 @@ def adversarial_trainer(
                 cp_loss = F.mse_loss(z_pred, z_ctrl)
                 cp_optimizer.zero_grad()
                 cp_loss.backward()
-                torch.nn.utils.clip_grad_norm_(confound_head.parameters(), max_norm=1.0)
+                if max_grad_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(confound_head.parameters(), max_norm=max_grad_norm)
                 cp_optimizer.step()
 
                 # adversarial step: confound_head frozen (source: "regressor.trainable = False")
@@ -147,7 +156,10 @@ def adversarial_trainer(
                 adv_loss = lam * _squared_corr(z_ctrl, z_pred)
                 adv_optimizer.zero_grad()
                 adv_loss.backward()
-                norm = torch.nn.utils.clip_grad_norm_(model.backbone.parameters(), max_norm=1.0)
+                # max_norm=inf records the norm without clipping
+                norm = torch.nn.utils.clip_grad_norm_(
+                    model.backbone.parameters(),
+                    max_norm=max_grad_norm if max_grad_norm is not None else float("inf"))
                 adv_optimizer.step()
                 adv_norm_sum += norm
                 n_adv_steps += 1
@@ -159,7 +171,8 @@ def adversarial_trainer(
             preds = model(x, z)
             loss = loss_fn(preds, y)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(task_params, max_norm=1.0)
+            if max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(task_params, max_norm=max_grad_norm)
             task_optimizer.step()
 
         adv_grad_norms_.append((adv_norm_sum / max(1, n_adv_steps)).item())
@@ -179,7 +192,10 @@ def adversarial_trainer(
         val_loss = (val_loss_sum / max(1, n_val)).item()
         val_losses_.append(val_loss)
 
-        # early stopping
+        # early stopping (patience=None: fixed budget, final weights)
+        if patience is None:
+            best_epoch = epoch
+            continue
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -190,7 +206,8 @@ def adversarial_trainer(
             if patience_counter >= patience:
                 break
 
-    model.load_state_dict(best_state)
+    if patience is not None:
+        model.load_state_dict(best_state)
     model.val_losses_ = val_losses_
     model.best_epoch_ = best_epoch
     model.n_epochs_run_ = epoch + 1
