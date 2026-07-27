@@ -13,12 +13,13 @@ import nibabel as nib
 from zennit.attribution import IntegratedGradients
 from scipy.ndimage import gaussian_filter
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from ukbb_common import (
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+from experiments.ukbb.common.data import (
     seed_everything, RANDOM_STATE,
     load_ukbb_data, resample_synthetic, NumpyCovarDataset,
-    fast_loader, default_model_params, default_transforms,
+    fast_loader, default_transforms,
 )
+from experiments.ukbb.common.backbone import default_model_params
 from cocodeel.model import BaseNetwork
 from cocodeel.refit_model import RefitCovarNetwork
 
@@ -28,10 +29,7 @@ N_SUBJECTS = 100
 NTEST = 2500
 GPU = 0
 FOLD = 0
-RUN_DIR = (
-    "/home/RDC/pfeuffma/Research/proj-orthogonalisation/"
-    "experiments/ukbb/runs/2026-04-14_17-26-52_final/"
-)
+RUN_DIR = os.path.join(os.path.dirname(__file__), "..", "runs", "2026-04-14_17-26-52_final", "")
 
 
 # ── Refit forward shim ────────────────────────────────────────────────────────

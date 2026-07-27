@@ -16,12 +16,13 @@ from zennit.composites import EpsilonPlus
 from zennit.canonizers import SequentialMergeBatchNorm
 from zennit.torchvision import ResNetCanonizer
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from ukbb_common import (
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+from experiments.ukbb.common.data import (
     seed_everything, RANDOM_STATE,
     load_ukbb_data, resample_synthetic, NumpyCovarDataset,
-    default_model_params, default_transforms,
+    default_transforms,
 )
+from experiments.ukbb.common.backbone import default_model_params
 from cocodeel.model import BaseNetwork
 from cocodeel.refit_model import RefitCovarNetwork
 
@@ -31,10 +32,7 @@ NTEST      = 2500
 GPU        = 1
 N_FOLDS    = 5
 BATCH_SIZE = 4
-RUN_DIR = (
-    "/home/RDC/pfeuffma/Research/proj-orthogonalisation/"
-    "experiments/ukbb/runs/2026-04-26_13-16-37_final_v2/"
-)
+RUN_DIR = os.path.join(os.path.dirname(__file__), "..", "runs", "2026-04-26_13-16-37_final_v2", "")
 
 
 class RefitImageOnly(torch.nn.Module):

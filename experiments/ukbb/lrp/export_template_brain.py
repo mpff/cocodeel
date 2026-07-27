@@ -20,17 +20,14 @@ import numpy as np
 import nibabel as nib
 from scipy.ndimage import gaussian_filter
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from ukbb_common import (
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+from experiments.ukbb.common.data import (
     seed_everything, RANDOM_STATE, load_ukbb_data,
     resample_synthetic, NumpyCovarDataset, default_transforms,
 )
 
 NTEST = 2500
-RUN_DIR = (
-    "/home/RDC/pfeuffma/Research/proj-orthogonalisation/"
-    "experiments/ukbb/runs/2026-04-14_17-26-52_final/"
-)
+RUN_DIR = os.path.join(os.path.dirname(__file__), "..", "runs", "2026-04-14_17-26-52_final", "")
 LRP_DIR = RUN_DIR + "lrp_maps/"
 # Pre-smooth LRP volumes with a 3D Gaussian to consolidate the salt-and-pepper
 # signal into contiguous regions before thresholding. σ=2 voxels ~= 4 mm fwhm.

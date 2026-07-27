@@ -18,10 +18,7 @@ import glob
 import numpy as np
 import nibabel as nib
 
-RUN_DIR = (
-    "/home/RDC/pfeuffma/Research/proj-orthogonalisation/"
-    "experiments/ukbb/runs/2026-04-14_17-26-52_final/"
-)
+RUN_DIR = os.path.join(os.path.dirname(__file__), "..", "runs", "2026-04-14_17-26-52_final", "")
 LRP_DIR = RUN_DIR + "lrp_maps/"
 
 

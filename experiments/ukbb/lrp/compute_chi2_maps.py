@@ -13,12 +13,13 @@ from scipy.stats import chi2
 from scipy.ndimage import gaussian_filter
 from zennit.attribution import IntegratedGradients
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from ukbb_common import (
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+from experiments.ukbb.common.data import (
     seed_everything, RANDOM_STATE,
     load_ukbb_data, resample_synthetic, NumpyCovarDataset,
-    default_model_params, default_transforms,
+    default_transforms,
 )
+from experiments.ukbb.common.backbone import default_model_params
 from cocodeel.model import BaseNetwork
 from cocodeel.refit_model import RefitCovarNetwork
 
@@ -32,10 +33,7 @@ IG_N_ITER     = 20
 SMOOTH_SIGMA  = 1.0    # voxels; set to 0 to disable per-subject smoothing
 MAD_TO_SIGMA  = 1.4826
 EPS_SIGMA     = 1e-12  # guard against degenerate σ̂
-RUN_DIR = (
-    "/home/RDC/pfeuffma/Research/proj-orthogonalisation/"
-    "experiments/ukbb/runs/2026-04-26_13-16-37_final_v2/"
-)
+RUN_DIR = os.path.join(os.path.dirname(__file__), "..", "runs", "2026-04-26_13-16-37_final_v2", "")
 
 
 class RefitImageOnly(torch.nn.Module):
