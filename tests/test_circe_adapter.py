@@ -8,7 +8,7 @@ import torch
 
 # importing the adapter puts external/circe on sys.path
 from cocodeel.benchmarking.circe_adapter import (
-    circe_fit, circe_predict, _featurizer_arch,
+    circe_fit, circe_predict, CirceRosterModel, _featurizer_arch,
 )
 from model.network import Network
 from utils import losses
@@ -117,6 +117,20 @@ class TestCirceFit(unittest.TestCase):
         preds = circe_predict(trainer, self.X_va)
         self.assertEqual(preds.shape, (60, 1))
         self.assertTrue(torch.isfinite(preds).all())
+
+        # roster interface: fx is the output centered on the reference
+        # sample, fz is identically zero, eta is unchanged
+        from torch.utils.data import DataLoader
+        from cocodeel.dataset import CovarDataset
+        ref = DataLoader(CovarDataset(self.X_tr, self.Z_tr, self.y_tr), batch_size=32)
+        model = CirceRosterModel(trainer, ref).eval()
+        with torch.no_grad():
+            fx_tr = model.predict_fx(self.X_tr)
+            self.assertAlmostEqual(fx_tr.mean().item(), 0.0, places=5)
+            self.assertTrue(torch.equal(model.predict_fz(self.Z_va),
+                                        torch.zeros(60, 1)))
+            self.assertTrue(torch.allclose(model(self.X_va),
+                                           model.predict_fx(self.X_va) + model.offset))
 
     def test_early_stopping_exit_is_caught(self):
         # patience=0 forces BaseTrainer.save's sys.exit at the first

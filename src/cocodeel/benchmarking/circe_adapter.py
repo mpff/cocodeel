@@ -181,3 +181,29 @@ def circe_predict(trainer, X, batch_size=200):
         _, y_ = trainer.model(X[i:i + batch_size].to(trainer.device))
         outs.append(y_.cpu())
     return torch.cat(outs)
+
+
+class CirceRosterModel(torch.nn.Module):
+    """Fitted CIRCE in the benchmark prediction interface: the Z-free model
+    output, centered on the reference loader's sample like every other
+    method's f_X (the carved-out KRR heldout is part of that sample)."""
+
+    def __init__(self, trainer, center_loader):
+        super().__init__()
+        self.trainer = trainer
+        self.num_covariates = 0
+        self.offset = circe_predict(trainer, center_loader.dataset.X).mean().item()
+
+    def eval(self):
+        self.trainer.model.eval()
+        return self
+
+    def forward(self, x, z=None):
+        _, y_ = self.trainer.model(x.to(self.trainer.device))
+        return y_
+
+    def predict_fx(self, x, z=None):
+        return self.forward(x) - self.offset
+
+    def predict_fz(self, z):
+        return torch.zeros(z.size(0), 1)

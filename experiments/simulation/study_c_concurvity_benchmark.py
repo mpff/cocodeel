@@ -12,6 +12,7 @@ log scale.
 
 Usage:  NSIM=5 python experiments/simulation/study_c_concurvity_benchmark.py [sweep ...]
 """
+import contextlib
 import gc
 import json
 import math
@@ -35,6 +36,7 @@ from cocodeel.crossfit import CrossFitEnsemble
 from cocodeel.benchmarking.model import CovarNetwork, MLPCovarNetwork
 from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
 from cocodeel.benchmarking.adversarial_trainer import adversarial_trainer
+from cocodeel.benchmarking.circe_adapter import circe_fit, CirceRosterModel
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 
@@ -57,6 +59,7 @@ RUN_DIR = ROOT / "experiments/simulation/output/runs/study_c"
 
 SIEMS_LAMS = [0.01, 0.1, 1.0]
 CFNET_LAMS = [0.5, 1.0, 5.0]
+CIRCE_LAMS = [1.0, 10.0, 100.0]
 
 N_GRID = [400, 800, 1600, 3200, 6400, 12800, 25600]
 N_GRID_CONCURVITY = N_GRID + [51200, 102400]
@@ -358,6 +361,19 @@ def run_one(sweep, setting, seed):
             )
             models[f"cfnet_{lam:g}"] = adv.center_effects(full_tr)
 
+        # CIRCE (Pogodin et al. 2023), vendored original code and released
+        # protocol. Its trainer takes the first visible GPU: launch with
+        # CUDA_VISIBLE_DEVICES restricted to the target device.
+        for lam in CIRCE_LAMS:
+            ckpt_dir = RUN_DIR / sweep / "circe_ckpt" / key / f"seed={seed}_lam={lam:g}"
+            with open(os.devnull, "w") as devnull, \
+                    contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                tr = circe_fit(
+                    full_tr.dataset.X, full_tr.dataset.Z, full_tr.dataset.y,
+                    full_va.dataset.X, full_va.dataset.Z, full_va.dataset.y,
+                    lam=lam, workdir=ckpt_dir)
+            models[f"circe_{lam:g}"] = CirceRosterModel(tr, full_tr)
+
     # test evaluation
     test_sim = dict(sim_params, n=TEST_N)
     X_te, Z_te, y_te, fx_te, fz_te, fr_te = simulate_traffic_light_data(**test_sim, seed=TEST_SEED)
@@ -400,7 +416,8 @@ def main(sweep_names):
         nsim=NSIM, q_default=Q_DEFAULT, test=dict(seed=TEST_SEED, n=TEST_N),
         hp_anchors=HP_ANCHORS,
         hp_q_anchors={f"n={n}_q={q}": v for (n, q), v in HP_Q_ANCHORS.items()},
-        siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS, warmup_frac=WARMUP_FRAC,
+        siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS, circe_lams=CIRCE_LAMS,
+        warmup_frac=WARMUP_FRAC,
         sweeps={s: len(c["settings"]) for s, c in sweeps.items()},
     ))
     grid_runner.write_settings_csv(RUN_DIR, {s: c["settings"] for s, c in sweeps.items()},

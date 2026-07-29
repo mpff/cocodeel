@@ -1,5 +1,6 @@
 # Temporary side figure: Fig 2 with the source-protocol CF-Net spliced in
-# (side_aggregate_cfnet.py output). Delete together with the side scripts.
+# and CIRCE appended (side_aggregate_cfnet.py output). Delete together
+# with the side scripts.
 pdf(NULL)  # suppress automatic Rplots.pdf when run non-interactively
 library(readr)
 library(dplyr)
@@ -34,11 +35,15 @@ pick_best <- function(df, prefix) {
 }
 best_siems <- pick_best(df_raw, "nam_mlp_conc_")
 best_cfnet <- "cfnet_1"
+# CIRCE pinned to its as-published strength (lambda = 10, the only value
+# in the released configs)
+best_circe <- "circe_10"
 siems_lam <- sub("nam_mlp_conc_", "", best_siems)
 cfnet_lam <- sub("cfnet_", "", best_cfnet)
+circe_lam <- sub("circe_", "", best_circe)
 
 model_levels <- c("nam", "nam_mlp", best_siems, "ssn", "posthoc_web",
-                  best_cfnet, "refit", "refit_orth")
+                  best_cfnet, best_circe, "refit", "refit_orth")
 model_labels <- c(
   "NAM (lin. fz) [7]",
   "NAM [7]",
@@ -46,6 +51,7 @@ model_labels <- c(
   "SSN [8]",
   "DNN (Baseline) + Orth. [17]",
   sprintf("CF-Net (%s)", cfnet_lam),
+  sprintf("CIRCE (%s) [2]", circe_lam),
   "DNN with Controls",
   "DNN with Controls\n+ Orthogonalisation")
 
@@ -87,6 +93,8 @@ method_colors <- setNames(c(
   "#9C179E",                    # SSN — plasma(0.40), magenta
   "#7F7F7F",                    # Weber post-hoc — neutral grey
   "#ED7953",                    # CF-Net — plasma(0.70), coral
+  "#F0C808",                    # CIRCE — plasma-adjacent gold, warm like
+                                # the other invariance method (CF-Net)
   bz_anchor_color("viridis"),   # DNN with Controls
   bz_anchor_color("magma")      # DNN with Controls + Orth.
 ), model_labels)

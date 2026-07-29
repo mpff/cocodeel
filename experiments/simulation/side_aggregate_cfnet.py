@@ -1,9 +1,11 @@
-"""Temporary side aggregation: concurvity CSV with source-protocol CF-Net spliced in.
+"""Temporary side aggregation: concurvity CSV with side-run methods merged in.
 
 Reads the main study_c concurvity NPZs, replaces every cfnet_* prediction
-with the side rerun's (side_cfnet_rerun.py), and writes the same long-form
-CSV schema as aggregate.py to output/side_concurvity_fixed_cfnet.csv. The
-main aggregation and its CSVs are untouched.
+with the source-protocol side rerun's (side_cfnet_rerun.py), appends the
+circe_* predictions from the CIRCE side run (side_circe_rerun.py), and
+writes the same long-form CSV schema as aggregate.py to
+output/side_concurvity_fixed_cfnet.csv. The main aggregation and its CSVs
+are untouched.
 
 Usage:  python experiments/simulation/side_aggregate_cfnet.py
 """
@@ -20,6 +22,7 @@ from experiments.simulation.aggregate import parse_sweep_key, EFFECTS
 
 MAIN_DIR = ROOT / "experiments/simulation/output/runs/study_c/concurvity/preds"
 SIDE_DIR = ROOT / "experiments/simulation/output/runs/study_c_side_cfnet/concurvity/preds"
+CIRCE_DIR = ROOT / "experiments/simulation/output/runs/study_c_side_circe/concurvity/preds"
 OUT_PATH = ROOT / "experiments/simulation/output/side_concurvity_fixed_cfnet.csv"
 
 
@@ -28,20 +31,23 @@ def main():
     for setting_dir in sorted(MAIN_DIR.iterdir()):
         npz_paths = sorted(setting_dir.glob("seed=*.npz"))
 
-        # stack seeds per (method, effect), cfnet arrays taken from the side run
+        # stack seeds per (method, effect): cfnet arrays from the cfnet side
+        # run, circe arrays appended from the circe side run
         methods = None
         stacks = {}
         truths = {}
         for p in npz_paths:
             d = np.load(p, allow_pickle=False)
             s = np.load(SIDE_DIR / setting_dir.name / p.name, allow_pickle=False)
+            c = np.load(CIRCE_DIR / setting_dir.name / p.name, allow_pickle=False)
             assert np.array_equal(d["truth__fx"], s["truth__fx"]), f"truth mismatch: {p}"
+            assert np.array_equal(d["truth__fx"], c["truth__fx"]), f"truth mismatch: {p}"
             if methods is None:
-                methods = [str(m) for m in d["methods"]]
+                methods = [str(m) for m in d["methods"]] + [str(m) for m in c["methods"]]
                 for eff in EFFECTS:
                     truths[eff] = d[f"truth__{eff}"]
             for m in methods:
-                src = s if m.startswith("cfnet_") else d
+                src = s if m.startswith("cfnet_") else (c if m.startswith("circe_") else d)
                 for eff in EFFECTS:
                     stacks.setdefault((m, eff), []).append(src[f"{m}__{eff}"])
         stacks = {k: np.stack(v, axis=0) for k, v in stacks.items()}
