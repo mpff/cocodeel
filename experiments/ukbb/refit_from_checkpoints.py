@@ -42,7 +42,9 @@ N_SPLITS = 5
 NTRAIN_PER_HALF = 2500
 NTEST = 2500
 BATCH_SIZE = 48
-NUM_WORKERS = 16
+# the full image array (~53 GB) is held in RAM and every call site slices it with fancy
+# indexing, which copies; 16 forked workers inherit all of it and exhausted host memory
+NUM_WORKERS = 4
 REFIT_MAX_ITERS = 400          # IRLS backfitting controls (match the released run)
 REFIT_TOL = 1e-3
 TRUE_B_AGE_RAW = -0.298        # DGP age coef in logit/raw units (for reference)

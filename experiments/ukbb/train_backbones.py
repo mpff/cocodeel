@@ -37,7 +37,9 @@ from cocodeel.trainer import covar_trainer
 N_SPLITS = 5
 NTRAIN_PER_HALF = 2500
 BATCH_SIZE = 48
-NUM_WORKERS = 16
+# the full image array (~53 GB) is held in RAM and every call site slices it with fancy
+# indexing, which copies; 16 forked workers inherit all of it and exhausted host memory
+NUM_WORKERS = 4
 # tuned values from the released final_v2 run (fixed backbone recipe; not re-searched here)
 LR = 1.67e-6
 WEIGHT_DECAY = 1.02e-5
