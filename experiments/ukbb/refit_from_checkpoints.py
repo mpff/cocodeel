@@ -56,13 +56,24 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--coefs", type=str, default="0.0,2.0")
 parser.add_argument("--folds", type=str, default="0,1,2,3,4")
-parser.add_argument("--src-run", type=str, default=str(SRC_RUN))
-parser.add_argument("--out-run", type=str, default=str(OUT_RUN))
+parser.add_argument("--int-coef", type=float, default=0.0)
+parser.add_argument("--rho-coef", type=float, default=0.0)
+parser.add_argument("--src-run", type=str, default=None)
+parser.add_argument("--out-run", type=str, default=None)
 args = parser.parse_args()
 COEFS = [float(c) for c in args.coefs.split(",")]
 FOLDS = [int(f) for f in args.folds.split(",")]
-SRC_RUN = Path(args.src_run)
-OUT_RUN = Path(args.out_run)
+DGP = dict(int_coef=args.int_coef, rho_coef=args.rho_coef)
+
+# non-additive DGP variants read and write their own run dirs
+if any(DGP.values()):
+    TAG = f"nonadd_int{args.int_coef:g}_rho{args.rho_coef:g}"
+    SRC_RUN = ROOT / "experiments/ukbb/runs" / TAG
+    OUT_RUN = ROOT / "experiments/ukbb/runs" / f"{TAG}_refit"
+if args.src_run:
+    SRC_RUN = Path(args.src_run)
+if args.out_run:
+    OUT_RUN = Path(args.out_run)
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 seed_everything(RANDOM_STATE)
@@ -191,8 +202,8 @@ def run_fold(coef, fold):
 
     # partition (mirror train_backbones.py: split pool before resampling)
     pool_A, pool_B = train_test_split(train_ix, test_size=0.5, random_state=fold_seed, stratify=y[train_ix])
-    h1_idx = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed)]
-    h2_idx = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100)]
+    h1_idx = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed, **DGP)]
+    h2_idx = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100, **DGP)]
     full_idx = np.concatenate([h1_idx, h2_idx])
 
     # backbones (load released state dicts; already centered, link=logit)

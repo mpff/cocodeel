@@ -8,6 +8,8 @@ from them without retraining. This script is NOT part of the reproducible loop; 
 the released checkpoints were produced. Skip-if-exists resume; one backbone file per role.
 
 Usage:  python experiments/ukbb/train_backbones.py --coefs 0.0,2.0 --folds 0,1,2,3,4
+        add --int-coef/--rho-coef for the non-additive DGP variant, which writes to its
+        own run dir (see nonadditivity_study.md)
 """
 import sys
 import gc
@@ -49,11 +51,17 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--coefs", type=str, default="0.0,2.0")
 parser.add_argument("--folds", type=str, default="0,1,2,3,4")
-parser.add_argument("--out-run", type=str, default=str(OUT_RUN))
+parser.add_argument("--int-coef", type=float, default=0.0)
+parser.add_argument("--rho-coef", type=float, default=0.0)
+parser.add_argument("--out-run", type=str, default=None)
 args = parser.parse_args()
 COEFS = [float(c) for c in args.coefs.split(",")]
 FOLDS = [int(f) for f in args.folds.split(",")]
-OUT_RUN = Path(args.out_run)
+DGP = dict(int_coef=args.int_coef, rho_coef=args.rho_coef)
+
+# non-additive DGP variants land in their own run dir, so final_v2 is never written into
+TAG = "final_v2" if not any(DGP.values()) else f"nonadd_int{args.int_coef:g}_rho{args.rho_coef:g}"
+OUT_RUN = Path(args.out_run) if args.out_run else ROOT / "experiments/ukbb/runs" / TAG
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 seed_everything(RANDOM_STATE)
@@ -107,8 +115,8 @@ for coef in COEFS:
 
         # partition (split pool before resampling)
         pool_A, pool_B = train_test_split(train_ix, test_size=0.5, random_state=fold_seed, stratify=y[train_ix])
-        h1_idx = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed)]
-        h2_idx = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100)]
+        h1_idx = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed, **DGP)]
+        h2_idx = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100, **DGP)]
         full_idx = np.concatenate([h1_idx, h2_idx])
         out_dir = OUT_RUN / f"coef={coef}" / f"fold={fold}"
 

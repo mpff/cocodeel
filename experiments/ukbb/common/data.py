@@ -47,29 +47,45 @@ def load_ukbb_data():
 
 
 # ── synthetic confounding DGP ─────────────────────────────────────────────────
-def sample_y_z(n, z_coef, rng, age_col):
-    """Draw synthetic targets: logit P(y=1) = 2*(sex-0.5) + z_coef*(age-mu)/(0.9*std)."""
+def sample_y_z(n, z_coef, rng, age_col, *, int_coef=0.0, rho_coef=0.0):
+    """Draw synthetic targets with eta = 2*(sex-0.5) - z_coef*a + int_coef*(sex-0.5)*a, a=(age-mu)/(0.9*std).
+
+    int_coef makes the image-borne signal interact with the confounder, taking the DGP
+    outside the additive model class; rho_coef tilts P(sex=1|age) so signal and confounder
+    are no longer independent. Both default to zero, reproducing the Section 6 DGP.
+    """
+    # age marginal
     mu_z, std_z = norm.fit(age_col)
     std_z *= 0.9
     z_range = np.arange(age_col.min(), age_col.max() + 1)
     p_z = norm.pdf(z_range, mu_z, std_z)
     p_z /= p_z.sum()
     z_sample = rng.choice(z_range, n, p=p_z)
-    sex_sample = rng.integers(0, 2, n)
-    p_y = 1 / (1 + np.exp(-2.0 * (sex_sample - 0.5) + z_coef * (z_sample - mu_z) / std_z))
-    y_sample = rng.binomial(1, p_y, n)
+    a_tilde = (z_sample - mu_z) / std_z
+
+    # sex marginal; the uncorrelated branch keeps the released runs bit-exact, as binomial
+    # would draw the same distribution but consume the generator stream differently
+    if rho_coef == 0.0:
+        sex_sample = rng.integers(0, 2, n)
+    else:
+        sex_sample = rng.binomial(1, 1 / (1 + np.exp(-rho_coef * a_tilde)), n)
+
+    # outcome
+    eta = 2.0 * (sex_sample - 0.5) - z_coef * a_tilde + int_coef * (sex_sample - 0.5) * a_tilde
+    y_sample = rng.binomial(1, 1 / (1 + np.exp(-eta)), n)
     return np.column_stack((z_sample, sex_sample)), y_sample
 
 
-def resample_synthetic(ydata, Zdata, n, z_coef, random_state, *, replace=True):
+def resample_synthetic(ydata, Zdata, n, z_coef, random_state, *, replace=True, int_coef=0.0, rho_coef=0.0):
     """Nearest-neighbour match real obs to synthetic (y, sex, age) targets; return n integer indices.
 
     Disjointness across two calls holds only when they operate on disjoint candidate
     pools — the caller splits the pool before resampling, not after. With replace=False
-    each pool obs is used at most once.
+    each pool obs is used at most once. int_coef/rho_coef are passed to sample_y_z.
     """
     rng = np.random.default_rng(random_state)
-    z_sample, y_sample = sample_y_z(n, z_coef, rng, age_col=Zdata[:, 0])
+    z_sample, y_sample = sample_y_z(n, z_coef, rng, age_col=Zdata[:, 0],
+                                    int_coef=int_coef, rho_coef=rho_coef)
     used = np.zeros(len(ydata), dtype=bool)
     sample = []
     for i in range(n):
