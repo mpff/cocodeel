@@ -132,6 +132,24 @@ class TestCirceFit(unittest.TestCase):
             self.assertTrue(torch.allclose(model(self.X_va),
                                            model.predict_fx(self.X_va) + model.offset))
 
+    def test_yz_cache_shared_across_fits(self):
+        # second fit on the same draw reuses the lam-independent heldout
+        # precompute: identical W_1 and LOO-selected parameters
+        cache = {}
+        with mock.patch("torch.cuda.is_available", return_value=False):
+            tr1 = circe_fit(
+                self.X_tr, self.Z_tr, self.y_tr, self.X_va, self.Z_va, self.y_va,
+                lam=1.0, epochs=2, heldout_ratio=0.1, workdir=self.workdir,
+                yz_cache=cache)
+            tr2 = circe_fit(
+                self.X_tr, self.Z_tr, self.y_tr, self.X_va, self.Z_va, self.y_va,
+                lam=100.0, epochs=2, heldout_ratio=0.1, workdir=self.workdir,
+                yz_cache=cache)
+        self.assertTrue(torch.allclose(tr1.W_1, tr2.W_1))
+        self.assertEqual(tr1.kernel_y_args["sigma2"], tr2.kernel_y_args["sigma2"])
+        self.assertEqual(float(tr1.model_cfg.ridge_lambda), float(tr2.model_cfg.ridge_lambda))
+        self.assertTrue(torch.equal(tr1.Y_heldout, tr2.Y_heldout))
+
     def test_early_stopping_exit_is_caught(self):
         # patience=0 forces BaseTrainer.save's sys.exit at the first
         # non-improving epoch; circe_fit must survive and return

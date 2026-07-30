@@ -68,9 +68,11 @@ def run_one(sweep, setting, seed):
     full_tr, full_va = full
 
     # CIRCE at three strengths, released protocol; their prints and tqdm
-    # bars are silenced, LOO-selected KRR parameters are kept in the log
+    # bars are silenced, LOO-selected KRR parameters are kept in the log,
+    # the lam-independent heldout precompute is shared across the strengths
     models = {}
     loo_params = {}
+    yz_cache = {}
     for lam in CIRCE_LAMS:
         ckpt_dir = RUN_DIR / sweep / "circe_ckpt" / key / f"seed={seed}_lam={lam:g}"
         with open(os.devnull, "w") as devnull, \
@@ -78,7 +80,7 @@ def run_one(sweep, setting, seed):
             tr = circe_fit(
                 full_tr.dataset.X, full_tr.dataset.Z, full_tr.dataset.y,
                 full_va.dataset.X, full_va.dataset.Z, full_va.dataset.y,
-                lam=lam, workdir=ckpt_dir)
+                lam=lam, workdir=ckpt_dir, yz_cache=yz_cache)
         models[f"circe_{lam:g}"] = CirceRosterModel(tr, full_tr)
         loo_params[f"{lam:g}"] = dict(sigma2_y=tr.kernel_y_args["sigma2"],
                                       ridge=float(tr.model_cfg.ridge_lambda))

@@ -364,6 +364,7 @@ def run_one(sweep, setting, seed):
         # CIRCE (Pogodin et al. 2023), vendored original code and released
         # protocol. Its trainer takes the first visible GPU: launch with
         # CUDA_VISIBLE_DEVICES restricted to the target device.
+        yz_cache = {}
         for lam in CIRCE_LAMS:
             ckpt_dir = RUN_DIR / sweep / "circe_ckpt" / key / f"seed={seed}_lam={lam:g}"
             with open(os.devnull, "w") as devnull, \
@@ -371,7 +372,7 @@ def run_one(sweep, setting, seed):
                 tr = circe_fit(
                     full_tr.dataset.X, full_tr.dataset.Z, full_tr.dataset.y,
                     full_va.dataset.X, full_va.dataset.Z, full_va.dataset.y,
-                    lam=lam, workdir=ckpt_dir)
+                    lam=lam, workdir=ckpt_dir, yz_cache=yz_cache)
             models[f"circe_{lam:g}"] = CirceRosterModel(tr, full_tr)
 
     # test evaluation

@@ -57,6 +57,34 @@ from data import data as circe_data
 from trainer.circe import CIRCE
 
 
+class _CachedYZ(CIRCE):
+    """CIRCE whose heldout precompute (LOO selection + W_1/W_2) can be
+    reused across fits on the same draw — it is independent of lam."""
+
+    def __init__(self, yz_cache, **kwargs):
+        self._yz_cache = yz_cache
+        super().__init__(**kwargs)
+
+    def _get_yz_regressors(self):
+        if self._yz_cache:
+            self.W_1 = self._yz_cache["W_1"].to(self.device)
+            self.W_2 = self._yz_cache["W_2"].to(self.device)
+            self.Y_heldout = self._yz_cache["Y_heldout"].to(self.device)
+            self.Z_heldout = self._yz_cache["Z_heldout"].to(self.device)
+            self.kernel_y_args["sigma2"] = self._yz_cache["sigma2_y"]
+            self.model_cfg.ridge_lambda = self._yz_cache["ridge"]
+            for mode in self.model_cfg.modes:
+                del self.dataloaders[mode].dataset.linear_reg
+            return
+        super()._get_yz_regressors()
+        self._yz_cache.update(
+            W_1=self.W_1.cpu(), W_2=self.W_2.cpu(),
+            Y_heldout=self.Y_heldout.cpu(), Z_heldout=self.Z_heldout.cpu(),
+            sigma2_y=self.kernel_y_args["sigma2"],
+            ridge=float(self.model_cfg.ridge_lambda),
+        )
+
+
 class _SimSplit(Dataset):
     """One split of a simulation draw in the vendored Dsprites interface."""
 
@@ -112,8 +140,12 @@ def _featurizer_arch(q):
 
 def circe_fit(X_tr, Z_tr, y_tr, X_va, Z_va, y_va, lam=10.0, lr=1e-4, epochs=200,
               patience=25, batch_size=1024, q=32, heldout_ratio=0.1,
-              heldout_cap=1024, workdir=None):
-    """Train the vendored CIRCE pipeline on one draw; returns the trainer with best-checkpoint weights loaded."""
+              heldout_cap=1024, workdir=None, yz_cache=None):
+    """Train the vendored CIRCE pipeline on one draw; returns the trainer with best-checkpoint weights loaded.
+
+    Pass the same `yz_cache` dict to several fits on the same draw to run
+    the lam-independent heldout precompute (LOO + KRR solve) only once.
+    """
     workdir = Path(tempfile.mkdtemp(prefix="circe_")) if workdir is None else Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
@@ -155,7 +187,8 @@ def circe_fit(X_tr, Z_tr, y_tr, X_va, Z_va, y_va, lam=10.0, lr=1e-4, epochs=200,
     ))
 
     # train under the source protocol
-    trainer = CIRCE(data_cfg=data_cfg, model_cfg=model_cfg, exp_cfg=exp_cfg)
+    trainer = _CachedYZ(yz_cache if yz_cache is not None else {},
+                        data_cfg=data_cfg, model_cfg=model_cfg, exp_cfg=exp_cfg)
     assert hasattr(trainer, "W_1"), "heldout KRR precompute failed"
     try:
         trainer.run()
