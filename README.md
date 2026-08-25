@@ -119,9 +119,12 @@ useful for checking the λ selection.
   recovers the rest.
 - **Benchmarks, not the method.** `cocodeel.benchmarking` holds
   competitor baselines — `CovarNetwork` (end-to-end NAM-style joint
-  training of `f_X` and `f_Z`) and `PostHocOrthNetwork` — used to show
-  where joint training fails under concurvity. Neither is exported from
-  `cocodeel` directly.
+  training of `f_X` and `f_Z`), `PostHocOrthNetwork`, the CF-Net
+  adversarial trainer, and an adapter around CIRCE (Pogodin et al.,
+  2023), whose original implementation is vendored unmodified at
+  `external/circe` (provenance in `external/circe/VENDORED_FROM`) —
+  used to show where joint training fails under concurvity. None of
+  them is exported from `cocodeel` directly.
 
 ## Reproducing the paper's experiments
 

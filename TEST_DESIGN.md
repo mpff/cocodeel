@@ -2,7 +2,7 @@
 
 ## Context
 
-`tests/` — 68 tests across 6 files, collected by plain `pytest`
+`tests/` — 102 tests across 9 files, collected by plain `pytest`
 discovery (`pyproject.toml` has no `[tool.pytest.ini_options]`; none is
 needed, since `tests/` is `pytest`'s default discovery target) — already
 carries the instinct dnn-shapes' `TEST_DESIGN.md` set out to establish:
@@ -104,6 +104,9 @@ Every test in the suite is one of these; most files mix several.
 | `trainer.py` (`covar_trainer`) | `test_trainer.py` | recovery (linear/logistic DGP through the full trainer→refit pipeline) + invariant (scheduler kwargs accepted, determinism under fixed seed) |
 | `refit_model.py` (`RefitCovarNetwork`) | `test_refit_model.py` (the largest file, ~1400 lines) | all five kinds — this is where the ridge/IRLS solve itself lives, so it carries the closed-form pin, the regime-documentation cluster, and the convergence-criterion regression tests |
 | `benchmarking/model.py`, `benchmarking/posthoc_model.py` | `test_benchmark_model.py` | invariant (centering, shape) + recovery (each benchmark against the same linear/logistic DGPs used for the method, so method-vs-baseline comparisons in the paper's figures are checkable against the same ground truth) |
+| `crossfit.py` (`CrossFitEnsemble`) | `test_crossfit.py` | pin (η-space averaging: logit ensemble = sigmoid of mean η, not mean of sigmoids) + invariant (recenter-then-average identity) + recovery (known effects at both links) |
+| `benchmarking/adversarial_trainer.py` | `test_adversarial_trainer.py` | pin (squared-correlation penalty on hand-built vectors) + invariant (centering, fit history, fixed-budget source protocol, small-batch control-cohort skip) + recovery (correlation reduction) |
+| `benchmarking/circe_adapter.py` | `test_circe_adapter.py` | pin (vendored Gaussian kernel and unbiased HSIC against direct sums) + invariant (featurizer config matches `TrafficBackbone`, yz-cache reuse, early-stopping exit caught) |
 
 ## Conventions
 

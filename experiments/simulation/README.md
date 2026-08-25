@@ -1,6 +1,6 @@
 # Simulation study — paper Section 5
 
-A synthetic "traffic-light" image DGP with a known confounder. Three
+A synthetic "traffic-light" image DGP with a known confounder. Four
 self-contained study scripts reproduce every simulation figure in the paper;
 each trains its own models and writes per-seed predictions that `aggregate.py`
 reduces to the CSVs the R figure scripts read.
@@ -12,12 +12,15 @@ reduces to the CSVs the R figure scripts read.
 | `study_a_linear_consistency.py` | `increasing_bz`, `binary_increasing_bz`, `increasing_q`, `increasing_cv`, `increasing_p` | `figures/figure_a1_linear_bz.R`, `figure_a2_binary_bz.R`, `figure_a3_adversarial_settings.R` |
 | `study_b_misspecification.py` | `nonlinear_fz`, `nonlinear_fz_misspec` | `figures/figure_b1_misspecification_fz.R` (+ `figure_b1_misspecification_fz_curve.R`), `figure_b2_misspecification_raw_z.R` |
 | `study_c_concurvity_benchmark.py` | `concurvity`, `concurvity_q` | `figures/figure_c1_concurvity.R`, `figure_c2_concurvity_backbone_width.R` |
+| `study_d_noisy_z.py` | `increasing_a` | `figures/figure_d1_noisy_z.R` |
 
 Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
 2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber), `nam`
 (CovarNetwork, linear f(Z)), `nam_mlp` / `nam_mlp_conc_*` (MLPCovarNetwork,
 optional Siems penalty), `ssn`, `cfnet_*` (CF-Net, Zhao et al. 2020, per
-adversarial strength).
+adversarial strength, published protocol), `circe_*` (CIRCE, Pogodin et
+al. 2023, vendored original implementation at `external/circe`, per
+strength).
 
 ## Layout
 
