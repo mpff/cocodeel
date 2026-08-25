@@ -4,8 +4,10 @@ Sweep concurvity (Fig c1): n grows to 102400; the roster spans refit /
 refit_orth (2-fold cross-fit), the uncontrolled base DNN, Weber's
 posthoc_web, NAMs with linear and MLP covariate effect, the Siems et al.
 (2023) concurvity penalty on the MLP NAM at three strengths, SSN
-(Ruegamer et al.), and CF-Net (Zhao et al. 2020) at three adversarial
-strengths. Sweep concurvity_q (Fig c2): refit vs both NAMs as backbone
+(Ruegamer et al.), CF-Net (Zhao et al. 2020) at three adversarial
+strengths under its published protocol, and CIRCE (Pogodin et al. 2023,
+vendored original code) at three strengths. Sweep concurvity_q (Fig c2):
+refit vs both NAMs as backbone
 width q grows. Hyperparameters come from the replicated per-anchor
 searches in hpsearch/; every setting inherits its nearest anchor on the
 log scale.
@@ -61,6 +63,12 @@ SIEMS_LAMS = [0.01, 0.1, 1.0]
 CFNET_LAMS = [0.5, 1.0, 5.0]
 CIRCE_LAMS = [1.0, 10.0, 100.0]
 
+# CF-Net published protocol (Zhao et al. 2020): all three optimizers at the
+# same rate, a fixed budget of optimizer iterations, no early stopping, no
+# gradient clipping
+CFNET_LR = 2e-4
+CFNET_STEP_BUDGET = 2000
+
 N_GRID = [400, 800, 1600, 3200, 6400, 12800, 25600]
 N_GRID_CONCURVITY = N_GRID + [51200, 102400]
 Q_GRID = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -68,15 +76,15 @@ Q_GRID = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
 SIM_DEFAULTS = dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.)
 
 # selected by hpsearch/search_study_c.py (chosen_hps_study_c.json); the
-# penalized NAM variants inherit the unpenalized nam_mlp winner and CF-Net
-# runs all three optimizers at cfnet_lr for every strength
+# penalized NAM variants inherit the unpenalized nam_mlp winner; CF-Net and
+# CIRCE run their published protocols and take no searched HPs
 HP_ANCHORS = {
     400: dict(backbone=dict(lr=1e-3, wd=1e-4), nam=dict(lr=1e-2, wd=1e-4),
-              nam_mlp=dict(lr=3e-3, wd=1e-4), cfnet_lr=1e-3),
+              nam_mlp=dict(lr=3e-3, wd=1e-4)),
     6400: dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=1e-2, wd=1e-4),
-               nam_mlp=dict(lr=3e-3, wd=1e-5), cfnet_lr=1e-3),
+               nam_mlp=dict(lr=3e-3, wd=1e-5)),
     102400: dict(backbone=dict(lr=3e-4, wd=1e-5), nam=dict(lr=1e-3, wd=1e-5),
-                 nam_mlp=dict(lr=3e-4, wd=1e-4), cfnet_lr=1e-3),
+                 nam_mlp=dict(lr=3e-4, wd=1e-4)),
 }
 # selected by hpsearch/search_study_c_q.py (chosen_hps_study_c_q.json)
 HP_Q_ANCHORS = {
@@ -350,14 +358,17 @@ def run_one(sweep, setting, seed):
                 warmup_frac=WARMUP_FRAC, **trainer_params(hp["nam_mlp"]))
             models[f"nam_mlp_conc_{lam:g}"] = m.center_effects(full_tr)
 
-        # CF-Net (Zhao et al. 2020), equal rates so lam is the strength knob
+        # CF-Net (Zhao et al. 2020), published protocol: equal rates so lam
+        # is the strength knob, fixed iteration budget instead of early
+        # stopping, no gradient clipping
+        cfnet_epochs = math.ceil(CFNET_STEP_BUDGET / len(full_tr))
         for lam in CFNET_LAMS:
             adv = adversarial_trainer(
                 BaseNetwork, model_params, num_covariates=1,
                 train_loader=full_tr, val_loader=full_va,
-                device=device, loss_fn=MSELoss(), epochs=EPOCHS_CAP,
-                lr_task=hp["cfnet_lr"], lr_cp=hp["cfnet_lr"], lr_adv=hp["cfnet_lr"],
-                lam=lam,
+                device=device, loss_fn=MSELoss(), epochs=cfnet_epochs,
+                lr_task=CFNET_LR, lr_cp=CFNET_LR, lr_adv=CFNET_LR, lam=lam,
+                patience=None, max_grad_norm=None,
             )
             models[f"cfnet_{lam:g}"] = adv.center_effects(full_tr)
 
@@ -418,6 +429,7 @@ def main(sweep_names):
         hp_anchors=HP_ANCHORS,
         hp_q_anchors={f"n={n}_q={q}": v for (n, q), v in HP_Q_ANCHORS.items()},
         siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS, circe_lams=CIRCE_LAMS,
+        cfnet_lr=CFNET_LR, cfnet_step_budget=CFNET_STEP_BUDGET,
         warmup_frac=WARMUP_FRAC,
         sweeps={s: len(c["settings"]) for s, c in sweeps.items()},
     ))
