@@ -34,7 +34,6 @@ from the general K-fold study.
   with `CrossFitEnsemble` (the K=2/K=3, n5k/n10k robustness runs).
 - `aggregate.py` — reduces the per-fold records to the R-ready CSVs.
 - `figures/` — one R script per figure, reading only CSVs.
-- `lrp/` — Panel C attribution maps (see Status).
 
 Every stage uses fixed run directories with skip-if-exists resume: one output file per
 (coef, fold); rerunning skips finished folds. Cross-fitting always goes through
@@ -62,9 +61,8 @@ baseline are carried from the released runs unchanged.
 - Run artefacts (`runs/`, ~96 GB of checkpoints + per-run CSVs) are gitignored and
   access-controlled UKBB data cannot be redistributed. The paper-relevant runs are
   hashed in `~/Research/ovb-ddns/baselines/sha256.txt`.
-- **Panel C (`lrp/`) is not part of this reproducible loop.** The attribution pipeline
-  reads the released checkpoints directly and needs `captum` (integrated gradients),
-  which is not installed in `dl-mri`; regenerating Panel C is a separate step.
+- The attribution-map pipeline (`lrp/`) lives on the `dev` branch; it is not part of
+  the paper's reproducible loop.
 - The R figure packages (`ggplot2`, `dplyr`, `tidyr`, `mltools`, `grid`) must be
   installed in the `dl-mri` R separately.
 

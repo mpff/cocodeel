@@ -146,31 +146,6 @@ if (file.exists(k3_path)) {
                       marg = character(0), training = factor(NULL))
 }
 
-# Joint model — a non-additive DNN taking (image, age) as explicit inputs (late fusion +
-# MLP head). Age is marginalised by averaging predictions over the training age distribution,
-# mean_j sigmoid(DNN(x, age_j)) — the non-additive analogue of the logit-space marginal used
-# by the additive estimators.
-joint_path <- paste0(RUN_DIR, "joint_results.csv")
-if (file.exists(joint_path)) {
-  joint_raw <- read.csv(joint_path)
-  joint_df <- bind_rows(
-    joint_raw %>% select(method, coef, fold, auc) %>% mutate(marg = "regular"),
-    joint_raw %>% select(method, coef, fold, auc = auc_marg) %>% mutate(marg = "controlled")
-  ) %>%
-    mutate(training = factor(
-      if_else(coef == 0, "Balanced training", "Confounded training"),
-      levels = c("Balanced training", "Confounded training")
-    ))
-  message("Loaded joint-model results: ",
-          length(unique(joint_raw$coef)), " coef(s), ",
-          length(unique(joint_raw$fold)), " fold(s)")
-} else {
-  message("No joint-model results found at ", joint_path)
-  joint_df <- data.frame(method = character(0), coef = numeric(0),
-                         fold = integer(0), auc = numeric(0),
-                         marg = character(0), training = factor(NULL))
-}
-
 # No-sample-split baseline: older run (2026-03-30) with n=2000 per fold and the
 # pre-split refit algorithm (backbone + refit fit on the same data). Schema
 # differs from current rexports (mname/model_type/y_controlled), so we compute
@@ -909,15 +884,11 @@ age_ctrl_compare <- bind_rows(
   k3_df %>%
     filter(method == "crossfit_k3_age", marg == "controlled") %>%
     select(coef, fold, auc, training) %>%
-    mutate(estimator = "Cross-fit (K=3)"),
-  joint_df %>%
-    filter(method == "joint_age", marg == "controlled") %>%
-    select(coef, fold, auc, training) %>%
-    mutate(estimator = "Joint model")
+    mutate(estimator = "Cross-fit (K=3)")
 ) %>%
   mutate(estimator = factor(
     estimator,
-    levels = c("No sample split", "Sample split", "Cross-fit (K=2)", "Cross-fit (K=3)", "Joint model")
+    levels = c("No sample split", "Sample split", "Cross-fit (K=2)", "Cross-fit (K=3)")
   ))
 
 # Same 4-estimator assembly for age+sex control (appendix only).

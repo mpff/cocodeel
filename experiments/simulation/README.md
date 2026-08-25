@@ -36,8 +36,6 @@ strength).
   `search_study_c_q.py` for the per-anchor study-C searches; shared driver
   `_grid_search.py`). The chosen values are committed as JSON.
 - `figures/` — one R script per figure, reading `output/*.csv`.
-- `count_params.py`, `count_params_sweep.sh` — parameter counts per backbone
-  width q (colour scale of `figure_c2`).
 
 ## Reproducing a figure
 
