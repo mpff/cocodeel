@@ -24,7 +24,7 @@ df_bz <- read_csv("experiments/simulation/output/increasing_bz.csv") %>%
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
       "DNN (Baseline)",
-      "[17] DNN (Baseline)\n+ Orthogonalisation")
+      "[20] DNN (Baseline)\n+ Orthogonalisation")
   )) %>%
   filter(n < 50000, !is.na(model)) %>%
   mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
@@ -133,7 +133,7 @@ c1 <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "bias2",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$Bias^2(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -159,7 +159,7 @@ c2 <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "var",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$Var(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -185,7 +185,7 @@ c3 <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "mspe",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$MSPE(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -250,7 +250,7 @@ frBias <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "bias2",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$Bias^2(\\hat{f}^{re}_X)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -264,7 +264,7 @@ frVar <- make_plot(
   df_bz %>% filter(
     effect == "fr",
     metric == "var",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$Var(\\hat{f}^{re}_X)$$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -389,7 +389,7 @@ c1 <- make_plot(
   df_bz %>% filter(
     effect == "fz",
     metric == "bias2",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$Bias^2(\\hat{f}^{tot}_Z)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -414,7 +414,7 @@ c2 <- make_plot(
   df_bz %>% filter(
     effect == "fz",
     metric == "var",
-    model %in% c("DNN with Controls\n+ Orthogonalisation", "[17] DNN (Baseline)\n+ Orthogonalisation")
+    model %in% c("DNN with Controls\n+ Orthogonalisation", "[20] DNN (Baseline)\n+ Orthogonalisation")
   ),
   ylab = TeX("$Var(\\hat{f}^{tot}_Z)$  ($\\log_{10}$ scale)"),
   color_option = "inferno",
@@ -444,7 +444,7 @@ ggsave("experiments/simulation/output/graphics/FigS1c_fz_bz_var.pdf", c, width =
 
 UNORTH <- c("DNN (Baseline)", "DNN with Controls")
 ORTH   <- c("DNN with Controls\n+ Orthogonalisation",
-            "[17] DNN (Baseline)\n+ Orthogonalisation")
+            "[20] DNN (Baseline)\n+ Orthogonalisation")
 
 # Inline plotter for MSPE(yhat): values sit in [1.003, 5.47] for the four
 # plotted methods, so a linear scale starting near the noise floor at 1.0

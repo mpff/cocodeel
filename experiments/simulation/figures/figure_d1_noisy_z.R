@@ -24,7 +24,7 @@ df_a <- read_csv("experiments/simulation/output/increasing_a.csv") %>%
       "DNN with Controls",
       "DNN with Controls\n+ Orthogonalisation",
       "DNN (Baseline)",
-      "[17] DNN (Baseline)\n+ Orthogonalisation")
+      "[20] DNN (Baseline)\n+ Orthogonalisation")
   )) %>%
   filter(!is.na(model)) %>%
   mutate(effect = factor(effect, levels = c('y', 'fx', 'fr', 'fz')))
@@ -90,7 +90,7 @@ for (m in plot_params) {
   p_fr <- make_plot(
     df_a %>% filter(effect == "fr", metric == m$metric,
                     model %in% c("DNN with Controls\n+ Orthogonalisation",
-                                 "[17] DNN (Baseline)\n+ Orthogonalisation")),
+                                 "[20] DNN (Baseline)\n+ Orthogonalisation")),
     ylab = TeX(paste(m$fr_lab, " ($\\log_{10}$ scale)")),
     color_option = "inferno", ylim = m$ylim
   )

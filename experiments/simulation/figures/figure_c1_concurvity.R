@@ -42,13 +42,13 @@ circe_lam <- sub("circe_", "", best_circe)
 model_levels <- c("nam", "nam_mlp", best_siems, "ssn", "posthoc_web",
                   best_cfnet, best_circe, "refit", "refit_orth")
 model_labels <- c(
-  "NAM (lin. fz) [7]",
-  "NAM [7]",
-  sprintf("NAM + Concurvity Reg. (%s) [20]", siems_lam),
-  "SSN [8]",
-  "DNN (Baseline) + Orth. [17]",
-  sprintf("CF-Net (%s)", cfnet_lam),
-  sprintf("CIRCE (%s) [2]", circe_lam),
+  "NAM (lin. fz) [8]",
+  "NAM [8]",
+  sprintf("NAM + Concurvity Reg. (%s) [23]", siems_lam),
+  "SSN [9]",
+  "DNN (Baseline) + Orth. [20]",
+  sprintf("CF-Net (%s) [42]", cfnet_lam),
+  sprintf("CIRCE (%s) [46]", circe_lam),
   "DNN with Controls",
   "DNN with Controls\n+ Orthogonalisation")
 
