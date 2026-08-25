@@ -32,7 +32,7 @@ pick_best <- function(df, prefix) {
 }
 model_levels <- c("nam", "ssn", "refit", "refit_orth")
 model_labels <- c(
-  "NAM [8]",
+  "NAM (lin. fz) [8]",
   "SSN [9]",
   "DNN with Controls",
   "DNN with Controls\n+ Orthogonalisation")
