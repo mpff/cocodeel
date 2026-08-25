@@ -46,6 +46,24 @@ def load_ukbb_data():
     return dict(X=X, y=y, Z=Z, X_test=X_test, y_test=y_test, Z_test=Z_test)
 
 
+def load_ukbb_holdout_meta():
+    """Holdout labels and covariates without the images — enough to build a resampled cohort."""
+    with h5py.File(HOLDOUT_H5, "r") as f:
+        y_test = f["highalc"][:]
+        Z_test = np.column_stack((f["age"][:], f["sex"][:]))
+    return y_test, Z_test
+
+
+def load_ukbb_holdout_images(idx):
+    """Read only the holdout volumes at `idx`, in that order and with duplicates kept."""
+    # h5py fancy indexing needs a sorted, unique selection; np.unique gives both plus
+    # the inverse map back to the caller's ordering.
+    uniq, inv = np.unique(idx, return_inverse=True)
+    with h5py.File(HOLDOUT_H5, "r") as f:
+        vols = f["X"][uniq]
+    return vols[inv]
+
+
 # ── synthetic confounding DGP ─────────────────────────────────────────────────
 def sample_y_z(n, z_coef, rng, age_col, *, int_coef=0.0, rho_coef=0.0):
     """Draw synthetic targets with eta = 2*(sex-0.5) - z_coef*a + int_coef*(sex-0.5)*a, a=(age-mu)/(0.9*std).
