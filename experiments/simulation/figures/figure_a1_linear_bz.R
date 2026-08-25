@@ -174,7 +174,7 @@ b3 <- make_plot(
     metric == "mspe",
     model %in% c("DNN (Baseline)", "DNN with Controls")
   ),
-  ylab = TeX("$MSPE^2(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
+  ylab = TeX("$MSPE(\\hat{f}_X)$  ($\\log_{10}$ scale)"),
   color_option = "viridis",
   show_legend = TRUE,
   strip_labels = FALSE,
