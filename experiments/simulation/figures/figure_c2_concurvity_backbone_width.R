@@ -6,20 +6,20 @@ library(tikzDevice)
 library(latex2exp)
 library(patchwork)
 
-# Concurvity vs backbone size. Three methods (DNN with Controls =
-# cross-fitted refit; NAM = end-to-end SGD with linear f_Z; NAM-MLP = the
-# same with an MLP f_Z) sweep over (n, q), one row each. All rows share a
+# Concurvity vs backbone size. Two methods (DNN with Controls =
+# cross-fitted refit; NAM = end-to-end SGD with linear f_Z) sweep over
+# (n, q), one row each. All rows share a
 # single viridis colourbar over the params (in thousands), placed inside
 # the top-left panel.
 
 df <- read_csv("experiments/simulation/output/concurvity_q.csv") %>%
-  filter(model %in% c("nam", "nam_mlp", "refit"),
+  filter(model %in% c("nam", "refit"),
          q >= 8) %>%   # drop the two smallest backbones (q=2,4 too small to fit fx)
   mutate(
     model = factor(
       model,
-      levels = c("refit", "nam", "nam_mlp"),       # top row first
-      labels = c("DNN with Controls", "NAM", "NAM-MLP")
+      levels = c("refit", "nam"),                   # top row first
+      labels = c("DNN with Controls", "NAM")
     ),
     params_k = (4801 + 514 * q) / 1000             # backbone params in thousands
   ) %>%
@@ -89,7 +89,7 @@ ctrl_var  <- make_panel(
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Middle row — NAM (linear f_Z).
+# Bottom row — NAM (linear f_Z).
 nam_mspe <- make_panel(
   df %>% filter(model == "NAM", effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$")
@@ -103,20 +103,6 @@ nam_var  <- make_panel(
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Bottom row — NAM-MLP (MLP f_Z).
-mlp_mspe <- make_panel(
-  df %>% filter(model == "NAM-MLP", effect == "fx", metric == "mspe"),
-  ylab = TeX("$MSPE(\\hat{f}_X)$")
-)
-mlp_bias <- make_panel(
-  df %>% filter(model == "NAM-MLP", effect == "fx", metric == "bias2"),
-  ylab = TeX("$Bias^2(\\hat{f}_X)$")
-)
-mlp_var  <- make_panel(
-  df %>% filter(model == "NAM-MLP", effect == "fx", metric == "var"),
-  ylab = TeX("$Var(\\hat{f}_X)$")
-)
-
 # Single colourbar at the bottom of the top-left (DNN/MSPE) panel.
 ctrl_mspe <- ctrl_mspe +
   theme(legend.position = c(0.42, 0.18))
@@ -125,14 +111,10 @@ ctrl_var  <- ctrl_var  + theme(legend.position = "none")
 nam_mspe  <- nam_mspe  + theme(legend.position = "none")
 nam_bias  <- nam_bias  + theme(legend.position = "none")
 nam_var   <- nam_var   + theme(legend.position = "none")
-mlp_mspe  <- mlp_mspe  + theme(legend.position = "none")
-mlp_bias  <- mlp_bias  + theme(legend.position = "none")
-mlp_var   <- mlp_var   + theme(legend.position = "none")
 
 fig <- (ctrl_mspe | ctrl_bias | ctrl_var) /
-       (nam_mspe  | nam_bias  | nam_var) /
-       (mlp_mspe  | mlp_bias  | mlp_var)
+       (nam_mspe  | nam_bias  | nam_var)
 
 ggsave("experiments/simulation/output/graphics/Fig_concurvity_q.pdf", fig,
-       width = 6.0, height = 5.0, units = "in",
+       width = 6.0, height = 3.4, units = "in",
        dpi = 600, device = cairo_pdf)

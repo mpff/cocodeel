@@ -30,25 +30,10 @@ pick_best <- function(df, prefix) {
     slice_min(score, n = 1, with_ties = FALSE) %>%
     pull(model)
 }
-best_siems <- pick_best(df_raw, "nam_mlp_conc_")
-best_cfnet <- "cfnet_1"
-# CIRCE pinned to its as-published strength (lambda = 10, the only value
-# in the released configs)
-best_circe <- "circe_10"
-siems_lam <- sub("nam_mlp_conc_", "", best_siems)
-cfnet_lam <- sub("cfnet_", "", best_cfnet)
-circe_lam <- sub("circe_", "", best_circe)
-
-model_levels <- c("nam", "nam_mlp", best_siems, "ssn", "posthoc_web",
-                  best_cfnet, best_circe, "refit", "refit_orth")
+model_levels <- c("nam", "ssn", "refit", "refit_orth")
 model_labels <- c(
-  "NAM (lin. fz) [8]",
   "NAM [8]",
-  sprintf("NAM + Concurvity Reg. (%s) [23]", siems_lam),
   "SSN [9]",
-  "DNN (Baseline) + Orth. [20]",
-  sprintf("CF-Net (%s) [42]", cfnet_lam),
-  sprintf("CIRCE (%s) [46]", circe_lam),
   "DNN with Controls",
   "DNN with Controls\n+ Orthogonalisation")
 
@@ -85,13 +70,7 @@ bz_anchor_color <- function(option) {
 
 method_colors <- setNames(c(
   "#440154",                    # NAM — viridis(0.00), deep purple
-  "#3B528B",                    # NAM-MLP — viridis(0.25), blue
-  "#26828E",                    # NAM-MLP + Reg. — viridis(0.50), teal
   "#9C179E",                    # SSN — plasma(0.40), magenta
-  "#7F7F7F",                    # Weber post-hoc — neutral grey
-  "#ED7953",                    # CF-Net — plasma(0.70), coral
-  "#F0C808",                    # CIRCE — plasma-adjacent gold, warm like
-                                # the other invariance method (CF-Net)
   bz_anchor_color("viridis"),   # DNN with Controls
   bz_anchor_color("magma")      # DNN with Controls + Orth.
 ), model_labels)
