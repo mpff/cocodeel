@@ -17,9 +17,6 @@ dependencies:
   - rpy2
   - r-base
   - r-glmnet
-  # vendored CIRCE benchmark (external/circe)
-  - tqdm
-  - pyyaml
   - pip
   - pip:
       - torchvision

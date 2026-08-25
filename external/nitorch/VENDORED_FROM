@@ -2,3 +2,7 @@ nitorch upstream provenance
 
 Repository: https://github.com/ritterlab/nitorch.git
 Commit:     fd0c33e5ae1bf8cece59b6ae661b29b9b4c1a870
+
+Partial copy: only nitorch/transforms.py is retained (the sole module
+imported by this repository). The full flat copy is preserved in git
+history and on the dev branch.

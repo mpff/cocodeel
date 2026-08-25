@@ -18,9 +18,7 @@ Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
 2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber), `nam`
 (CovarNetwork, linear f(Z)), `nam_mlp` / `nam_mlp_conc_*` (MLPCovarNetwork,
 optional Siems penalty), `ssn`, `cfnet_*` (CF-Net, Zhao et al. 2020, per
-adversarial strength, published protocol), `circe_*` (CIRCE, Pogodin et
-al. 2023, vendored original implementation at `external/circe`, per
-strength).
+adversarial strength, published protocol).
 
 ## Layout
 

@@ -5,8 +5,7 @@ refit_orth (2-fold cross-fit), the uncontrolled base DNN, Weber's
 posthoc_web, NAMs with linear and MLP covariate effect, the Siems et al.
 (2023) concurvity penalty on the MLP NAM at three strengths, SSN
 (Ruegamer et al.), CF-Net (Zhao et al. 2020) at three adversarial
-strengths under its published protocol, and CIRCE (Pogodin et al. 2023,
-vendored original code) at three strengths. Sweep concurvity_q (Fig c2):
+strengths under its published protocol. Sweep concurvity_q (Fig c2):
 refit vs both NAMs as backbone
 width q grows. Hyperparameters come from the replicated per-anchor
 searches in hpsearch/; every setting inherits its nearest anchor on the
@@ -14,7 +13,6 @@ log scale.
 
 Usage:  NSIM=5 python experiments/simulation/study_c_concurvity_benchmark.py [sweep ...]
 """
-import contextlib
 import gc
 import json
 import math
@@ -38,7 +36,6 @@ from cocodeel.crossfit import CrossFitEnsemble
 from cocodeel.benchmarking.model import CovarNetwork, MLPCovarNetwork
 from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
 from cocodeel.benchmarking.adversarial_trainer import adversarial_trainer
-from cocodeel.benchmarking.circe_adapter import circe_fit, CirceRosterModel
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
 
@@ -61,7 +58,6 @@ RUN_DIR = ROOT / "experiments/simulation/output/runs/study_c"
 
 SIEMS_LAMS = [0.01, 0.1, 1.0]
 CFNET_LAMS = [0.5, 1.0, 5.0]
-CIRCE_LAMS = [1.0, 10.0, 100.0]
 
 # CF-Net published protocol (Zhao et al. 2020): all three optimizers at the
 # same rate, a fixed budget of optimizer iterations, no early stopping, no
@@ -76,8 +72,8 @@ Q_GRID = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
 SIM_DEFAULTS = dict(bz=1., b2=1., b3=1., cv1=0.5, cv2=0.5, sdy=1.)
 
 # selected by hpsearch/search_study_c.py (chosen_hps_study_c.json); the
-# penalized NAM variants inherit the unpenalized nam_mlp winner; CF-Net and
-# CIRCE run their published protocols and take no searched HPs
+# penalized NAM variants inherit the unpenalized nam_mlp winner; CF-Net
+# runs its published protocol and takes no searched HPs
 HP_ANCHORS = {
     400: dict(backbone=dict(lr=1e-3, wd=1e-4), nam=dict(lr=1e-2, wd=1e-4),
               nam_mlp=dict(lr=3e-3, wd=1e-4)),
@@ -372,19 +368,6 @@ def run_one(sweep, setting, seed):
             )
             models[f"cfnet_{lam:g}"] = adv.center_effects(full_tr)
 
-        # CIRCE (Pogodin et al. 2023), vendored original code and released
-        # protocol. Its trainer takes the first visible GPU: launch with
-        # CUDA_VISIBLE_DEVICES restricted to the target device.
-        yz_cache = {}
-        for lam in CIRCE_LAMS:
-            ckpt_dir = RUN_DIR / sweep / "circe_ckpt" / key / f"seed={seed}_lam={lam:g}"
-            with open(os.devnull, "w") as devnull, \
-                    contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-                tr = circe_fit(
-                    full_tr.dataset.X, full_tr.dataset.Z, full_tr.dataset.y,
-                    full_va.dataset.X, full_va.dataset.Z, full_va.dataset.y,
-                    lam=lam, workdir=ckpt_dir, yz_cache=yz_cache)
-            models[f"circe_{lam:g}"] = CirceRosterModel(tr, full_tr)
 
     # test evaluation
     test_sim = dict(sim_params, n=TEST_N)
@@ -428,7 +411,7 @@ def main(sweep_names):
         nsim=NSIM, q_default=Q_DEFAULT, test=dict(seed=TEST_SEED, n=TEST_N),
         hp_anchors=HP_ANCHORS,
         hp_q_anchors={f"n={n}_q={q}": v for (n, q), v in HP_Q_ANCHORS.items()},
-        siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS, circe_lams=CIRCE_LAMS,
+        siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS,
         cfnet_lr=CFNET_LR, cfnet_step_budget=CFNET_STEP_BUDGET,
         warmup_frac=WARMUP_FRAC,
         sweeps={s: len(c["settings"]) for s, c in sweeps.items()},
