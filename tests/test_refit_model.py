@@ -285,6 +285,72 @@ class TestClosedFormRidgeSolution(unittest.TestCase):
                                            rtol=5e-4, atol=5e-4)
 
 
+class TestIRLSMatchesPenalizedLogisticMLE(unittest.TestCase):
+    """Pin the logit-link IRLS fit, intercept included, to the penalized MLE.
+
+    On the standardized scale of `fit` (X~, Z~ centred by unweighted means),
+    IRLS must converge to
+
+        argmin_{β0, β_fx, β_fz}  Σ_i [log(1 + e^{η_i}) - y_i η_i] + λ/2 ||β_fx||²,
+        η_i = β0 + x~_i'β_fx + z~_i'β_fz,
+
+    which at λ = 0 is the logistic regression MLE. The score equation for β0
+    makes the intercept the weighted mean Σ w_i (y*_i - f_X - f_Z) / Σ w_i; the
+    unweighted mean of y*_i passes slope-only checks but misses this optimum.
+    """
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(3)
+        self.n_train, p, q = 400, 3, 2
+        n = 2 * self.n_train
+        self.Z = torch.randn(n, q)
+        self.X = 0.8 * self.Z[:, :1] + torch.randn(n, p)
+        eta = 1.0 * self.X[:, 0] - 0.5 * self.X[:, 1] + 1.0 * self.Z[:, 0] - 1.5
+        self.y = torch.bernoulli(torch.sigmoid(eta)).unsqueeze(1)
+        tr = CovarDataset(self.X[:self.n_train], self.Z[:self.n_train], self.y[:self.n_train])
+        va = CovarDataset(self.X[self.n_train:], self.Z[self.n_train:], self.y[self.n_train:])
+        self.train_loader = DataLoader(tr, batch_size=100)
+        self.val_loader = DataLoader(va, batch_size=100)
+        self.base = BaseNetwork(
+            backbone=DummyBackbone,
+            backbone_params={'in_features': p, 'out_features': p, 'identity': True},
+            num_covariates=q, link="logit",
+        )
+
+    def _penalized_mle(self, lam):
+        from scipy.optimize import minimize
+        X, Z, y = (t[:self.n_train].double().numpy() for t in (self.X, self.Z, self.y))
+        x_sd, z_sd = X.std(0, ddof=1), Z.std(0, ddof=1)
+        D = numpy.hstack([numpy.ones((len(y), 1)),
+                          (X - X.mean(0)) / x_sd, (Z - Z.mean(0)) / z_sd])
+        p = X.shape[1]
+
+        def objective(theta):
+            eta = D @ theta
+            grad = D.T @ (1 / (1 + numpy.exp(-eta)) - y.ravel())
+            grad[1:1 + p] += lam * theta[1:1 + p]
+            nll = numpy.sum(numpy.logaddexp(0, eta) - y.ravel() * eta)
+            return nll + lam / 2 * theta[1:1 + p] @ theta[1:1 + p], grad
+
+        theta = minimize(objective, numpy.zeros(D.shape[1]), jac=True, method="L-BFGS-B",
+                         options={"gtol": 1e-10, "ftol": 1e-15, "maxiter": 10000}).x
+        return (torch.tensor(theta[1:1 + p] / x_sd, dtype=torch.float32),
+                torch.tensor(theta[1 + p:] / z_sd, dtype=torch.float32),
+                torch.tensor(theta[0], dtype=torch.float32))
+
+    @torch.no_grad()
+    def test_fit_matches_penalized_mle(self):
+        for lam in (0.0, 5.0, 50.0):
+            with self.subTest(lam=lam):
+                model = RefitCovarNetwork(self.base, num_covariates=self.Z.shape[1])
+                model.fit(self.train_loader, self.val_loader, lam=lam, max_iters=100, tol=1e-6)
+                beta_fx, beta_fz, intercept = self._penalized_mle(lam)
+                torch.testing.assert_close(model.fx.weight.squeeze(), beta_fx, rtol=1e-3, atol=1e-3)
+                torch.testing.assert_close(model.fz.weight.squeeze(), beta_fz, rtol=1e-3, atol=1e-3)
+                torch.testing.assert_close(model.intercept.squeeze(), intercept, rtol=1e-3, atol=1e-3)
+
+
 class TestRefitLogisticCovarNetwork(unittest.TestCase):
 
     @torch.no_grad()
@@ -1238,7 +1304,6 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
             sw = w.sqrt()
 
             y_work = eta + (y - mu) / (g_p + eps)
-            m.intercept.data = y_work.mean().view(1)
 
             yw = sw * (y_work - (w * y_work).sum() / w.sum())
             Xw = sw * (X_std - (w * X_std).sum(0, keepdim=True) / w.sum())
@@ -1253,6 +1318,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
             ry2 = yw - m.fx(Xw)
             bfz = torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ ry2)
             m.fz.weight.data.copy_(bfz.view(1, -1))
+            m.intercept.data = ((w * (y_work - m.fx(X_std) - m.fz(Z_std))).sum() / w.sum()).view(1)
 
             # OLD stopping criterion: relative coefficient change.
             dfx = torch.norm(m.fx.weight.data - fx_old) / (torch.norm(fx_old) + eps)

@@ -328,9 +328,6 @@ class RefitCovarNetwork(BaseNetwork):
 
             y_work = eta + (y - mu) / (g_prime + eps)
 
-            # Update intercept.
-            self.intercept.data = y_work.mean().view(1)
-
             # Centered reweighting. (Note: not equal to demeaning in case of weights!)
             yw = sqrt_weights * (y_work - (weights * y_work).sum() / weights.sum())
             Xw = sqrt_weights * (X - (weights * X).sum(dim=0, keepdim=True) / weights.sum())
@@ -355,6 +352,10 @@ class RefitCovarNetwork(BaseNetwork):
             beta_fz = torch.linalg.solve(Zw.T @ Zw + P_z, Zw.T @ resid_y_new)
             # Update fz weights (excluding intercept).
             self.fz.weight.data.copy_(beta_fz.view(1, -1))
+
+            # X, Z are centred by unweighted means, so the WLS intercept is
+            # beta_0 = sum_i w_i (y*_i - f_X(x_i) - f_Z(z_i)) / sum_i w_i.
+            self.intercept.data = ((weights * (y_work - self.fx(X) - self.fz(Z))).sum() / weights.sum()).view(1)
 
             # 5. Check convergence via relative change in fitted values (linear predictor).
             # mgcv-style: mean|Δη_fx| / (mean|η_fx_old| + 0.1). The 0.1 offset prevents
