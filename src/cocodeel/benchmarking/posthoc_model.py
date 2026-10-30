@@ -75,6 +75,83 @@ class PostHocOrthNetwork(BaseNetwork):
         self.orth.weight.copy_(solution.T)
 
 
+class FeatureErasureNetwork(BaseNetwork):
+    """Erases Z from the backbone features phi of a fitted model and refits the head by least squares.
+
+    With phi and z centred on the fit sample:
+      "residualize" (Weber et al.):  r(phi, z) = phi - B^T z,  B = argmin_B ||phi - Z B||  (QR of Z)
+      "leace" (Belrose et al. 2023): r(phi) = phi - W^+ P W phi,  W = Sigma_phiphi^{-1/2},
+                                     P the orthogonal projection onto the column space of W Sigma_phiz
+    then f_X = r^T w with w = argmin_w ||y - ybar - R w||. Fit on the full sample, fz is identically zero.
+    """
+
+    def __init__(self, model, num_covariates, eraser):
+        super().__init__(
+            backbone=model.backbone.__class__,
+            backbone_params=model.backbone_params,
+            link=model.link
+        )
+        self.load_state_dict(model.state_dict())
+        self.num_covariates = num_covariates
+        self.eraser = eraser
+        self.center_z = Center(num_covariates)
+        q = self.backbone.out_features
+        # residualize: phi_r = phi - z B;  leace: phi_r = phi - phi M^T
+        self.register_buffer("B", torch.zeros(num_covariates, q))
+        self.register_buffer("M", torch.zeros(q, q))
+
+    def forward(self, x, z):
+        return self.output_func(self.intercept + self.predict_fx(x, z))
+
+    def erase(self, phi, z):
+        if self.eraser == "residualize":
+            return phi - self.center_z(z) @ self.B
+        return phi - phi @ self.M.T
+
+    def predict_fx(self, x, z):
+        return self.fx(self.erase(self.center_x(self.backbone(x)), z))
+
+    def predict_fz(self, z):
+        return torch.zeros(z.shape[0], 1, device=z.device)
+
+    @torch.no_grad()
+    def fit(self, train_dataloader, val_dataloader=None):
+        """Fit on the training data; `val_dataloader` is accepted and ignored (interface parity with `RefitCovarNetwork.fit`)."""
+        phi, Z, y = self._extract_features_from_loader(train_dataloader)
+        self.center_x.fit(phi)
+        self.center_z.fit(Z)
+        self.center_y.fit(y)
+        phi = self.center_x(phi).double()
+        Z = self.center_z(Z).double()
+
+        if self.eraser == "residualize":
+            Q, R_z = torch.linalg.qr(Z)
+            B = torch.linalg.solve_triangular(R_z, Q.T @ phi, upper=True)
+            self.B.copy_(B)
+            R = phi - Z @ B
+        else:
+            n = phi.shape[0]
+            evals, evecs = torch.linalg.eigh(phi.T @ phi / n)
+            # pseudo-inverse square roots on the numerical support of Sigma_phiphi
+            keep = evals > evals.max() * 1e-10
+            V, s = evecs[:, keep], evals[keep].sqrt()
+            W = V @ torch.diag(1 / s) @ V.T
+            W_pinv = V @ torch.diag(s) @ V.T
+            U, sv, _ = torch.linalg.svd(W @ (phi.T @ Z / n), full_matrices=False)
+            # W Sigma_phiz is the covariance of whitened phi with z; its singular
+            # values are bounded by sd(z), so float32 rounding sits near 1e-7 sd(z)
+            U = U[:, sv > 1e-5 * Z.std(dim=0).max()]
+            M = W_pinv @ U @ U.T @ W
+            self.M.copy_(M)
+            R = phi - phi @ M.T
+
+        w =torch.linalg.lstsq(R, (y - self.center_y.mean).double()).solution
+        self.fx.weight.copy_(w.T)
+        self.intercept.copy_(self.center_y.mean)
+        self.is_centered.fill_(True)
+        return self
+
+
 class SemiStructuredNetwork(CovarNetwork):
     """Semi-structured network baseline (Rügamer et al.): wraps a fitted
     CovarNetwork and adds a post-hoc orthogonalization term via

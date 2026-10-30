@@ -9,7 +9,9 @@ from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
 from cocodeel.trainer import covar_trainer
 from cocodeel.benchmarking.model import CovarNetwork, MLPCovarNetwork
-from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
+from cocodeel.benchmarking.posthoc_model import (
+    FeatureErasureNetwork, PostHocOrthNetwork, SemiStructuredNetwork,
+)
 from tests.conftest import DummyBackbone
 
 
@@ -304,6 +306,53 @@ class TestLinearBenchmarks(unittest.TestCase):
             model.intercept.item(),
             intercept + model.fx(model.center_x.mean).item() + model.fz(model.center_z.mean).item(),
             places=6)
+
+
+
+class TestFeatureErasureNetwork(unittest.TestCase):
+    """Identity backbone, so phi = X and the erasers have closed forms.
+
+    residualize: by Frisch-Waugh-Lovell, regressing y on phi - P_Z phi gives the
+    phi-coefficient of the joint least-squares fit y ~ 1 + phi + Z.
+    leace: Cov(r(phi), Z) = 0 on the fit sample, and r(phi) = phi when Cov(phi, Z) = 0.
+    """
+
+    @torch.no_grad()
+    def setUp(self):
+        torch.manual_seed(0)
+        self.n, q = 500, 4
+        self.Z = torch.randn(self.n, 2)
+        self.X = self.Z @ torch.randn(2, q) + torch.randn(self.n, q)
+        self.y = (self.X @ torch.randn(q, 1) + self.Z @ torch.randn(2, 1)
+                  + 0.1 * torch.randn(self.n, 1) + 1.5)
+        self.base = BaseNetwork(DummyBackbone, {'in_features': q, 'out_features': q, 'identity': True})
+
+    def fit(self, X, eraser):
+        loader = DataLoader(CovarDataset(X, self.Z, self.y), batch_size=100, shuffle=False)
+        return FeatureErasureNetwork(self.base, num_covariates=2, eraser=eraser).fit(loader)
+
+    @torch.no_grad()
+    def test_residualize_matches_joint_least_squares(self):
+        model = self.fit(self.X, "residualize")
+        design = torch.cat([torch.ones(self.n, 1), self.X, self.Z], dim=1).double()
+        coef = torch.linalg.lstsq(design, self.y.double()).solution
+        self.assertTrue(torch.allclose(model.fx.weight.double().T, coef[1:5], atol=1e-5))
+
+    @torch.no_grad()
+    def test_leace_erases_linear_covariance(self):
+        model = self.fit(self.X, "leace")
+        r = model.erase(model.center_x(self.X), self.Z)
+        cov = (r - r.mean(0)).T @ (self.Z - self.Z.mean(0)) / self.n
+        self.assertTrue(torch.allclose(cov, torch.zeros_like(cov), atol=1e-5))
+
+    @torch.no_grad()
+    def test_leace_is_identity_without_covariance(self):
+        Zc = torch.cat([torch.ones(self.n, 1), self.Z], dim=1).double()
+        X = self.X.double()
+        X = (X - Zc @ torch.linalg.lstsq(Zc, X).solution).float()
+        model = self.fit(X, "leace")
+        phi = model.center_x(X)
+        self.assertTrue(torch.allclose(model.erase(phi, self.Z), phi, atol=1e-5))
 
 
 
