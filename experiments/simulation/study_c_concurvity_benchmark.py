@@ -2,7 +2,9 @@
 
 Sweep concurvity (Fig c1): n grows to 102400; the roster spans refit /
 refit_orth (2-fold cross-fit), the uncontrolled base DNN, Weber's
-posthoc_web, NAMs with linear and MLP covariate effect, the Siems et al.
+posthoc_web (residualised predictions), Weber's residualised features
+and LEACE (Belrose et al. 2023) with refitted heads, NAMs with linear and
+MLP covariate effect, the Siems et al.
 (2023) concurvity penalty on the MLP NAM at three strengths, SSN
 (Ruegamer et al.), CF-Net (Zhao et al. 2020) at three adversarial
 strengths under its published protocol. Sweep concurvity_q (Fig c2):
@@ -12,6 +14,8 @@ searches in hpsearch/; every setting inherits its nearest anchor on the
 log scale.
 
 Usage:  NSIM=5 python experiments/simulation/study_c_concurvity_benchmark.py [sweep ...]
+        RUN_NAME=study_c_erasers METHODS=posthoc_web_features,leace python ...  (adds
+        methods to the existing run in their own run dir; aggregate.py merges them)
 """
 import gc
 import json
@@ -34,7 +38,9 @@ from cocodeel.model import BaseNetwork
 from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.crossfit import CrossFitEnsemble
 from cocodeel.benchmarking.model import CovarNetwork, MLPCovarNetwork
-from cocodeel.benchmarking.posthoc_model import PostHocOrthNetwork, SemiStructuredNetwork
+from cocodeel.benchmarking.posthoc_model import (
+    FeatureErasureNetwork, PostHocOrthNetwork, SemiStructuredNetwork,
+)
 from cocodeel.benchmarking.adversarial_trainer import adversarial_trainer
 from cocodeel.trainer import covar_trainer
 from cocodeel.dataset import CovarDataset
@@ -54,7 +60,10 @@ TEST_SEED = 1234
 TEST_N = 800
 EPOCHS_CAP = 1000
 WARMUP_FRAC = 0.05
-RUN_DIR = ROOT / "experiments/simulation/output/runs/study_c"
+RUN_DIR = ROOT / "experiments/simulation/output/runs" / os.environ.get("RUN_NAME", "study_c")
+# method families to fit (refit, refit_orth, nam, nam_mlp, base, posthoc_web,
+# posthoc_web_features, leace, ssn, nam_mlp_conc, cfnet); default: all
+METHODS = [m for m in os.environ.get("METHODS", "").split(",") if m]
 
 SIEMS_LAMS = [0.01, 0.1, 1.0]
 CFNET_LAMS = [0.5, 1.0, 5.0]
@@ -287,6 +296,9 @@ def run_one(sweep, setting, seed):
     if npz_path.exists():
         return dict(sweep=sweep, sweep_key=key, seed=seed, status="cached", wall_s=0.0)
 
+    def wanted(*families):
+        return not METHODS or any(f in METHODS for f in families)
+
     device = torch.device(DEVICE)
     torch.manual_seed(seed)
     t0 = time.time()
@@ -312,15 +324,18 @@ def run_one(sweep, setting, seed):
 
     # backbones
     tp_backbone = trainer_params(hp["backbone"])
-    base_A = covar_trainer(BaseNetwork, model_params, train_loader=hA_tr, val_loader=hA_va, **tp_backbone)
-    base_A = base_A.center_effects(hA_tr)
-    base_B = covar_trainer(BaseNetwork, model_params, train_loader=hB_tr, val_loader=hB_va, **tp_backbone)
-    base_B = base_B.center_effects(hB_tr)
+    models = {}
+    if wanted("refit", "refit_orth"):
+        base_A = covar_trainer(BaseNetwork, model_params, train_loader=hA_tr, val_loader=hA_va, **tp_backbone)
+        base_A = base_A.center_effects(hA_tr)
+        base_B = covar_trainer(BaseNetwork, model_params, train_loader=hB_tr, val_loader=hB_va, **tp_backbone)
+        base_B = base_B.center_effects(hB_tr)
 
     # refit variants (2-fold cross-fit)
     refit_variants = [("refit", False)] + ([("refit_orth", True)] if cfg["full_roster"] else [])
-    models = {}
     for name, orth in refit_variants:
+        if not wanted(name):
+            continue
         m_AB = RefitCovarNetwork(base_A, num_covariates=1, orthogonalize=orth).to(device)
         m_AB = m_AB.fit(hB_tr, hB_va)
         m_BA = RefitCovarNetwork(base_B, num_covariates=1, orthogonalize=orth).to(device)
@@ -328,27 +343,39 @@ def run_one(sweep, setting, seed):
         models[name] = CrossFitEnsemble([m_AB, m_BA]).recenter(pooled)
 
     # NAM variants (end-to-end on the full sample)
-    nam = covar_trainer(CovarNetwork, model_params, train_loader=full_tr, val_loader=full_va,
-                        **trainer_params(hp["nam"]))
-    models["nam"] = nam.center_effects(full_tr)
-    nam_mlp = covar_trainer(MLPCovarNetwork, model_params, train_loader=full_tr, val_loader=full_va,
-                            **trainer_params(hp["nam_mlp"]))
-    models["nam_mlp"] = nam_mlp.center_effects(full_tr)
+    if wanted("nam", "ssn"):
+        nam = covar_trainer(CovarNetwork, model_params, train_loader=full_tr, val_loader=full_va,
+                            **trainer_params(hp["nam"]))
+        nam = nam.center_effects(full_tr)
+        if wanted("nam"):
+            models["nam"] = nam
+    if wanted("nam_mlp"):
+        nam_mlp = covar_trainer(MLPCovarNetwork, model_params, train_loader=full_tr, val_loader=full_va,
+                                **trainer_params(hp["nam_mlp"]))
+        models["nam_mlp"] = nam_mlp.center_effects(full_tr)
 
     if cfg["full_roster"]:
-        # full-sample baselines
-        base_full = covar_trainer(BaseNetwork, model_params, train_loader=full_tr, val_loader=full_va, **tp_backbone)
-        base_full = base_full.center_effects(full_tr)
-        models["base"] = base_full
-        web = PostHocOrthNetwork(base_full, num_covariates=1).to(device)
-        models["posthoc_web"] = web.fit(full_tr, full_va)
+        # full-sample baselines and the post-hoc methods on top of them; the
+        # backbone is saved so further post-hoc methods need no retraining
+        if wanted("base", "posthoc_web", "posthoc_web_features", "leace"):
+            base_full = covar_trainer(BaseNetwork, model_params, train_loader=full_tr, val_loader=full_va, **tp_backbone)
+            base_full = base_full.center_effects(full_tr)
+            ckpt_dir = RUN_DIR / sweep / "checkpoints" / key
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(base_full.state_dict(), ckpt_dir / f"base_full_seed={seed}.pt")
+        if wanted("base"):
+            models["base"] = base_full
+        if wanted("posthoc_web"):
+            web = PostHocOrthNetwork(base_full, num_covariates=1).to(device)
+            models["posthoc_web"] = web.fit(full_tr, full_va)
 
         # SSN wraps the linear NAM
-        ssn = SemiStructuredNetwork(models["nam"]).to(device)
-        models["ssn"] = ssn.fit(full_tr)
+        if wanted("ssn"):
+            ssn = SemiStructuredNetwork(nam).to(device)
+            models["ssn"] = ssn.fit(full_tr)
 
         # Siems penalty on the MLP NAM, HPs inherited from the unpenalized winner
-        for lam in SIEMS_LAMS:
+        for lam in SIEMS_LAMS if wanted("nam_mlp_conc") else []:
             m = train_covar_with_concurvity_reg(
                 MLPCovarNetwork, model_params, full_tr, full_va, lam_reg=lam,
                 warmup_frac=WARMUP_FRAC, **trainer_params(hp["nam_mlp"]))
@@ -358,7 +385,7 @@ def run_one(sweep, setting, seed):
         # is the strength knob, fixed iteration budget instead of early
         # stopping, no gradient clipping
         cfnet_epochs = math.ceil(CFNET_STEP_BUDGET / len(full_tr))
-        for lam in CFNET_LAMS:
+        for lam in CFNET_LAMS if wanted("cfnet") else []:
             adv = adversarial_trainer(
                 BaseNetwork, model_params, num_covariates=1,
                 train_loader=full_tr, val_loader=full_va,
@@ -367,6 +394,13 @@ def run_one(sweep, setting, seed):
                 patience=None, max_grad_norm=None,
             )
             models[f"cfnet_{lam:g}"] = adv.center_effects(full_tr)
+
+        # feature erasure on the full-sample backbone; last, so that the random
+        # draws of the methods above are the same with or without it
+        for name, eraser in [("posthoc_web_features", "residualize"), ("leace", "leace")]:
+            if wanted(name):
+                erased = FeatureErasureNetwork(base_full, num_covariates=1, eraser=eraser).to(device)
+                models[name] = erased.fit(full_tr)
 
 
     # test evaluation
@@ -390,7 +424,7 @@ def run_one(sweep, setting, seed):
     )
 
     # cleanup
-    del models, base_A, base_B
+    del models
     torch.cuda.empty_cache()
     gc.collect()
     return dict(sweep=sweep, sweep_key=key, seed=seed, status="ok",
@@ -409,6 +443,7 @@ def main(sweep_names):
     grid_runner.write_manifest(RUN_DIR, dict(
         study="c_concurvity_benchmark", device=DEVICE, n_workers=N_WORKERS,
         nsim=NSIM, q_default=Q_DEFAULT, test=dict(seed=TEST_SEED, n=TEST_N),
+        methods=METHODS or "all",
         hp_anchors=HP_ANCHORS,
         hp_q_anchors={f"n={n}_q={q}": v for (n, q), v in HP_Q_ANCHORS.items()},
         siems_lams=SIEMS_LAMS, cfnet_lams=CFNET_LAMS,

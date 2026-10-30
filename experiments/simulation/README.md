@@ -15,10 +15,12 @@ reduces to the CSVs the R figure scripts read.
 | `study_d_noisy_z.py` | `increasing_a` | `figures/figure_d1_noisy_z.R` |
 
 Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
-2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber), `nam`
-(CovarNetwork, linear f(Z)), `nam_mlp` / `nam_mlp_conc_*` (MLPCovarNetwork,
-optional Siems penalty), `ssn`, `cfnet_*` (CF-Net, Zhao et al. 2020, per
-adversarial strength, published protocol).
+2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber,
+residualised predictions), `posthoc_web_features` (Weber, residualised
+backbone features with a refitted head), `leace` (LEACE, Belrose et al. 2023,
+with a refitted head), `nam` (CovarNetwork, linear f(Z)), `nam_mlp` /
+`nam_mlp_conc_*` (MLPCovarNetwork, optional Siems penalty), `ssn`, `cfnet_*`
+(CF-Net, Zhao et al. 2020, per adversarial strength, published protocol).
 
 ## Layout
 
@@ -51,7 +53,9 @@ Each study writes to a fixed, resumable run directory
 already on disk, so an interrupted run continues where it stopped and a
 completed run is a no-op. Saved predictions are never rewritten: methods
 added later run into their own run directory, which `aggregate.py` merges
-with the earlier one per seed. `NSIM=5` (env var) runs a reduced number of seeds
+with the earlier one per seed (study C selects them with the env vars
+`METHODS` and `RUN_NAME`, e.g. `RUN_NAME=study_c_erasers
+METHODS=posthoc_web_features,leace`). `NSIM=5` (env var) runs a reduced number of seeds
 for a quick trial; the default is 50, and a trial run's seeds are reused by
 the full run. `COCODEEL_DEVICE` overrides the GPU (default `cuda:0`).
 
