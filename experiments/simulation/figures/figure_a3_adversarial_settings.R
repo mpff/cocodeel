@@ -245,7 +245,7 @@ cDE <- ggplot(
     end = 1, 
     option = "viridis"
   ) +
-  labs(color = TeX("$c$")) +
+  labs(color = TeX("$c_1$")) +
   shared_theme2 +
   coord_cartesian(
     xlim = c(175, 100 * 2^7.5),
