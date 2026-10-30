@@ -284,6 +284,34 @@ class TestClosedFormRidgeSolution(unittest.TestCase):
                 torch.testing.assert_close(model.intercept.squeeze(), intercept,
                                            rtol=5e-4, atol=5e-4)
 
+    @torch.no_grad()
+    def test_fit_matches_closed_form_with_penalty_z(self):
+        """With a penalty P on β_fz the joint ridge problem on the standardized scale,
+
+            min ||y~ - X~ β_fx - Z~ β_fz||² + λ ||β_fx||² + β_fz' P β_fz,
+
+        is solved by the stacked normal equations (D'D + diag(λI, P)) θ = D'y~,
+        D = [X~, Z~]. Profiling β_fz out gives M = I - Z~(Z~'Z~ + P)⁻¹Z~', which
+        is not idempotent for P ≠ 0, so β_fx = (X~'M X~ + λI)⁻¹ X~'M y~ differs
+        from the ridge fit on residuals, (X~'M² X~ + λI)⁻¹ X~'M² y~.
+        """
+        X, Z, y = self.X[:self.n_train], self.Z[:self.n_train], self.y[:self.n_train]
+        x_sd, z_sd = X.std(dim=0), Z.std(dim=0)
+        D = torch.cat([(X - X.mean(dim=0)) / x_sd, (Z - Z.mean(dim=0)) / z_sd], dim=1)
+        yc = y - y.mean()
+        p = X.shape[1]
+        P = torch.tensor([[40.0, 10.0], [10.0, 20.0]])
+        for lam in (5.0, 50.0):
+            with self.subTest(lam=lam):
+                pen = torch.block_diag(lam * torch.eye(p), P)
+                theta = torch.linalg.solve(D.T @ D + pen, D.T @ yc).squeeze()
+                model = RefitCovarNetwork(self.base, num_covariates=self.Z.shape[1])
+                model.fit(self.train_loader, self.val_loader, lam=lam, penalty_z=P)
+                torch.testing.assert_close(model.fx.weight.squeeze(), theta[:p] / x_sd,
+                                           rtol=5e-4, atol=5e-4)
+                torch.testing.assert_close(model.fz.weight.squeeze(), theta[p:] / z_sd,
+                                           rtol=5e-4, atol=5e-4)
+
 
 class TestIRLSMatchesPenalizedLogisticMLE(unittest.TestCase):
     """Pin the logit-link IRLS fit, intercept included, to the penalized MLE.
@@ -1313,7 +1341,7 @@ class TestIRLSConvergenceCriterion(unittest.TestCase):
             ry = yw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ yw)
             rX = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ Xw)
 
-            bfx = torch.linalg.solve(rX.T @ rX + lam * torch.eye(rX.shape[1]), rX.T @ ry)
+            bfx = torch.linalg.solve(Xw.T @ rX + lam * torch.eye(rX.shape[1]), Xw.T @ ry)
             m.fx.weight.data.copy_(bfx.view(1, -1))
             ry2 = yw - m.fx(Xw)
             bfz = torch.linalg.solve(Zw.T @ Zw + P_z + I1, Zw.T @ ry2)

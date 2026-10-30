@@ -341,9 +341,11 @@ class RefitCovarNetwork(BaseNetwork):
             # 2. Regress Xw on Zw to get residuals.
             resid_X = Xw - Zw @ torch.linalg.solve(Zw.T @ Zw + P_z, Zw.T @ Xw)
 
+            # Profiling beta_fz out gives (Xw' M Xw + lam I)^{-1} Xw' M yw with
+            # M = I - Zw (Zw'Zw + P_z)^{-1} Zw', which is not idempotent for P_z != 0.
             beta_fx = torch.linalg.solve(
-                resid_X.T @ resid_X + lam * torch.eye(resid_X.shape[1]).to(resid_X.device),
-                resid_X.T @ resid_y
+                Xw.T @ resid_X + lam * torch.eye(resid_X.shape[1]).to(resid_X.device),
+                Xw.T @ resid_y
             )
             self.fx.weight.data.copy_(beta_fx.view(1, -1))
 
