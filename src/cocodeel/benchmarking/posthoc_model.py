@@ -118,6 +118,7 @@ class FeatureErasureNetwork(BaseNetwork):
     def fit(self, train_dataloader, val_dataloader=None):
         """Fit on the training data; `val_dataloader` is accepted and ignored (interface parity with `RefitCovarNetwork.fit`)."""
         phi, Z, y = self._extract_features_from_loader(train_dataloader)
+        eps = torch.finfo(phi.dtype).eps
         self.center_x.fit(phi)
         self.center_z.fit(Z)
         self.center_y.fit(y)
@@ -145,7 +146,9 @@ class FeatureErasureNetwork(BaseNetwork):
             self.M.copy_(M)
             R = phi - phi @ M.T
 
-        w =torch.linalg.lstsq(R, (y - self.center_y.mean).double()).solution
+        # minimum-norm least squares: LEACE leaves R rank-deficient by construction,
+        # and singular values below the resolution of the float32 features carry nothing
+        w = torch.linalg.pinv(R, rtol=eps) @ (y - self.center_y.mean).double()
         self.fx.weight.copy_(w.T)
         self.intercept.copy_(self.center_y.mean)
         self.is_centered.fill_(True)
