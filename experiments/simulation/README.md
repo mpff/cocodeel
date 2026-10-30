@@ -28,7 +28,8 @@ adversarial strength, published protocol).
 - `study_*.py` — one script per study; hyperparameters are hardcoded
   constants (values from `hpsearch/chosen_hps*.json`).
 - `aggregate.py` — reduces per-seed NPZ predictions into `output/<sweep>.csv`
-  (bias²/variance/MSPE per method and effect).
+  (bias²/variance/MSPE per method and effect); it never overwrites an
+  existing CSV, so a new aggregation takes `--out-dir`.
 - `hpsearch/` — optional: re-derive the hardcoded hyperparameters
   (`search_default.py` for studies A/B; `search_study_c.py` and
   `search_study_c_q.py` for the per-anchor study-C searches; shared driver
@@ -48,7 +49,9 @@ Rscript experiments/simulation/figures/figure_a1_linear_bz.R
 Each study writes to a fixed, resumable run directory
 (`output/runs/study_*`): rerunning skips every `(sweep, setting, seed)`
 already on disk, so an interrupted run continues where it stopped and a
-completed run is a no-op. `NSIM=5` (env var) runs a reduced number of seeds
+completed run is a no-op. Saved predictions are never rewritten: methods
+added later run into their own run directory, which `aggregate.py` merges
+with the earlier one per seed. `NSIM=5` (env var) runs a reduced number of seeds
 for a quick trial; the default is 50, and a trial run's seeds are reused by
 the full run. `COCODEEL_DEVICE` overrides the GPU (default `cuda:0`).
 

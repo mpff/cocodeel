@@ -23,13 +23,15 @@ def _git_commit():
 
 
 def write_manifest(run_dir, extras):
+    """One manifest per launch, so a resumed run keeps the record of every earlier launch."""
+    start = datetime.datetime.now()
     manifest = {
-        "start": datetime.datetime.now().isoformat(),
+        "start": start.isoformat(),
         "host": os.uname().nodename,
         "git_commit": _git_commit(),
         **extras,
     }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (run_dir / f"manifest_{start:%Y-%m-%dT%H-%M-%S}.json").write_text(json.dumps(manifest, indent=2))
 
 
 def write_settings_csv(run_dir, sweeps, sweep_key_fns):

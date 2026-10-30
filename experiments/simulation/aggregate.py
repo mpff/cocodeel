@@ -1,14 +1,17 @@
 """Aggregate per-seed NPZ predictions from the study runs into R-ready CSVs.
 
-For every sweep of every study run dir, reads preds/<sweep_key>/seed=*.npz and
-writes output/<sweep>.csv in long form: model, effect, metric, value, plus the
+For every sweep, reads preds/<sweep_key>/seed=*.npz from each run dir that has
+the sweep (a run dir adding methods to an earlier run merges in per seed) and
+writes <out-dir>/<sweep>.csv in long form: model, effect, metric, value, plus the
 sweep variables parsed from the sweep key. Per test point i the seed dimension
 is reduced to bias_i^2 = (mean_s yhat_is - truth_i)^2, var_i = var_s(yhat_is),
 mspe_i = mean_s (yhat_is - truth_i)^2 = bias_i^2 + var_i; reported values are
-means over i.
+means over i. An existing CSV is never overwritten: a new aggregation goes to
+a new --out-dir.
 
-Usage:  python experiments/simulation/aggregate.py
+Usage:  python experiments/simulation/aggregate.py [--out-dir DIR]
 """
+import argparse
 import csv
 import re
 import sys
@@ -41,31 +44,31 @@ def parse_sweep_key(sweep_key):
     return out
 
 
-def aggregate_sweep(sweep_dir):
-    """Reduce all seeds of one sweep into long-form rows."""
+def aggregate_sweep(sweep_dirs):
+    """Reduce all seeds of one sweep into long-form rows; methods from several run dirs are merged per seed."""
     rows = []
-    for setting_dir in sorted((sweep_dir / "preds").iterdir()):
-        npz_paths = sorted(setting_dir.glob("seed=*.npz"))
-        if not npz_paths:
-            continue
-
+    setting_keys = sorted({d.name for s in sweep_dirs for d in (s / "preds").iterdir()})
+    for key in setting_keys:
         # stack seeds per (method, effect)
-        methods = None
         stacks = {}
         truths = {}
-        for p in npz_paths:
-            d = np.load(p, allow_pickle=False)
-            if methods is None:
-                methods = [str(m) for m in d["methods"]]
+        for sweep_dir in sweep_dirs:
+            for p in sorted((sweep_dir / "preds" / key).glob("seed=*.npz")):
+                d = np.load(p, allow_pickle=False)
                 for eff in EFFECTS:
+                    # every run draws the same test set, so merged methods share one truth
+                    if eff in truths and not np.array_equal(truths[eff], d[f"truth__{eff}"]):
+                        raise ValueError(f"{p}: test set differs from the other run dirs")
                     truths[eff] = d[f"truth__{eff}"]
-            for m in methods:
-                for eff in EFFECTS:
-                    stacks.setdefault((m, eff), []).append(d[f"{m}__{eff}"])
-        stacks = {k: np.stack(v, axis=0) for k, v in stacks.items()}  # [S, T]
+                for m in (str(m) for m in d["methods"]):
+                    if p.name in stacks.get((m, "y"), {}):
+                        raise ValueError(f"{m} in {key}/{p.name} appears in more than one run dir")
+                    for eff in EFFECTS:
+                        stacks.setdefault((m, eff), {})[p.name] = d[f"{m}__{eff}"]
+        stacks = {k: np.stack(list(v.values()), axis=0) for k, v in stacks.items()}  # [S, T]
 
         # bias/variance decomposition per method and effect
-        sweep_vars = parse_sweep_key(setting_dir.name)
+        sweep_vars = parse_sweep_key(key)
         for (m, eff), preds in stacks.items():
             truth = truths[eff]
             bias2 = (preds.mean(axis=0) - truth) ** 2
@@ -78,27 +81,39 @@ def aggregate_sweep(sweep_dir):
     return rows
 
 
-def main():
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def main(out_dir):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sweeps = {}
     for run_dir in RUN_DIRS:
         if not run_dir.exists():
             print(f"[{run_dir.name}] missing — skipped", flush=True)
             continue
         for sweep_dir in sorted(d for d in run_dir.iterdir()
                                 if d.is_dir() and (d / "preds").exists()):
-            rows = aggregate_sweep(sweep_dir)
-            if not rows:
-                print(f"[{sweep_dir.name}] no rows", flush=True)
-                continue
-            fixed = ["model", "effect", "metric", "value"]
-            sweep_keys = sorted({k for r in rows for k in r if k not in fixed})
-            outp = OUT_DIR / f"{sweep_dir.name}.csv"
-            with outp.open("w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fixed + sweep_keys)
-                w.writeheader()
-                w.writerows(rows)
-            print(f"[{sweep_dir.name}] {len(rows)} rows -> {outp}", flush=True)
+            sweeps.setdefault(sweep_dir.name, []).append(sweep_dir)
+
+    for sweep, sweep_dirs in sweeps.items():
+        rows = aggregate_sweep(sweep_dirs)
+        if not rows:
+            print(f"[{sweep}] no rows", flush=True)
+            continue
+        fixed = ["model", "effect", "metric", "value"]
+        sweep_keys = sorted({k for r in rows for k in r if k not in fixed})
+        outp = out_dir / f"{sweep}.csv"
+        # mode "x": an existing CSV (the committed ones feed the paper) is never overwritten
+        try:
+            f = outp.open("x", newline="")
+        except FileExistsError:
+            print(f"[{sweep}] {outp} exists — skipped; pass a new --out-dir", flush=True)
+            continue
+        with f:
+            w = csv.DictWriter(f, fieldnames=fixed + sweep_keys)
+            w.writeheader()
+            w.writerows(rows)
+        print(f"[{sweep}] {len(rows)} rows -> {outp}", flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    main(parser.parse_args().out_dir)
