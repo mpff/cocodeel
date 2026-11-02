@@ -30,3 +30,20 @@ def write_csv(rows, path):
         w.writeheader()
         w.writerows(rows)
     print(f"Wrote {path}", flush=True)
+
+
+def read_csv(path):
+    """Rows of an earlier write_csv, numbers parsed and empty fields dropped; [] if absent."""
+    if not path.exists():
+        return []
+
+    def parse(v):
+        for cast in (int, float):
+            try:
+                return cast(v)
+            except ValueError:
+                pass
+        return v
+
+    with path.open(newline="") as f:
+        return [{k: parse(v) for k, v in r.items() if v != ""} for r in csv.DictReader(f)]

@@ -19,8 +19,10 @@ Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
 residualised predictions), `posthoc_web_features` (Weber, residualised
 backbone features with a refitted head), `leace` (LEACE, Belrose et al. 2023,
 with a refitted head), `nam` (CovarNetwork, linear f(Z)), `nam_mlp` /
-`nam_mlp_conc_*` (MLPCovarNetwork, optional Siems penalty), `ssn`, `cfnet_*`
-(CF-Net, Zhao et al. 2020, per adversarial strength, published protocol).
+`nam_mlp_conc` (MLPCovarNetwork with the Siems penalty), `ssn`, `cfnet`
+(CF-Net, Zhao et al. 2020, published protocol), `circe` (CIRCE, Pogodin et
+al. 2023, released code); the last three at the strength chosen per n by
+`hpsearch/search_study_c_lam.py`.
 
 ## Layout
 
@@ -34,7 +36,8 @@ with a refitted head), `nam` (CovarNetwork, linear f(Z)), `nam_mlp` /
   existing CSV, so a new aggregation takes `--out-dir`.
 - `hpsearch/` — optional: re-derive the hardcoded hyperparameters
   (`search_default.py` for studies A/B; `search_study_c.py` and
-  `search_study_c_q.py` for the per-anchor study-C searches; shared driver
+  `search_study_c_q.py` for the per-n and per-(n, q) study-C searches,
+  `search_study_c_lam.py` for the competitors' penalty strength; shared driver
   `_grid_search.py`). The chosen values are committed as JSON.
 - `figures/` — one R script per figure, reading `output/*.csv`.
 
