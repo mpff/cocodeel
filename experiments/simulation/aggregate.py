@@ -27,6 +27,9 @@ RUN_DIRS = [
     ROOT / "experiments/simulation/output/runs/study_b",
     ROOT / "experiments/simulation/output/runs/study_c",
     ROOT / "experiments/simulation/output/runs/study_c_erasers",
+    ROOT / "experiments/simulation/output/runs/study_c_competitors_re",
+    ROOT / "experiments/simulation/output/runs/study_c_pern",
+    ROOT / "experiments/simulation/output/runs/study_c_pern_lam",
     ROOT / "experiments/simulation/output/runs/study_d",
 ]
 OUT_DIR = ROOT / "experiments/simulation/output"
@@ -46,7 +49,8 @@ def parse_sweep_key(sweep_key):
 
 
 def aggregate_sweep(sweep_dirs):
-    """Reduce all seeds of one sweep into long-form rows; methods from several run dirs are merged per seed."""
+    """Reduce all seeds of one sweep into long-form rows; methods from several run dirs are merged per seed,
+    a method in a later run dir of RUN_DIRS replacing the same method in an earlier one."""
     rows = []
     setting_keys = sorted({d.name for s in sweep_dirs for d in (s / "preds").iterdir()})
     for key in setting_keys:
@@ -62,8 +66,6 @@ def aggregate_sweep(sweep_dirs):
                         raise ValueError(f"{p}: test set differs from the other run dirs")
                     truths[eff] = d[f"truth__{eff}"]
                 for m in (str(m) for m in d["methods"]):
-                    if p.name in stacks.get((m, "y"), {}):
-                        raise ValueError(f"{m} in {key}/{p.name} appears in more than one run dir")
                     for eff in EFFECTS:
                         stacks.setdefault((m, eff), {})[p.name] = d[f"{m}__{eff}"]
         stacks = {k: np.stack(list(v.values()), axis=0) for k, v in stacks.items()}  # [S, T]
