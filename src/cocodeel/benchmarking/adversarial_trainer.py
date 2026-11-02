@@ -45,6 +45,31 @@ def _squared_corr(z_true, z_pred, eps=1e-5):
     return (r ** 2).sum()
 
 
+def balanced_cohort(y, z, n_ybins=5, n_zbins=4, generator=None):
+    """Indices of a cohort in which y and z are independent, for continuous y (Zhao et al. 2020).
+
+    y is restricted to the full width at half maximum of a Gaussian fit,
+    |y - mean(y)| <= sqrt(2 ln 2) sd(y), and cut into n_ybins equal-width bins;
+    z is cut at its quantiles within that interval. Each of the
+    n_ybins x n_zbins cells is bootstrapped to the same count, so the
+    cohort's joint distribution of (y-bin, z-bin) is uniform.
+    """
+    y, z = y.view(-1), z.view(-1)
+    half_width = (2 * torch.log(torch.tensor(2.0))).sqrt() * y.std()
+    inside = torch.nonzero((y - y.mean()).abs() <= half_width).view(-1)
+    y_in, z_in = y[inside], z[inside]
+    y_bin = torch.bucketize(y_in, torch.linspace(-half_width, half_width, n_ybins + 1)[1:-1] + y.mean())
+    z_bin = torch.bucketize(z_in, torch.quantile(z_in, torch.linspace(0, 1, n_zbins + 1)[1:-1]))
+    cell = y_bin * n_zbins + z_bin
+    per_cell = len(inside) // (n_ybins * n_zbins)
+    idx = []
+    for c in range(n_ybins * n_zbins):
+        members = inside[cell == c]
+        if len(members) > 0:
+            idx.append(members[torch.randint(len(members), (per_cell,), generator=generator)])
+    return torch.cat(idx)
+
+
 def adversarial_trainer(
     model,
     model_params,
@@ -62,6 +87,7 @@ def adversarial_trainer(
     control_label=0,
     patience=12,
     max_grad_norm=1.0,
+    cohort_loader=None,
 ):
     """Alternating task/adversary/confound-predictor training loop.
 
@@ -76,9 +102,10 @@ def adversarial_trainer(
     For `link="logit"`, the confound predictor and adversarial step are
     conditioned on `y == control_label`, matching Zhao et al.'s use of the
     reference class so batch-level correlation isn't driven by the outcome
-    signal. A continuous outcome (`link="identity"`) has no such stratum, so
-    the full batch is used instead — a deviation from the source, which only
-    ever trains on binary case/control outcomes.
+    signal. For a continuous outcome the source instead draws the adversary's
+    batches from a cohort in which y and the confounder are independent
+    (`balanced_cohort`); pass a loader over that cohort as `cohort_loader`,
+    else the full batch is used.
 
     The source protocol runs a fixed iteration budget with no early stopping,
     no model selection and no gradient clipping; `patience=None` (train all
@@ -118,6 +145,7 @@ def adversarial_trainer(
     patience_counter = 0
     val_losses_ = []
     adv_grad_norms_ = []
+    cohort = iter(cohort_loader) if cohort_loader is not None else None
 
     for epoch in range(epochs):
         model.train()
@@ -130,7 +158,14 @@ def adversarial_trainer(
             y = batch["y"].to(device, non_blocking=True)
 
             # control cohort
-            if model.link == "logit":
+            if cohort is not None:
+                cb = next(cohort, None)
+                if cb is None:
+                    cohort = iter(cohort_loader)
+                    cb = next(cohort)
+                x_ctrl = cb["X"].to(device, non_blocking=True)
+                z_ctrl = cb["Z"].to(device, non_blocking=True)
+            elif model.link == "logit":
                 ctrl = y.squeeze(-1) == control_label
                 x_ctrl, z_ctrl = x[ctrl], z[ctrl]
             else:
