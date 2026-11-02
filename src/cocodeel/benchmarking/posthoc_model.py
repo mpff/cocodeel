@@ -118,10 +118,21 @@ class FeatureErasureNetwork(BaseNetwork):
     def fit(self, train_dataloader, val_dataloader=None):
         """Fit on the training data; `val_dataloader` is accepted and ignored (interface parity with `RefitCovarNetwork.fit`)."""
         phi, Z, y = self._extract_features_from_loader(train_dataloader)
-        eps = torch.finfo(phi.dtype).eps
+        R = self.fit_eraser(phi, Z)
+        self.center_y.fit(y)
+        # minimum-norm least squares: LEACE leaves R rank-deficient by construction,
+        # and singular values below the resolution of the float32 features carry nothing
+        w = torch.linalg.pinv(R, rtol=torch.finfo(phi.dtype).eps) @ (y - self.center_y.mean).double()
+        self.fx.weight.copy_(w.T)
+        self.intercept.copy_(self.center_y.mean)
+        self.is_centered.fill_(True)
+        return self
+
+    @torch.no_grad()
+    def fit_eraser(self, phi, Z):
+        """Fits the centring and the eraser on (phi, Z); returns the erased fit-sample features in double precision."""
         self.center_x.fit(phi)
         self.center_z.fit(Z)
-        self.center_y.fit(y)
         phi = self.center_x(phi).double()
         Z = self.center_z(Z).double()
 
@@ -145,14 +156,7 @@ class FeatureErasureNetwork(BaseNetwork):
             M = W_pinv @ U @ U.T @ W
             self.M.copy_(M)
             R = phi - phi @ M.T
-
-        # minimum-norm least squares: LEACE leaves R rank-deficient by construction,
-        # and singular values below the resolution of the float32 features carry nothing
-        w = torch.linalg.pinv(R, rtol=eps) @ (y - self.center_y.mean).double()
-        self.fx.weight.copy_(w.T)
-        self.intercept.copy_(self.center_y.mean)
-        self.is_centered.fill_(True)
-        return self
+        return R
 
 
 class SemiStructuredNetwork(CovarNetwork):
