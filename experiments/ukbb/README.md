@@ -18,8 +18,8 @@ retraining the CNN.
 | `figures/UKBB_application_fig.R` | the CSVs above | `runs/final_v2_refit/graphics/Fig_UKBB_application_{main,appendix}.pdf` | A/B |
 
 Method keys in the CSVs: `base_full` (uncontrolled DNN), `base_half` (backbone on one
-half), `refit_age` / `refit_age_sex` (single-split refit, RefitCovarNetwork on the h2
-half), `crossfit_age` / `crossfit_age_sex` (2-fold cross-fit ensemble via
+half), `refit_age` (single-split refit, RefitCovarNetwork on the h2
+half), `crossfit_age` (2-fold cross-fit ensemble via
 `CrossFitEnsemble`), `joint_age` (joint DNN g(X, age), image features and age through
 an MLP head), and `dnn` / `refit_nosamp_*` / `refit_split_*` / `crossfit_k{K}_*`
 from the general K-fold study.

@@ -37,13 +37,11 @@ OI_BLUE       <- "#0072B2"
 OI_ORANGE     <- "#E69F00"
 OI_VERMILLION <- "#D55E00"   # base / No Control primary
 OI_GREEN      <- "#009E73"   # refit_age / Age Control primary
-OI_PURPLE     <- "#CC79A7"   # refit_age_sex / Age+Sex Control primary
 OI_SKY        <- "#56B4E9"   # crossfit_age / Cross-fit Age Control primary
 GREY_REF      <- "grey30"
 # Pale (desaturated) variants — used for sample-split methods, where the
 # saturated hue marks the cross-fit version of the same control.
 SKY_PALE      <- "#A8DBF0"   # paler than OI_SKY — used for sample-split (single side)
-PURPLE_PALE   <- "#E8C2D6"   # paler than OI_PURPLE
 GREY_NOSPLIT  <- "#BFBFBF"   # neutral grey for "no sample split" baseline (different from primary hues)
 OI_BLUE_DARK  <- "#005580"   # darker than OI_SKY — used for K=3 cross-fit (distinct from K=2's OI_SKY)
 
@@ -123,7 +121,7 @@ if (file.exists(cf_path)) {
 }
 
 # K=3 cross-fit results — same schema as crossfit_results.csv but with method
-# names crossfit_k3_age / crossfit_k3_age_sex / k3_age_k0..k2 / k3_age_sex_k0..k2.
+# names crossfit_k3_age / k3_age_k0..k2.
 k3_path <- paste0(K3_DIR, "k3_crossfit_results.csv")
 if (file.exists(k3_path)) {
   k3_raw <- read.csv(k3_path)
@@ -179,17 +177,13 @@ if (file.exists(old_test_path) && file.exists(old_pred_path)) {
         )
       )
   }
-  no_split_df     <- build_nosplit("age",     "nosplit_refit_age")
-  no_split_sex_df <- build_nosplit("age_sex", "nosplit_refit_age_sex")
-  message("Loaded no-sample-split baseline: ", nrow(no_split_df),
-          " age rows, ", nrow(no_split_sex_df), " age+sex rows")
+  no_split_df <- build_nosplit("age", "nosplit_refit_age")
+  message("Loaded no-sample-split baseline: ", nrow(no_split_df), " age rows")
 } else {
   message("No-sample-split baseline missing at ", old_pred_path)
-  empty_nosplit <- data.frame(method = character(0), coef = numeric(0),
-                              fold = integer(0), auc = numeric(0),
-                              marg = character(0), training = factor(NULL))
-  no_split_df     <- empty_nosplit
-  no_split_sex_df <- empty_nosplit
+  no_split_df <- data.frame(method = character(0), coef = numeric(0),
+                            fold = integer(0), auc = numeric(0),
+                            marg = character(0), training = factor(NULL))
 }
 
 # ---------------------------------------------------------------------------
@@ -346,87 +340,39 @@ make_auc_panel <- function(df, primary_label, ref_label, title, hue,
 # coefficients (≈ -0.298); we multiply by STD_AGE to express them on the same
 # scale as the true z_coef = -2.
 TRUE_B_AGE <- -2.0
-TRUE_B_SEX <-  2.000
 STD_AGE    <-  2.0 / 0.298   # implied std factor, ≈ 6.71
-
-coefs_df <- read.csv(paste0(DATA_DIR, "fitted_coefs.csv")) %>%
-  filter(method %in% c("refit_age", "refit_age_sex")) %>%
-  mutate(
-    training = factor(
-      if_else(coef == 0, "Balanced training", "Confounded training"),
-      levels = c("Balanced training", "Confounded training")
-    ),
-    method_label = factor(method,
-                          levels = c("refit_age", "refit_age_sex"),
-                          labels = c("Age Control", "Age + Sex Control"))
-  )
-
-# Cross-fit coefficients (used for the appendix bottom row).
-# crossfit_results.csv stores b_age / b_sex on the same per-year scale as
-# fitted_coefs.csv, so the same STD_AGE conversion applies downstream.
-crossfit_coefs_df <- if (exists("cf_raw")) {
-  cf_raw %>%
-    filter(method %in% c("crossfit_age", "crossfit_age_sex")) %>%
-    mutate(
-      training = factor(
-        if_else(coef == 0, "Balanced training", "Confounded training"),
-        levels = c("Balanced training", "Confounded training")
-      ),
-      method_label = factor(method,
-                            levels = c("crossfit_age", "crossfit_age_sex"),
-                            labels = c("Age Control", "Age + Sex Control")),
-      age = b_age,
-      sex = b_sex
-    ) %>%
-    select(method, method_label, coef, fold, training, age, sex)
-} else {
-  data.frame()
-}
 
 # All-estimator coefficients (sample-split, K=2, K=3) for the appendix coef
 # recovery panels. No-sample-split coefficients are unavailable (the OLD
 # 2026-03-30 run did not export fitted coefs, only predictions); extending to
 # 4 estimators would require a refit there.
-build_estimator_coefs <- function(df, methods, label_age, label_sex,
-                                  estimator_label, b_age_col, b_sex_col) {
+build_estimator_coefs <- function(df, method_name, estimator_label, b_age_col) {
   df %>%
-    filter(method %in% c(methods["age"], methods["age_sex"])) %>%
-    mutate(
+    filter(method == method_name) %>%
+    transmute(
       estimator = estimator_label,
-      method_label = factor(method,
-                            levels = c(methods["age"], methods["age_sex"]),
-                            labels = c("Age Control", "Age + Sex Control")),
+      coef, fold,
       training = factor(
         if_else(coef == 0, "Balanced training", "Confounded training"),
         levels = c("Balanced training", "Confounded training")
       ),
-      b_age = .data[[b_age_col]],
-      b_sex = .data[[b_sex_col]]
-    ) %>%
-    select(estimator, method_label, coef, fold, training, b_age, b_sex)
+      b_age = .data[[b_age_col]]
+    )
 }
 
 all_estimators_coefs_df <- bind_rows(
-  # Sample split — fitted_coefs.csv stores age/sex columns directly.
+  # Sample split — fitted_coefs.csv stores the age coefficient as `age`.
   build_estimator_coefs(
     read.csv(paste0(DATA_DIR, "fitted_coefs.csv")),
-    methods = c(age = "refit_age", age_sex = "refit_age_sex"),
-    estimator_label = "Sample split",
-    b_age_col = "age", b_sex_col = "sex"
+    "refit_age", "Sample split", b_age_col = "age"
   ),
-  # Cross-fit K=2 — crossfit_results.csv has b_age / b_sex.
+  # Cross-fit K=2 — crossfit_results.csv has b_age.
   if (exists("cf_raw")) build_estimator_coefs(
-    cf_raw,
-    methods = c(age = "crossfit_age", age_sex = "crossfit_age_sex"),
-    estimator_label = "Cross-fit (K=2)",
-    b_age_col = "b_age", b_sex_col = "b_sex"
+    cf_raw, "crossfit_age", "Cross-fit (K=2)", b_age_col = "b_age"
   ) else data.frame(),
   # Cross-fit K=3 — k3_crossfit_results.csv same schema.
   if (exists("k3_raw")) build_estimator_coefs(
-    k3_raw,
-    methods = c(age = "crossfit_k3_age", age_sex = "crossfit_k3_age_sex"),
-    estimator_label = "Cross-fit (K=3)",
-    b_age_col = "b_age", b_sex_col = "b_sex"
+    k3_raw, "crossfit_k3_age", "Cross-fit (K=3)", b_age_col = "b_age"
   ) else data.frame()
 ) %>%
   mutate(estimator = factor(
@@ -441,19 +387,10 @@ true_age_df <- data.frame(
                     levels = c("Balanced training", "Confounded training")),
   true_val = c(0, -TRUE_B_AGE)
 )
-# β_sex = 2.0 in BOTH training conditions (sex is always a signal predictor;
-# only β_age varies with the coef knob). DGP: `ukbb_common.py:sample_y_z`.
-true_sex_df <- data.frame(
-  training = factor(c("Balanced training", "Confounded training"),
-                    levels = c("Balanced training", "Confounded training")),
-  true_val = c(TRUE_B_SEX, TRUE_B_SEX)
-)
 
 lambda_paths <- read.csv(paste0(DATA_DIR, "refit_lambda_paths.csv")) %>%
+  filter(method == "refit_age") %>%
   mutate(
-    method_label = factor(method,
-                          levels = c("refit_age", "refit_age_sex"),
-                          labels = c("Age Control", "Age + Sex Control")),
     training = factor(if_else(coef == 0, "Balanced", "Confounded"),
                       levels = c("Balanced", "Confounded")),
     fold = factor(fold),
@@ -470,56 +407,8 @@ selected_pts <- lambda_paths %>%
 # =========================================================================
 # Fig S2 builders
 # =========================================================================
-method_hues <- c("Age Control" = OI_SKY, "Age + Sex Control" = OI_PURPLE)
-
-make_coef_panel <- function(df, var_col, ref_df, title, y_label, show_legend,
-                             single_ref = FALSE) {
-  p <- ggplot(df, aes(x = training, y = !!rlang::sym(var_col),
-                      fill = method_label)) +
-    geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey75")
-  # Reference line: single horizontal (true value constant across training)
-  # vs per-group segments (true value differs per training condition).
-  if (single_ref) {
-    p <- p + geom_hline(
-      yintercept = ref_df$true_val[1],
-      linetype = "dashed", colour = GREY_REF, linewidth = 0.5
-    )
-  } else {
-    p <- p + geom_errorbar(
-      data = ref_df, inherit.aes = FALSE,
-      aes(x = training, ymin = true_val, ymax = true_val),
-      linetype = "dashed", colour = GREY_REF,
-      linewidth = 0.5, width = 0.8
-    )
-  }
-  p <- p +
-    geom_boxplot(position = position_dodge(0.7),
-                 alpha = 0.85, width = 0.5,
-                 linewidth = 0.35, outlier.shape = NA,
-                 colour = GREY_REF) +
-    geom_point(position = position_jitterdodge(
-                 dodge.width = 0.7, jitter.width = 0.1, seed = 1),
-               size = 0.8, shape = 21, colour = GREY_REF, stroke = 0.2) +
-    scale_fill_manual(values = method_hues, name = NULL) +
-    labs(title = title, x = NULL, y = y_label) +
-    shared_theme +
-    theme(panel.grid.minor = element_blank())
-  if (show_legend) {
-    p <- p + theme(
-      legend.position = c(0.02, 0.98),
-      legend.justification = c(0, 1),
-      legend.key.size = unit(0.09, "in"),
-      legend.background = element_rect(fill = alpha("white", 0.7), colour = NA)
-    )
-  } else {
-    p <- p + theme(legend.position = "none")
-  }
-  p
-}
-
-# Coefficient recovery panels — both panels show the Age + Sex Control model
-# (the only one that estimates b_sex), with three estimators dodged using the
-# same palette as the AUC panels. No-sample-split coefs are not available
+# Coefficient recovery panel for the Age Control model, with three estimators
+# dodged using the same palette as the AUC panels. No-sample-split coefs are not available
 # (see comment near `all_estimators_coefs_df`).
 coef_estimator_hues <- c(
   "Sample split"    = SKY_PALE,
@@ -573,30 +462,17 @@ make_coef_panel_estimators <- function(df, y_col, ref_df, title, y_label,
 
 pS2_age <- make_coef_panel_estimators(
   all_estimators_coefs_df %>%
-    filter(method_label == "Age + Sex Control", !is.na(b_age)) %>%
+    filter(!is.na(b_age)) %>%
     mutate(b_age_neg = -b_age * STD_AGE),
   "b_age_neg", true_age_df,
   title   = "Age coefficient recovery",
   y_label = expression(-hat(beta)[age]),
   show_legend = TRUE
 )
-pS2_sex <- make_coef_panel_estimators(
-  all_estimators_coefs_df %>%
-    filter(method_label == "Age + Sex Control", !is.na(b_sex)),
-  "b_sex", true_sex_df,
-  title   = "Sex coefficient recovery",
-  y_label = expression(hat(beta)[sex]),
-  show_legend = FALSE,
-  single_ref = TRUE
-)
-# Annotate true value on the reference line in each coef panel.
+# Annotate true value on the reference line.
 pS2_age <- pS2_age +
   annotate("text", x = 2, y = -TRUE_B_AGE, hjust = 1.15, vjust = -0.4,
            label = '"true "*-beta["age"]', parse = TRUE,
-           size = 2.3, family = "serif", colour = GREY_REF)
-pS2_sex <- pS2_sex +
-  annotate("text", x = 2, y = TRUE_B_SEX, hjust = 1.15, vjust = -0.4,
-           label = '"true "*beta["sex"]', parse = TRUE,
            size = 2.3, family = "serif", colour = GREY_REF)
 
 pS2_lambda <- ggplot(lambda_paths,
@@ -612,7 +488,7 @@ pS2_lambda <- ggplot(lambda_paths,
   coord_cartesian(xlim = c(1e1, 1e6)) +
   scale_color_viridis_d(option = "viridis", begin = 0.05, end = 0.85,
                         name = "Fold") +
-  facet_grid(method_label ~ training, scales = "free_y") +
+  facet_grid(. ~ training, scales = "free_y") +
   shared_theme +
   theme(panel.grid.minor = element_blank(),
         legend.position = "right",
@@ -665,22 +541,21 @@ make_auc_panel_simple <- function(df, title, hue,
 }
 
 # =========================================================================
-# Fig S3 data: per-fold correlation of fx with age and sex
+# Fig S3 data: per-fold correlation of fx with age
 # =========================================================================
 fx_corr_df <- tp %>%
-  left_join(actual %>% select(obs_id, age, sex), by = "obs_id") %>%
+  left_join(actual %>% select(obs_id, age), by = "obs_id") %>%
   group_by(method, coef, fold) %>%
   summarize(
     cor_age = cor(fx, age),
-    cor_sex = cor(fx, sex),
     .groups = "drop"
   ) %>%
-  filter(method %in% c("base_full", "refit_age", "refit_age_sex")) %>%
+  filter(method %in% c("base_full", "refit_age")) %>%
   mutate(
     method_label = factor(
       method,
-      levels = c("base_full", "refit_age", "refit_age_sex"),
-      labels = c("No Control", "Age Control", "Age + Sex Control")
+      levels = c("base_full", "refit_age"),
+      labels = c("No Control", "Age Control")
     ),
     training = factor(
       if_else(coef == 0, "Balanced training", "Confounded training"),
@@ -689,9 +564,8 @@ fx_corr_df <- tp %>%
   )
 
 corr_hues <- c(
-  "No Control"        = OI_VERMILLION,
-  "Age Control"       = OI_GREEN,
-  "Age + Sex Control" = OI_PURPLE
+  "No Control"  = OI_VERMILLION,
+  "Age Control" = OI_GREEN
 )
 
 make_corr_panel <- function(df, y_col, title, y_label, show_legend) {
@@ -729,52 +603,6 @@ pS3_age <- make_corr_panel(
   y_label = expression(Corr(hat(f)[X] * ", " * age) ~ "on balanced test data"),
   show_legend = TRUE
 )
-pS3_sex <- make_corr_panel(
-  fx_corr_df, "cor_sex",
-  title   = "Correlation with sex",
-  y_label = expression(Corr(hat(f)[X] * ", " * sex) ~ "on balanced test data"),
-  show_legend = FALSE
-)
-
-# Combined fx-correlation panel: covariate as internal facet.
-fx_corr_long <- fx_corr_df %>%
-  tidyr::pivot_longer(c(cor_age, cor_sex),
-                      names_to = "covariate", values_to = "corr") %>%
-  mutate(covariate = factor(covariate,
-                            levels = c("cor_age", "cor_sex"),
-                            labels = c("age", "sex")))
-
-pS3_combined <- ggplot(fx_corr_long,
-                       aes(x = training, y = corr, fill = method_label)) +
-  geom_hline(yintercept = 0, linewidth = 0.4, linetype = "dashed",
-             colour = GREY_REF) +
-  geom_boxplot(position = position_dodge(0.7),
-               alpha = 0.85, width = 0.55,
-               linewidth = 0.35, outlier.shape = NA,
-               colour = GREY_REF) +
-  geom_point(position = position_jitterdodge(
-               dodge.width = 0.7, jitter.width = 0.1, seed = 1),
-             size = 0.6, shape = 21, colour = GREY_REF, stroke = 0.2) +
-  scale_fill_manual(values = corr_hues, name = NULL) +
-  scale_x_discrete(labels = c("Balanced training" = "Balanced",
-                              "Confounded training" = "Confounded")) +
-  facet_wrap(~ covariate, nrow = 1,
-             labeller = labeller(covariate = c(age = "Z = age",
-                                               sex = "Z = sex"))) +
-  labs(title = "Covariate correlation",
-       x = NULL,
-       y = expression(Corr(hat(f)[X] * "," ~ Z))) +
-  shared_theme +
-  theme(panel.grid.minor = element_blank(),
-        legend.position = c(0.02, 0.98),
-        legend.justification = c(0, 1),
-        legend.key.size = unit(0.08, "in"),
-        legend.text = element_text(size = 6, family = "serif"),
-        legend.background = element_rect(fill = alpha("white", 0.7),
-                                         colour = NA),
-        axis.text.x = element_text(angle = 25, hjust = 1),
-        strip.background = element_rect(fill = "grey92", colour = NA),
-        strip.text = element_text(size = 7, family = "serif"))
 
 no_ctrl <- auc_df %>%
   filter(method %in% c("base_full", "base_half"), marg == "regular") %>%
@@ -785,10 +613,6 @@ no_ctrl <- auc_df %>%
 age_compare <- crossfit_df %>%
   filter(method %in% c("refit_age", "crossfit_age"), marg == "controlled") %>%
   mutate(variant = if_else(method == "crossfit_age", "primary", "reference"))
-
-age_sex_compare <- crossfit_df %>%
-  filter(method %in% c("refit_age_sex", "crossfit_age_sex"), marg == "controlled") %>%
-  mutate(variant = if_else(method == "crossfit_age_sex", "primary", "reference"))
 
 # Main figure: just cross-fit age control marg (single panel, two boxes).
 crossfit_main <- crossfit_df %>%
@@ -891,31 +715,6 @@ age_ctrl_compare <- bind_rows(
     levels = c("No sample split", "Sample split", "Cross-fit (K=2)", "Cross-fit (K=3)")
   ))
 
-# Same 4-estimator assembly for age+sex control (appendix only).
-# `no_split_sex_df` may be empty if the OLD run did not export age+sex
-# no-sample-split predictions — in that case the panel shows 3 estimators.
-age_sex_ctrl_compare <- bind_rows(
-  no_split_sex_df %>%
-    select(coef, fold, auc, training) %>%
-    mutate(estimator = "No sample split"),
-  crossfit_df %>%
-    filter(method == "refit_age_sex", marg == "controlled") %>%
-    select(coef, fold, auc, training) %>%
-    mutate(estimator = "Sample split"),
-  crossfit_df %>%
-    filter(method == "crossfit_age_sex", marg == "controlled") %>%
-    select(coef, fold, auc, training) %>%
-    mutate(estimator = "Cross-fit (K=2)"),
-  k3_df %>%
-    filter(method == "crossfit_k3_age_sex", marg == "controlled") %>%
-    select(coef, fold, auc, training) %>%
-    mutate(estimator = "Cross-fit (K=3)")
-) %>%
-  mutate(estimator = factor(
-    estimator,
-    levels = c("No sample split", "Sample split", "Cross-fit (K=2)", "Cross-fit (K=3)")
-  ))
-
 estimator_hues <- c(
   "No sample split" = GREY_NOSPLIT,
   "Sample split"    = SKY_PALE,
@@ -979,17 +778,13 @@ pB_right_main <- make_auc_panel_4(
   show_y = FALSE, show_x = TRUE, annotate_ref = TRUE, compact = TRUE
 )
 
-# Appendix Fig S1 top-row builders — same 4-estimator scheme as the main
-# figure for both Age and Age+Sex control. Reuses `make_auc_panel_4`. The
+# Appendix Fig S1 top-row builder — same 4-estimator scheme as the main
+# figure. Reuses `make_auc_panel_4`. The
 # `compact = TRUE` path rotates x-axis labels by 25°; we straighten them in
 # the appendix (more vertical headroom than in the main figure).
 pS1_ac <- make_auc_panel_4(
   age_ctrl_compare, "Age Control (marg.)",
   show_y = FALSE, show_x = TRUE, annotate_ref = FALSE, compact = TRUE
-) + theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
-pS1_asc <- make_auc_panel_4(
-  age_sex_ctrl_compare, "Age + Sex Control (marg.)",
-  show_y = FALSE, show_x = TRUE, annotate_ref = TRUE, compact = TRUE
 ) + theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
 
 # ---------------------------------------------------------------------------
@@ -1020,28 +815,25 @@ invisible(dev.off())
 message("Saved: ", OUT_PATH_MAIN)
 
 # --- Combined appendix figure: 2 rows --------------------------------------
-# Row 1 (AUC, 3 panels): No Control (full vs half) | Age Control (4 estimators)
-# | Age + Sex Control (4 estimators).
-# Row 2 (Coefficient recovery, 2 panels centred): β_age | β_sex (3 estimators
-# under Age + Sex Control).
+# Row 1 (AUC, 2 panels): No Control (full vs half) | Age Control (4 estimators).
+# Row 2 (Coefficient recovery, 1 panel centred): β_age (3 estimators under
+# Age Control).
 cairo_pdf(OUT_PATH_APPENDIX, width = 7.16, height = 3.8, pointsize = 8, fallback_resolution = 600)
 grid.newpage()
 pushViewport(viewport(layout = grid.layout(nrow = 2, ncol = 1,
                                            heights = unit(c(0.50, 0.50), "npc"))))
-# Row 1: AUC panels (3 cols)
+# Row 1: AUC panels (2 cols)
 pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1,
-                      layout = grid.layout(nrow = 1, ncol = 3,
-                                           widths = unit(c(0.36, 0.32, 0.32), "npc"))))
+                      layout = grid.layout(nrow = 1, ncol = 2,
+                                           widths = unit(c(0.52, 0.48), "npc"))))
 print(pS1_nc,  newpage = FALSE, vp = viewport(layout.pos.col = 1))
 print(pS1_ac,  newpage = FALSE, vp = viewport(layout.pos.col = 2))
-print(pS1_asc, newpage = FALSE, vp = viewport(layout.pos.col = 3))
 popViewport()
-# Row 2: 2 coef panels centred — empty 12% margins on both sides
+# Row 2: coef panel centred — empty 26% margins on both sides
 pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1,
-                      layout = grid.layout(nrow = 1, ncol = 4,
-                                           widths = unit(c(0.12, 0.38, 0.38, 0.12), "npc"))))
+                      layout = grid.layout(nrow = 1, ncol = 3,
+                                           widths = unit(c(0.26, 0.48, 0.26), "npc"))))
 print(pS2_age, newpage = FALSE, vp = viewport(layout.pos.col = 2))
-print(pS2_sex, newpage = FALSE, vp = viewport(layout.pos.col = 3))
 popViewport()
 popViewport()
 invisible(dev.off())
