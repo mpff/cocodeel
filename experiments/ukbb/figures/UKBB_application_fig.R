@@ -682,7 +682,7 @@ pS1_nc <- make_auc_panel(no_ctrl,
 # --- Main-figure Panel B: two panels (DNN vs Age Control marg, 4 estimators) ---
 no_ctrl_main <- no_ctrl %>% filter(variant == "primary")  # base_full only
 pB_left_main  <- make_auc_panel_simple(
-  no_ctrl_main, "No Control (DNN)",
+  no_ctrl_main, "DNN (Baseline)",
   hue = OI_VERMILLION,
   show_y = TRUE, show_x = TRUE, annotate_ref = FALSE, compact = TRUE
 )
@@ -774,8 +774,32 @@ make_auc_panel_4 <- function(df, title, show_y = TRUE, show_x = TRUE,
 }
 
 pB_right_main <- make_auc_panel_4(
-  age_ctrl_compare, "Age Control (marg.)",
+  age_ctrl_compare, "DNN w. Age Control (marginalised)",
   show_y = FALSE, show_x = TRUE, annotate_ref = TRUE, compact = TRUE
+)
+
+# Other methods with age as Z, confounded training only, AUC marginalised over
+# the training age distribution (joint_results.csv from train_joint.py,
+# competitor_results.csv from competitors_from_checkpoints.py).
+competitor_labels <- c(
+  joint_age                = "Joint DNN",
+  posthoc_web_age          = "DNN (Baseline)\n+ Orth.",
+  posthoc_web_features_age = "Feature\nresid.",
+  leace_age                = "LEACE",
+  dfr_val_age              = "DFR"
+)
+competitor_df <- bind_rows(
+  read.csv(paste0(RUN_DIR, "joint_results.csv")),
+  read.csv(paste0(RUN_DIR, "competitor_results.csv"))
+) %>%
+  filter(method %in% names(competitor_labels))
+pB_comp_main <- make_auc_panel_simple(
+  competitor_df %>%
+    filter(coef == 2) %>%
+    mutate(training = factor(competitor_labels[method], levels = competitor_labels),
+           auc = auc_marg),
+  "Others (Confounded Training)", hue = OI_ORANGE,
+  show_y = FALSE, show_x = TRUE, compact = TRUE
 )
 
 # Appendix Fig S1 top-row builder — same 4-estimator scheme as the main
@@ -791,13 +815,13 @@ pS1_ac <- make_auc_panel_4(
 # Assemble with grid viewports
 # ---------------------------------------------------------------------------
 # --- Main paper figure: Panel A | Panel B side-by-side (double-column) -----
-# Outer layout: 1 row × 2 cols (A | B). Right half keeps its 1/3 + 2/3 split
-# for pB_left_main (No Control) and pB_right_main (Age Control marg).
+# Outer layout: 1 row × 2 cols (A | B). Panel B holds pB_left_main (DNN (Baseline)),
+# pB_right_main (DNN w. Age Control) and pB_comp_main (others, confounded training).
 cairo_pdf(OUT_PATH_MAIN, width = 7.16, height = 2.0, pointsize = 8, fallback_resolution = 600)
 grid.newpage()
 
 lay <- grid.layout(nrow = 1, ncol = 2,
-                   widths = unit(c(0.40, 0.60), "npc"))
+                   widths = unit(c(0.34, 0.66), "npc"))
 pushViewport(viewport(layout = lay))
 
 pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
@@ -805,10 +829,11 @@ print(panel_A, newpage = FALSE, vp = viewport(width = 1, height = 1))
 popViewport()
 
 pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2,
-                      layout = grid.layout(nrow = 1, ncol = 2,
-                                           widths = unit(c(1/3, 2/3), "npc"))))
+                      layout = grid.layout(nrow = 1, ncol = 3,
+                                           widths = unit(c(0.22, 0.44, 0.34), "npc"))))
 print(pB_left_main,  newpage = FALSE, vp = viewport(layout.pos.col = 1))
 print(pB_right_main, newpage = FALSE, vp = viewport(layout.pos.col = 2))
+print(pB_comp_main,  newpage = FALSE, vp = viewport(layout.pos.col = 3))
 popViewport()
 popViewport()
 invisible(dev.off())
@@ -851,3 +876,44 @@ if (exists("cf_raw")) {
   message("--- Selected lambda averages (over 5 folds) ---")
   print(lam_summary, n = Inf)
 }
+
+# --- Appendix table: test AUC per method, Z = age, mean (sd) over 5 folds ---
+table_labels <- c(
+  base_full                = "DNN (Baseline)",
+  refit_age                = "DNN with Controls, sample split",
+  crossfit_age             = "DNN with Controls, cross-fit (K=2)",
+  crossfit_k3_age          = "DNN with Controls, cross-fit (K=3)",
+  joint_age                = "Joint DNN",
+  posthoc_web_age          = "DNN (Baseline) + Orth.",
+  posthoc_web_features_age = "Feature residualisation",
+  leace_age                = "LEACE",
+  dfr_val_age              = "DFR"
+)
+table_df <- bind_rows(
+  read.csv(paste0(RUN_DIR, "raw_results.csv")) %>% filter(method == "base_full"),
+  cf_raw, k3_raw, competitor_df
+) %>%
+  filter(method %in% names(table_labels)) %>%
+  select(method, coef, fold, auc, auc_marg)
+fmt <- function(x) if (all(is.na(x))) "--" else sprintf("%.3f (%.3f)", mean(x), sd(x))
+table_rows <- table_df %>%
+  group_by(method) %>%
+  summarize(
+    bal_auc  = fmt(auc[coef == 0]),      bal_marg  = fmt(auc_marg[coef == 0]),
+    conf_auc = fmt(auc[coef == 2]),      conf_marg = fmt(auc_marg[coef == 2]),
+    .groups = "drop"
+  ) %>%
+  mutate(method = factor(method, levels = names(table_labels))) %>%
+  arrange(method)
+writeLines(c(
+  "\\begin{tabular}{lcccc}",
+  "\\toprule",
+  " & \\multicolumn{2}{c}{Balanced training} & \\multicolumn{2}{c}{Confounded training} \\\\",
+  "Method & AUC & AUC (marg.) & AUC & AUC (marg.) \\\\",
+  "\\midrule",
+  sprintf("%s & %s & %s & %s & %s \\\\", table_labels[as.character(table_rows$method)],
+          table_rows$bal_auc, table_rows$bal_marg, table_rows$conf_auc, table_rows$conf_marg),
+  "\\bottomrule",
+  "\\end{tabular}"
+), paste0(OUT_DIR, "Tab_UKBB_competitors.tex"))
+message("Saved: ", OUT_DIR, "Tab_UKBB_competitors.tex")

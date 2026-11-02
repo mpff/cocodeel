@@ -14,8 +14,9 @@ retraining the CNN.
 | `refit_from_checkpoints.py` | `base_{full,half,half_B}.pt` | per-fold `record.npz` + refit heads in `runs/final_v2_refit/` | Panel A/B |
 | `run_crossfit.py` | `k{K}/backbone_k*.pt`, `full/base_full.pt` | per-fold `record.npz` in `runs/<run>_refit/` | K-fold robustness |
 | `train_joint.py` | UKBB HDF5 + pretrained ResNet | `runs/final_v2_refit/coef=*/fold=*/joint_age.pt`, `joint_results.csv` | — |
+| `competitors_from_checkpoints.py` | `base_full.pt` | `runs/final_v2_refit/coef=*/fold=*/features.npz`, `competitor_results.csv` | — |
 | `aggregate.py` | per-fold `record.npz` | `rexports/*.csv`, `raw_results.csv`, `crossfit_results.csv` | — |
-| `figures/UKBB_application_fig.R` | the CSVs above | `runs/final_v2_refit/graphics/Fig_UKBB_application_{main,appendix}.pdf` | A/B |
+| `figures/UKBB_application_fig.R` | the CSVs above | `runs/final_v2_refit/graphics/Fig_UKBB_application_{main,appendix}.pdf`, `Tab_UKBB_competitors.tex` | A/B |
 
 Method keys in the CSVs: `base_full` (uncontrolled DNN), `base_half` (backbone on one
 half), `refit_age` (single-split refit, RefitCovarNetwork on the h2
@@ -36,6 +37,9 @@ from the general K-fold study.
   with `CrossFitEnsemble` (the K=2/K=3, n5k/n10k robustness runs).
 - `train_joint.py` — the joint DNN that takes age as a second input, trained per
   (coef, fold) and evaluated with age marginalised over the training sample.
+- `competitors_from_checkpoints.py` — post-hoc competitors on the frozen base_full backbone:
+  orthogonalisation of f_X (`posthoc_web_*`), feature residualisation
+  (`posthoc_web_features_*`) and LEACE (`leace_*`), each for Z = age.
 - `aggregate.py` — reduces the per-fold records to the R-ready CSVs.
 - `figures/` — one R script per figure, reading only CSVs.
 
