@@ -13,13 +13,15 @@ retraining the CNN.
 | `train_backbones.py` | UKBB HDF5 + pretrained ResNet | `runs/final_v2/coef=*/fold=*/base_{full,half,half_B}.pt` | — (source of truth; not in the reproducible loop) |
 | `refit_from_checkpoints.py` | `base_{full,half,half_B}.pt` | per-fold `record.npz` + refit heads in `runs/final_v2_refit/` | Panel A/B |
 | `run_crossfit.py` | `k{K}/backbone_k*.pt`, `full/base_full.pt` | per-fold `record.npz` in `runs/<run>_refit/` | K-fold robustness |
+| `train_joint.py` | UKBB HDF5 + pretrained ResNet | `runs/final_v2_refit/coef=*/fold=*/joint_age.pt`, `joint_results.csv` | — |
 | `aggregate.py` | per-fold `record.npz` | `rexports/*.csv`, `raw_results.csv`, `crossfit_results.csv` | — |
 | `figures/UKBB_application_fig.R` | the CSVs above | `runs/final_v2_refit/graphics/Fig_UKBB_application_{main,appendix}.pdf` | A/B |
 
 Method keys in the CSVs: `base_full` (uncontrolled DNN), `base_half` (backbone on one
 half), `refit_age` / `refit_age_sex` (single-split refit, RefitCovarNetwork on the h2
 half), `crossfit_age` / `crossfit_age_sex` (2-fold cross-fit ensemble via
-`CrossFitEnsemble`), and `dnn` / `refit_nosamp_*` / `refit_split_*` / `crossfit_k{K}_*`
+`CrossFitEnsemble`), `joint_age` (joint DNN g(X, age), image features and age through
+an MLP head), and `dnn` / `refit_nosamp_*` / `refit_split_*` / `crossfit_k{K}_*`
 from the general K-fold study.
 
 ## Layout
@@ -32,6 +34,8 @@ from the general K-fold study.
   and the 2-fold cross-fit from the frozen backbones; one raw record per fold.
 - `run_crossfit.py` — general K-fold cross-fit from released `backbone_k*.pt`, ensembled
   with `CrossFitEnsemble` (the K=2/K=3, n5k/n10k robustness runs).
+- `train_joint.py` — the joint DNN that takes age as a second input, trained per
+  (coef, fold) and evaluated with age marginalised over the training sample.
 - `aggregate.py` — reduces the per-fold records to the R-ready CSVs.
 - `figures/` — one R script per figure, reading only CSVs.
 
