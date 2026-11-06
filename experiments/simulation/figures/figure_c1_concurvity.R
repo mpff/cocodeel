@@ -17,65 +17,38 @@ effect_names <- c(
 
 df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 
-# Of the three Siems penalty strengths, only the best is plotted — all
-# would drown the panel. Best = lowest mean log10 MSPE(f_X) across n, the
-# metric of the left panel. CF-Net is pinned to its as-published strength:
-# its three strengths are indistinguishable on that score (spread < 0.01),
-# so a data-driven pick would be a coin flip.
-pick_best <- function(df, prefix) {
-  df %>%
-    filter(startsWith(model, prefix), effect == "fx", metric == "mspe") %>%
-    group_by(model) %>%
-    summarise(score = mean(log10(value)), .groups = "drop") %>%
-    slice_min(score, n = 1, with_ties = FALSE) %>%
-    pull(model)
-}
-model_levels <- c("nam", "ssn", "refit", "refit_orth")
-model_labels <- c(
-  "NAM (lin. fz) [8]",
-  "SSN [9]",
-  "DNN with Controls",
-  "DNN with Controls\n+ Orthogonalisation")
+# Grouped by how the method is fit (Appendix, "Fitting routines"): jointly
+# with Z, with a penalty, by post-hoc correction, or by the refit on held-out
+# data. Citation numbers follow the preprint's bibliography.
+model_groups <- list(
+  c(nam = "Additive Model (lin. fz) [8]",
+    nam_mlp = "Additive Model (MLP fz) [8]"),
+  c(nam_mlp_conc = "Additive Model + concurvity reg. [22]",
+    cfnet = "CF-Net [41]"),
+  c(ssn = "SSN [9]"),
+  c(refit = "DNN with Controls",
+    refit_orth = "DNN with Controls\n+ Orthogonalisation"))
+model_labels <- unlist(unname(model_groups))
 
 df_bz <- df_raw %>%
-  mutate(model = factor(model, levels = model_levels, labels = model_labels)) %>%
-  filter(!is.na(model)) %>%
-  mutate(effect = factor(effect, levels=c('y', 'fx', 'fr', 'fz')))
+  filter(model %in% names(model_labels)) %>%
+  mutate(model = factor(model_labels[model], levels = model_labels),
+         effect = factor(effect, levels = c('y', 'fx', 'fr', 'fz')))
 
-# Manual color scale.
-#
-# NAM family → viridis cool ramp (purple → blue → teal); position encodes
-# regularisation strength. SSN → plasma magenta — a different post-hoc
-# approach, off the viridis path.
-#
-# DNN w. Controls and DNN w. Controls + Orth. mirror Fig 1bz's two
-# palettes (viridis / magma) at the position corresponding to the bz
-# value used in this simulation block (bz = 1), under the same scale
-# limits as Fig 1's scale_color_viridis_c (c(-0.025, 4.25)). Computing
-# the colours programmatically (rather than hardcoding hex) keeps the
-# two figures visually linked: the same bz value reads as the same
-# colour in both.
-FIG1_BZ_LIMITS <- c(-0.025, 4.25)
-FIG1_BZ_ANCHOR <- 2.5  # bz value used to pick the highlight colour;
-                       # 2.5 lands in the warm-mid range of viridis/magma,
-                       # giving teal-green + coral-pink (both readable and
-                       # CB-distinct from the cool NAM ramp).
-fig1_bz_pos <- (FIG1_BZ_ANCHOR - FIG1_BZ_LIMITS[1]) /
-               (FIG1_BZ_LIMITS[2] - FIG1_BZ_LIMITS[1])
-
-bz_anchor_color <- function(option) {
-  scales::viridis_pal(begin = fig1_bz_pos, end = fig1_bz_pos,
-                      option = option)(1)
-}
-
+# hue = fitting routine, lightness = member within routine
 method_colors <- setNames(c(
-  "#440154",                    # NAM — viridis(0.00), deep purple
-  "#9C179E",                    # SSN — plasma(0.40), magenta
-  bz_anchor_color("viridis"),   # DNN with Controls
-  bz_anchor_color("magma")      # DNN with Controls + Orth.
+  "#3F007D", "#6A51A3",   # joint fit with Z: purples
+  "#7F3B08", "#E08214",   # penalty: oranges
+  "#AE017E",              # post-hoc correction: pink
+  "#00441B", "#41AB5D"    # refit on held-out data: greens
 ), model_labels)
 
-
+# blank legend rows between the groups
+spacers <- paste0("spacer", seq_len(length(model_groups) - 1))
+legend_breaks <- head(unlist(Map(function(g, s) c(unname(g), s),
+                                 model_groups, c(spacers, NA))), -1)
+legend_colors <- c(method_colors, setNames(rep("transparent", length(spacers)), spacers))
+legend_labels <- setNames(ifelse(legend_breaks %in% spacers, " ", legend_breaks), legend_breaks)
 
 # Shared theme — legend is collected by patchwork and placed at the bottom
 # (see plot_layout(guides = "collect") below). In-panel placement was
@@ -83,13 +56,13 @@ method_colors <- setNames(c(
 shared_theme <- theme_bw() +
   theme(
     legend.title = element_blank(),
-    legend.key.height = unit(0.07, 'in'),
+    legend.key.height = unit(0.06, 'in'),
     legend.key.width = unit(0.14, 'in'),
     legend.background = element_rect(color = NA, fill = NA),
     legend.text = element_text(size = 6, family = "serif",
                                margin = margin(l = 1, r = 6)),
     legend.margin = margin(0, 0, 0, 0),
-    legend.box.margin = margin(-4, 0, 0, 0),
+    legend.box.margin = margin(0, 0, 0, 2),
     legend.box.spacing = unit(0, "pt"),
     legend.spacing.x = unit(0, "pt"),
     legend.spacing.y = unit(0, "pt"),
@@ -97,7 +70,7 @@ shared_theme <- theme_bw() +
     axis.text.y = element_text(hjust = 1.25, size=6),
     axis.title.x = element_text(margin = margin(t = 0)),
     text = element_text(size = 8, family = "serif"),
-    plot.margin = margin(2, 2, 2, 2)
+    plot.margin = margin(0, 0, 0, 0)
   )
 
 # Reusable plotting function
@@ -113,8 +86,8 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
       breaks = 100 * 2^(1:9)
     ) +
     scale_y_log10(name = ylab) +
-    scale_color_manual(name = NULL, values = method_colors,
-                       breaks = names(method_colors)) +
+    scale_color_manual(name = NULL, values = legend_colors, limits = legend_breaks,
+                       breaks = legend_breaks, labels = legend_labels) +
     guides(color = guide_legend(ncol = 1)) +
     coord_cartesian(
       xlim = c(175, 100 * 2^9.5),
@@ -130,16 +103,14 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
 }
 
 # Build plots
-METHODS <- model_labels
-
 b1 <- make_plot(
-  df_bz %>% filter(effect == "fx", metric == "mspe", model %in% METHODS),
+  df_bz %>% filter(effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$"),
   strip_labels = FALSE
 )
 
 b2 <- make_plot(
-  df_bz %>% filter(effect == "fr", metric == "mspe", model %in% METHODS),
+  df_bz %>% filter(effect == "fr", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}^{re}_X)$"),
   strip_labels = FALSE
 )
@@ -148,7 +119,7 @@ b2 <- make_plot(
 # (single vertical column). Figure is double-column width.
 b <- (b1 + b2) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "right")
+  theme(legend.position = "right", plot.margin = margin(0, 0, 0, 0))
 
-ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.0, height = 1.5, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.5, height = 2.0, units = "in", dpi=600, device = cairo_pdf)
 
