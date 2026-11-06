@@ -30,6 +30,7 @@ RUN_DIRS = [
     ROOT / "experiments/simulation/output/runs/study_c_competitors_re",
     ROOT / "experiments/simulation/output/runs/study_c_pern",
     ROOT / "experiments/simulation/output/runs/study_c_pern_lam",
+    ROOT / "experiments/simulation/output/runs/study_c_joint",
     ROOT / "experiments/simulation/output/runs/study_d",
 ]
 OUT_DIR = ROOT / "experiments/simulation/output"

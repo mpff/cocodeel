@@ -7,7 +7,8 @@ and LEACE (Belrose et al. 2023) with refitted heads, NAMs with linear and
 MLP covariate effect, SSN (Ruegamer et al.), and three regularised
 competitors at their oracle strength: the Siems et al. (2023) concurvity
 penalty on the MLP NAM, CF-Net (Zhao et al. 2020) under its published
-protocol and CIRCE (Pogodin et al. 2023) as released. Sweep concurvity_q (Fig c2):
+protocol, CIRCE (Pogodin et al. 2023) as released, and a joint DNN g(X, Z)
+marginalised over Z. Sweep concurvity_q (Fig c2):
 refit vs both NAMs as backbone
 width q grows. Hyperparameters come from the replicated searches in
 hpsearch/: per n for concurvity; per anchor (n, q) for concurvity_q, where
@@ -65,7 +66,7 @@ EPOCHS_CAP = 1000
 WARMUP_FRAC = 0.05
 RUN_DIR = ROOT / "experiments/simulation/output/runs" / os.environ.get("RUN_NAME", "study_c")
 # method families to fit (refit, refit_orth, nam, nam_mlp, base, posthoc_web,
-# posthoc_web_features, leace, ssn, nam_mlp_conc, cfnet, circe); default: all
+# posthoc_web_features, leace, ssn, nam_mlp_conc, cfnet, circe, joint); default: all
 METHODS = [m for m in os.environ.get("METHODS", "").split(",") if m]
 # sample sizes to fit, e.g. NS=800,3200; default: every n of the sweep
 NS = [int(n) for n in os.environ.get("NS", "").split(",") if n]
@@ -318,6 +319,60 @@ def fit_competitor(method, lam, full_tr, full_va, hp, model_params, workdir):
     return CirceRosterModel(tr, full_tr)
 
 
+class JointNetwork(nn.Module):
+    """Joint DNN g(X, Z) = MLP([phi(X), standardised Z]), trained end to end as the UKBB Joint DNN."""
+
+    def __init__(self, backbone, backbone_params, num_covariates, link, z_mean, z_std, hidden=64):
+        super().__init__()
+        self.num_covariates = num_covariates
+        self.backbone = backbone(**backbone_params)
+        self.head = nn.Sequential(
+            nn.Linear(self.backbone.out_features + num_covariates, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+        self.register_buffer("z_mean", torch.as_tensor(z_mean, dtype=torch.float32))
+        self.register_buffer("z_std", torch.as_tensor(z_std, dtype=torch.float32))
+
+    def g(self, phi, z):
+        return self.head(torch.cat([phi, (z - self.z_mean) / self.z_std], dim=1))
+
+    def forward(self, x, z):
+        return self.g(self.backbone(x), z)
+
+    @torch.no_grad()
+    def marginalize(self, loader, n_perm=10):
+        """Store phi(x_i) and z_j of the training sample and the centring constant c = mean_{i,j} g(x_i, z_j)."""
+        self.eval()
+        device = self.z_mean.device
+        phis, zs = [], []
+        for b in loader:
+            phis.append(self.backbone(b["X"].to(device)))
+            zs.append(b["Z"].to(device))
+        self.phi_ref, self.z_ref = torch.cat(phis), torch.cat(zs)
+        # unbiased for the double mean from n_perm random pairings (x_i, z_pi(i)),
+        # O(n) instead of the O(n^2) full product
+        n = len(self.z_ref)
+        self.c = torch.stack([self.g(self.phi_ref, self.z_ref[torch.randperm(n, device=device)]).mean()
+                              for _ in range(n_perm)]).mean()
+        return self
+
+    def predict_fx(self, x, z=None, chunk=4096):
+        """f_X(x) = mean_j g(x, z_j) - c over the training z_j."""
+        phi = self.backbone(x)
+        total = torch.zeros(len(phi), 1, device=phi.device)
+        for zc in self.z_ref.split(chunk):
+            total += self.g(phi.repeat_interleave(len(zc), 0), zc.repeat(len(phi), 1)).view(len(phi), len(zc)).sum(1, keepdim=True)
+        return total / len(self.z_ref) - self.c
+
+    def predict_fz(self, z, chunk=4096):
+        """f_Z(z) = mean_i g(x_i, z) - c over the training x_i."""
+        total = torch.zeros(len(z), 1, device=z.device)
+        for pc in self.phi_ref.split(chunk):
+            total += self.g(pc.repeat(len(z), 1), z.repeat_interleave(len(pc), 0)).view(len(z), len(pc)).sum(1, keepdim=True)
+        return total / len(self.phi_ref) - self.c
+
+
 def gather_predictions(model, loader, device):
     """Collect y/fx/fz predictions; fr duplicates fx — a model's image effect targets fx or fr depending on its orthogonalization."""
     model.eval()
@@ -434,12 +489,18 @@ def run_one(sweep, setting, seed):
                 models[method] = fit_competitor(
                     method, hp[method]["lam"], full_tr, full_va, hp, model_params, workdir)
 
-        # feature erasure on the full-sample backbone; last, so that the random
-        # draws of the methods above are the same with or without it
+        # feature erasure on the full-sample backbone, then the joint DNN; last,
+        # so that the random draws of the methods above are the same with or
+        # without them
         for name, eraser in [("posthoc_web_features", "residualize"), ("leace", "leace")]:
             if wanted(name):
                 erased = FeatureErasureNetwork(base_full, num_covariates=1, eraser=eraser).to(device)
                 models[name] = erased.fit(full_tr)
+        if wanted("joint"):
+            Z_tr = full_tr.dataset.Z
+            joint = covar_trainer(JointNetwork, dict(model_params, z_mean=Z_tr.mean(0), z_std=Z_tr.std(0)),
+                                  train_loader=full_tr, val_loader=full_va, **tp_backbone)
+            models["joint"] = joint.marginalize(DataLoader(full_tr.dataset, batch_size=1024, shuffle=False))
 
 
     # test evaluation
