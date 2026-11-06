@@ -782,7 +782,7 @@ pB_right_main <- make_auc_panel_4(
 competitor_labels <- c(
   joint_age                = "Joint DNN",
   posthoc_web_age          = "DNN (Baseline)\n+ Orth.",
-  posthoc_web_features_age = "Feature\nresid.",
+  posthoc_web_features_age = "PHO +\nRefit",
   leace_age                = "LEACE",
   dfr_val_age              = "DFR"
 )
@@ -860,7 +860,7 @@ table_labels <- c(
   crossfit_k3_age          = "DNN with Controls, cross-fit (K=3)",
   joint_age                = "Joint DNN",
   posthoc_web_age          = "DNN (Baseline) + Orth.",
-  posthoc_web_features_age = "Feature residualisation",
+  posthoc_web_features_age = "PHO + Refit",
   leace_age                = "LEACE",
   dfr_val_age              = "DFR"
 )

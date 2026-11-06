@@ -21,11 +21,11 @@ df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 # with Z, with a penalty, by post-hoc correction, or by the refit on held-out
 # data. Citation numbers follow the preprint's bibliography.
 model_groups <- list(
-  c(nam = "Additive Model (lin. fz) as in [8]",
-    nam_mlp = "Additive Model (MLP fz) as in [8]"),
+  c(nam = "Additive Model (lin. fz)"),
   c(nam_mlp_conc = "Additive Model + concurvity reg. [22]",
     cfnet = "CF-Net [41]"),
-  c(ssn = "SSN [9]"),
+  c(ssn = "SSN [9]",
+    posthoc_web_features = "PHO + Refit [19]"),
   c(refit = "DNN with Controls",
     refit_orth = "DNN with Controls\n+ Orthogonalisation"))
 model_labels <- unlist(unname(model_groups))
@@ -37,9 +37,9 @@ df_bz <- df_raw %>%
 
 # hue = fitting routine, lightness = member within routine
 method_colors <- setNames(c(
-  "#3F007D", "#6A51A3",   # joint fit with Z: purples
+  "#3F007D",              # joint fit with Z: purple
   "#7F3B08", "#E08214",   # penalty: oranges
-  "#AE017E",              # post-hoc correction: pink
+  "#AE017E", "#F768A1",   # post-hoc correction: pinks
   "#00441B", "#41AB5D"    # refit on held-out data: greens
 ), model_labels)
 
@@ -91,7 +91,7 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
     guides(color = guide_legend(ncol = 1)) +
     coord_cartesian(
       xlim = c(175, 100 * 2^9.5),
-      ylim = c(0.25, 2e-4)
+      ylim = c(0.3, 2e-4)
     ) +
     shared_theme
 
@@ -121,5 +121,5 @@ b <- (b1 + b2) +
   plot_layout(guides = "collect") &
   theme(legend.position = "right", plot.margin = margin(0, 0, 0, 0))
 
-ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.5, height = 1.75, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.5, height = 1.45, units = "in", dpi=600, device = cairo_pdf)
 

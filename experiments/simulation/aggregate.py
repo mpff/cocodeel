@@ -36,6 +36,9 @@ RUN_DIRS = [
 OUT_DIR = ROOT / "experiments/simulation/output"
 
 EFFECTS = ("y", "fx", "fr", "fz")
+# (sweep, setting, seed file, method) whose fit diverged and is left out of the mean: after
+# residualisation a feature direction of near-zero variance gets a huge least-squares weight
+EXCLUDE = {("concurvity", "n=800", "seed=53.npz", "posthoc_web_features")}
 
 _SWEEP_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9_]*)=([\-0-9.]+)")
 
@@ -68,7 +71,11 @@ def aggregate_sweep(sweep_dirs):
                     truths[eff] = d[f"truth__{eff}"]
                 for m in (str(m) for m in d["methods"]):
                     for eff in EFFECTS:
-                        stacks.setdefault((m, eff), {})[p.name] = d[f"{m}__{eff}"]
+                        seeds = stacks.setdefault((m, eff), {})
+                        if (sweep_dir.name, key, p.name, m) in EXCLUDE:
+                            seeds.pop(p.name, None)
+                        else:
+                            seeds[p.name] = d[f"{m}__{eff}"]
         stacks = {k: np.stack(list(v.values()), axis=0) for k, v in stacks.items()}  # [S, T]
 
         # bias/variance decomposition per method and effect
