@@ -676,8 +676,6 @@ pS1_nc <- make_auc_panel(no_ctrl,
                           "No Control",  hue = OI_VERMILLION,
                           show_y = TRUE, show_x = TRUE,
                           annotate_ref = FALSE)
-# pS1_ac / pS1_asc are defined after make_auc_panel_4 is available (below) so
-# that the appendix uses the same 4-estimator scheme as the main figure.
 
 # --- Main-figure Panel B: two panels (DNN vs Age Control marg, 4 estimators) ---
 no_ctrl_main <- no_ctrl %>% filter(variant == "primary")  # base_full only
@@ -802,15 +800,6 @@ pB_comp_main <- make_auc_panel_simple(
   show_y = FALSE, show_x = TRUE, compact = TRUE
 )
 
-# Appendix Fig S1 top-row builder — same 4-estimator scheme as the main
-# figure. Reuses `make_auc_panel_4`. The
-# `compact = TRUE` path rotates x-axis labels by 25°; we straighten them in
-# the appendix (more vertical headroom than in the main figure).
-pS1_ac <- make_auc_panel_4(
-  age_ctrl_compare, "Age Control (marg.)",
-  show_y = FALSE, show_x = TRUE, annotate_ref = FALSE, compact = TRUE
-) + theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
-
 # ---------------------------------------------------------------------------
 # Assemble with grid viewports
 # ---------------------------------------------------------------------------
@@ -839,27 +828,13 @@ popViewport()
 invisible(dev.off())
 message("Saved: ", OUT_PATH_MAIN)
 
-# --- Combined appendix figure: 2 rows --------------------------------------
-# Row 1 (AUC, 2 panels): No Control (full vs half) | Age Control (4 estimators).
-# Row 2 (Coefficient recovery, 1 panel centred): β_age (3 estimators under
-# Age Control).
-cairo_pdf(OUT_PATH_APPENDIX, width = 7.16, height = 3.8, pointsize = 8, fallback_resolution = 600)
+# --- Appendix figure: No Control (full vs half) | β_age recovery -----------
+cairo_pdf(OUT_PATH_APPENDIX, width = 7.16, height = 1.9, pointsize = 8, fallback_resolution = 600)
 grid.newpage()
-pushViewport(viewport(layout = grid.layout(nrow = 2, ncol = 1,
-                                           heights = unit(c(0.50, 0.50), "npc"))))
-# Row 1: AUC panels (2 cols)
-pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1,
-                      layout = grid.layout(nrow = 1, ncol = 2,
-                                           widths = unit(c(0.52, 0.48), "npc"))))
+pushViewport(viewport(layout = grid.layout(nrow = 1, ncol = 2,
+                                           widths = unit(c(0.5, 0.5), "npc"))))
 print(pS1_nc,  newpage = FALSE, vp = viewport(layout.pos.col = 1))
-print(pS1_ac,  newpage = FALSE, vp = viewport(layout.pos.col = 2))
-popViewport()
-# Row 2: coef panel centred — empty 26% margins on both sides
-pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1,
-                      layout = grid.layout(nrow = 1, ncol = 3,
-                                           widths = unit(c(0.26, 0.48, 0.26), "npc"))))
 print(pS2_age, newpage = FALSE, vp = viewport(layout.pos.col = 2))
-popViewport()
 popViewport()
 invisible(dev.off())
 message("Saved: ", OUT_PATH_APPENDIX)
