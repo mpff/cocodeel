@@ -21,8 +21,8 @@ df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 # with Z, with a penalty, by post-hoc correction, or by the refit on held-out
 # data. Citation numbers follow the preprint's bibliography.
 model_groups <- list(
-  c(nam = "Additive Model (lin. fz) [8]",
-    nam_mlp = "Additive Model (MLP fz) [8]"),
+  c(nam = "Additive Model (lin. fz) as in [8]",
+    nam_mlp = "Additive Model (MLP fz) as in [8]"),
   c(nam_mlp_conc = "Additive Model + concurvity reg. [22]",
     cfnet = "CF-Net [41]"),
   c(ssn = "SSN [9]"),
@@ -85,13 +85,13 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
       breaks = 100 * 2^(1:9)
     ) +
-    scale_y_log10(name = ylab) +
+    scale_y_log10(name = ylab, labels = function(x) formatC(x, format = "e", digits = 0)) +
     scale_color_manual(name = NULL, values = legend_colors, limits = legend_breaks,
                        breaks = legend_breaks, labels = legend_labels) +
     guides(color = guide_legend(ncol = 1)) +
     coord_cartesian(
       xlim = c(175, 100 * 2^9.5),
-      ylim = c(0.5, 1e-4)
+      ylim = c(0.25, 2e-4)
     ) +
     shared_theme
 
@@ -121,5 +121,5 @@ b <- (b1 + b2) +
   plot_layout(guides = "collect") &
   theme(legend.position = "right", plot.margin = margin(0, 0, 0, 0))
 
-ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.5, height = 2.0, units = "in", dpi=600, device = cairo_pdf)
+ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.5, height = 1.75, units = "in", dpi=600, device = cairo_pdf)
 
