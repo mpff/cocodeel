@@ -19,7 +19,7 @@ df <- read_csv("experiments/simulation/output/concurvity_q.csv") %>%
     model = factor(
       model,
       levels = c("refit", "nam"),                   # top row first
-      labels = c("DNN with Controls", "DNN with Controls (SGD)")
+      labels = c("DNN with\nControls", "DNN with Controls\n(SGD)")
     ),
     params_k = (4801 + 514 * q) / 1000             # backbone params in thousands
   ) %>%
@@ -53,7 +53,7 @@ PARAMS_COLOR_SCALE <- scale_color_viridis_c(
   labels = c("9k", "13k", "21k", "38k", "71k", "136k", "268k", "531k"),
   name = "Parameters",
   guide = guide_colorbar(label.theme = element_text(
-    size = 5, angle = 60, hjust = 1, vjust = 1, family = "serif"
+    size = 5, family = "serif"
   ))
 )
 
@@ -77,44 +77,39 @@ make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
 
 # Top row — DNN with Controls.
 ctrl_mspe <- make_panel(
-  df %>% filter(model == "DNN with Controls", effect == "fx", metric == "mspe"),
+  df %>% filter(model == "DNN with\nControls", effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
 ctrl_bias <- make_panel(
-  df %>% filter(model == "DNN with Controls", effect == "fx", metric == "bias2"),
+  df %>% filter(model == "DNN with\nControls", effect == "fx", metric == "bias2"),
   ylab = TeX("$Bias^2(\\hat{f}_X)$")
 )
 ctrl_var  <- make_panel(
-  df %>% filter(model == "DNN with Controls", effect == "fx", metric == "var"),
+  df %>% filter(model == "DNN with\nControls", effect == "fx", metric == "var"),
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
 # Bottom row — DNN with Controls (SGD).
 nam_mspe <- make_panel(
-  df %>% filter(model == "DNN with Controls (SGD)", effect == "fx", metric == "mspe"),
+  df %>% filter(model == "DNN with Controls\n(SGD)", effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
 nam_bias <- make_panel(
-  df %>% filter(model == "DNN with Controls (SGD)", effect == "fx", metric == "bias2"),
+  df %>% filter(model == "DNN with Controls\n(SGD)", effect == "fx", metric == "bias2"),
   ylab = TeX("$Bias^2(\\hat{f}_X)$")
 )
 nam_var  <- make_panel(
-  df %>% filter(model == "DNN with Controls (SGD)", effect == "fx", metric == "var"),
+  df %>% filter(model == "DNN with Controls\n(SGD)", effect == "fx", metric == "var"),
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Single colourbar at the bottom of the top-left (DNN/MSPE) panel.
-ctrl_mspe <- ctrl_mspe +
-  theme(legend.position = c(0.42, 0.18))
-ctrl_bias <- ctrl_bias + theme(legend.position = "none")
-ctrl_var  <- ctrl_var  + theme(legend.position = "none")
-nam_mspe  <- nam_mspe  + theme(legend.position = "none")
-nam_bias  <- nam_bias  + theme(legend.position = "none")
-nam_var   <- nam_var   + theme(legend.position = "none")
-
 fig <- (ctrl_mspe | ctrl_bias | ctrl_var) /
-       (nam_mspe  | nam_bias  | nam_var)
+       (nam_mspe  | nam_bias  | nam_var) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom", legend.margin = margin(0, 0, 0, 0),
+        legend.key.width = unit(0.4, "in"), legend.title.position = "left",
+        legend.title = element_text(margin = margin(r = 6)))
 
 ggsave("experiments/simulation/output/graphics/Fig_concurvity_q.pdf", fig,
-       width = 6.0, height = 3.4, units = "in",
+       width = 5.5, height = 3.0, units = "in",
        dpi = 600, device = cairo_pdf)
