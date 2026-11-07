@@ -7,7 +7,7 @@ library(latex2exp)
 library(patchwork)
 
 # Concurvity vs backbone size. Two methods (DNN with Controls =
-# cross-fitted refit; NAM = end-to-end SGD with linear f_Z) sweep over
+# cross-fitted refit; Additive Model (lin. fz) = end-to-end SGD with linear f_Z) sweep over
 # (n, q), one row each. All rows share a
 # single viridis colourbar over the params (in thousands), placed inside
 # the top-left panel.
@@ -19,7 +19,7 @@ df <- read_csv("experiments/simulation/output/concurvity_q.csv") %>%
     model = factor(
       model,
       levels = c("refit", "nam"),                   # top row first
-      labels = c("DNN with Controls", "NAM")
+      labels = c("DNN with Controls", "Additive Model (lin. fz)")
     ),
     params_k = (4801 + 514 * q) / 1000             # backbone params in thousands
   ) %>%
@@ -89,17 +89,17 @@ ctrl_var  <- make_panel(
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
-# Bottom row — NAM (linear f_Z).
+# Bottom row — Additive Model (lin. fz).
 nam_mspe <- make_panel(
-  df %>% filter(model == "NAM", effect == "fx", metric == "mspe"),
+  df %>% filter(model == "Additive Model (lin. fz)", effect == "fx", metric == "mspe"),
   ylab = TeX("$MSPE(\\hat{f}_X)$")
 )
 nam_bias <- make_panel(
-  df %>% filter(model == "NAM", effect == "fx", metric == "bias2"),
+  df %>% filter(model == "Additive Model (lin. fz)", effect == "fx", metric == "bias2"),
   ylab = TeX("$Bias^2(\\hat{f}_X)$")
 )
 nam_var  <- make_panel(
-  df %>% filter(model == "NAM", effect == "fx", metric == "var"),
+  df %>% filter(model == "Additive Model (lin. fz)", effect == "fx", metric == "var"),
   ylab = TeX("$Var(\\hat{f}_X)$")
 )
 
