@@ -38,7 +38,8 @@ df_bz <- df_raw %>%
 
 # Okabe-Ito colour per fitted model: an orthogonalised method shares the colour of
 # the fit it corrects (SSN corrects DNN with Controls (SGD)) and is drawn with
-# diamonds and dashes, all others with circles and solid lines
+# diamonds, all others with circles; dashes mark the orthogonalised methods and the
+# penalised NAM, which shares a near colour with the NAM
 method_colors <- setNames(c(
   "#CC79A7", "#E69F00", "#D55E00",   # DNN with Controls (SGD), NAM, NAM + concurvity reg.
   "#999999",                         # CF-Net
@@ -47,7 +48,7 @@ method_colors <- setNames(c(
 ), model_labels)
 orthogonalised <- model_labels %in% c("SSN [9]", "PHO + Refit [19]", "DNN with Controls\n+ Orthogonalisation")
 method_shapes <- setNames(ifelse(orthogonalised, 23, 21), model_labels)
-method_lines  <- setNames(ifelse(orthogonalised, "22", "solid"), model_labels)
+method_lines  <- setNames(ifelse(orthogonalised | model_labels == "NAM + concurvity reg. [22]", "22", "solid"), model_labels)
 
 # blank legend rows between the groups
 spacers <- paste0("spacer", seq_len(length(model_groups) - 1))
@@ -66,7 +67,7 @@ shared_theme <- theme_bw() +
   theme(
     legend.title = element_blank(),
     legend.key.height = unit(0.06, 'in'),
-    legend.key.width = unit(0.14, 'in'),
+    legend.key.width = unit(0.3, 'in'),
     legend.background = element_rect(color = NA, fill = NA),
     legend.text = element_text(size = 6, family = "serif",
                                margin = margin(l = 1, r = 6)),
