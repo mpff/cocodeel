@@ -21,8 +21,9 @@ df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 # with Z, with a penalty, by post-hoc correction, or by the refit on held-out
 # data. Citation numbers follow the preprint's bibliography.
 model_groups <- list(
-  c(nam = "Additive Model (SGD, like [8])"),
-  c(nam_mlp_conc = "Additive Model + concurvity reg. [22]",
+  c(nam = "Additive Model (lin. fz)",
+    nam_mlp = "NAM (MLP fz) [8]"),
+  c(nam_mlp_conc = "NAM + concurvity reg. [22]",
     cfnet = "CF-Net [41]"),
   c(ssn = "SSN [9]",
     posthoc_web_features = "PHO + Refit [19]"),
@@ -37,7 +38,7 @@ df_bz <- df_raw %>%
 
 # hue = fitting routine, lightness = member within routine
 method_colors <- setNames(c(
-  "#3F007D",              # joint fit with Z: purple
+  "#3F007D", "#6A51A3",   # joint fit with Z: purples
   "#7F3B08", "#E08214",   # penalty: oranges
   "#AE017E", "#F768A1",   # post-hoc correction: pinks
   "#00441B", "#41AB5D"    # refit on held-out data: greens
