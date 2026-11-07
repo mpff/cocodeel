@@ -23,9 +23,9 @@ df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 model_groups <- list(
   c(nam = "DNN with Controls (SGD)",
     nam_mlp = "NAM (MLP fz, [8])",
-    nam_mlp_conc = "+ concurvity reg. [22]"),
+    nam_mlp_conc = "+ concurvity reg. [17]"),
   c(ssn = "SSN [9]",
-    posthoc_web_features = "PHO + Refit [19]"),
+    posthoc_web_features = "PHO + Refit [48]"),
   c(refit = "DNN with Controls",
     refit_orth = "DNN with Controls\n+ Orthogonalisation"))
 model_labels <- unlist(unname(model_groups))
@@ -43,9 +43,9 @@ method_colors <- setNames(c(
   "#CC79A7", "#009E73",              # SSN, PHO + Refit
   "#0072B2", "#0072B2"               # DNN with Controls, + Orthogonalisation
 ), model_labels)
-orthogonalised <- model_labels %in% c("SSN [9]", "PHO + Refit [19]", "DNN with Controls\n+ Orthogonalisation")
+orthogonalised <- model_labels %in% c("SSN [9]", "PHO + Refit [48]", "DNN with Controls\n+ Orthogonalisation")
 method_shapes <- setNames(ifelse(orthogonalised, 23, 21), model_labels)
-targets_fr <- orthogonalised | model_labels == "+ concurvity reg. [22]"
+targets_fr <- orthogonalised | model_labels == "+ concurvity reg. [17]"
 method_lines  <- setNames(ifelse(targets_fr, "22", "solid"), model_labels)
 
 # blank legend rows between the groups
