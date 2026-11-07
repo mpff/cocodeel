@@ -1,7 +1,6 @@
 """Aggregate per-seed NPZ predictions from the study runs into R-ready CSVs.
 
-For every sweep, reads preds/<sweep_key>/seed=*.npz from each run dir that has
-the sweep (a run dir adding methods to an earlier run merges in per seed) and
+For every sweep, reads preds/<sweep_key>/seed=*.npz from the study's run dir and
 writes <out-dir>/<sweep>.csv in long form: model, effect, metric, value, plus the
 sweep variables parsed from the sweep key. Per test point i the seed dimension
 is reduced to bias_i^2 = (mean_s yhat_is - truth_i)^2, var_i = var_s(yhat_is),
@@ -26,19 +25,11 @@ RUN_DIRS = [
     ROOT / "experiments/simulation/output/runs/study_a",
     ROOT / "experiments/simulation/output/runs/study_b",
     ROOT / "experiments/simulation/output/runs/study_c",
-    ROOT / "experiments/simulation/output/runs/study_c_erasers",
-    ROOT / "experiments/simulation/output/runs/study_c_competitors_re",
-    ROOT / "experiments/simulation/output/runs/study_c_pern",
-    ROOT / "experiments/simulation/output/runs/study_c_pern_lam",
-    ROOT / "experiments/simulation/output/runs/study_c_joint",
     ROOT / "experiments/simulation/output/runs/study_d",
 ]
 OUT_DIR = ROOT / "experiments/simulation/output"
 
 EFFECTS = ("y", "fx", "fr", "fz")
-# (sweep, setting, seed file, method) whose fit diverged and is left out of the mean: after
-# residualisation a feature direction of near-zero variance gets a huge least-squares weight
-EXCLUDE = {("concurvity", "n=800", "seed=53.npz", "posthoc_web_features")}
 
 _SWEEP_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9_]*)=([\-0-9.]+)")
 
@@ -52,31 +43,20 @@ def parse_sweep_key(sweep_key):
     return out
 
 
-def aggregate_sweep(sweep_dirs):
-    """Reduce all seeds of one sweep into long-form rows; methods from several run dirs are merged per seed,
-    a method in a later run dir of RUN_DIRS replacing the same method in an earlier one."""
+def aggregate_sweep(sweep_dir):
+    """Reduce all seeds of one sweep into long-form rows."""
     rows = []
-    setting_keys = sorted({d.name for s in sweep_dirs for d in (s / "preds").iterdir()})
-    for key in setting_keys:
-        # stack seeds per (method, effect)
+    for setting_dir in sorted((sweep_dir / "preds").iterdir()):
+        key = setting_dir.name
+        # stack seeds per (method, effect); every seed is evaluated on the same test set
         stacks = {}
-        truths = {}
-        for sweep_dir in sweep_dirs:
-            for p in sorted((sweep_dir / "preds" / key).glob("seed=*.npz")):
-                d = np.load(p, allow_pickle=False)
+        for p in sorted(setting_dir.glob("seed=*.npz")):
+            d = np.load(p, allow_pickle=False)
+            truths = {eff: d[f"truth__{eff}"] for eff in EFFECTS}
+            for m in (str(m) for m in d["methods"]):
                 for eff in EFFECTS:
-                    # every run draws the same test set, so merged methods share one truth
-                    if eff in truths and not np.array_equal(truths[eff], d[f"truth__{eff}"]):
-                        raise ValueError(f"{p}: test set differs from the other run dirs")
-                    truths[eff] = d[f"truth__{eff}"]
-                for m in (str(m) for m in d["methods"]):
-                    for eff in EFFECTS:
-                        seeds = stacks.setdefault((m, eff), {})
-                        if (sweep_dir.name, key, p.name, m) in EXCLUDE:
-                            seeds.pop(p.name, None)
-                        else:
-                            seeds[p.name] = d[f"{m}__{eff}"]
-        stacks = {k: np.stack(list(v.values()), axis=0) for k, v in stacks.items()}  # [S, T]
+                    stacks.setdefault((m, eff), []).append(d[f"{m}__{eff}"])
+        stacks = {k: np.stack(v, axis=0) for k, v in stacks.items()}  # [S, T]
 
         # bias/variance decomposition per method and effect
         sweep_vars = parse_sweep_key(key)
@@ -94,17 +74,11 @@ def aggregate_sweep(sweep_dirs):
 
 def main(out_dir):
     out_dir.mkdir(parents=True, exist_ok=True)
-    sweeps = {}
-    for run_dir in RUN_DIRS:
-        if not run_dir.exists():
-            print(f"[{run_dir.name}] missing — skipped", flush=True)
-            continue
-        for sweep_dir in sorted(d for d in run_dir.iterdir()
-                                if d.is_dir() and (d / "preds").exists()):
-            sweeps.setdefault(sweep_dir.name, []).append(sweep_dir)
-
-    for sweep, sweep_dirs in sweeps.items():
-        rows = aggregate_sweep(sweep_dirs)
+    sweep_dirs = [d for run_dir in RUN_DIRS if run_dir.exists()
+                  for d in sorted(run_dir.iterdir()) if (d / "preds").exists()]
+    for sweep_dir in sweep_dirs:
+        sweep = sweep_dir.name
+        rows = aggregate_sweep(sweep_dir)
         if not rows:
             print(f"[{sweep}] no rows", flush=True)
             continue
