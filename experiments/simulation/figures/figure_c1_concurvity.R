@@ -17,14 +17,14 @@ effect_names <- c(
 
 df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 
-# Grouped by how the method is fit (Appendix, "Fitting routines"): jointly
-# with Z, with a penalty, by post-hoc correction, or by the refit on held-out
-# data. Citation numbers follow the preprint's bibliography.
+# Grouped by how the method is fit: end to end with Z by SGD, adversarially,
+# by post-hoc orthogonalisation of a fit, or by the refit on held-out data.
+# Citation numbers follow the preprint's bibliography.
 model_groups <- list(
   c(nam = "DNN with Controls (SGD)",
-    nam_mlp = "NAM (MLP fz) [8]"),
-  c(nam_mlp_conc = "NAM + concurvity reg. [22]",
-    cfnet = "CF-Net [41]"),
+    nam_mlp = "NAM (MLP fz) [8]",
+    nam_mlp_conc = "NAM + concurvity reg. [22]"),
+  c(cfnet = "CF-Net [41]"),
   c(ssn = "SSN [9]",
     posthoc_web_features = "PHO + Refit [19]"),
   c(refit = "DNN with Controls",
@@ -36,15 +36,18 @@ df_bz <- df_raw %>%
   mutate(model = factor(model_labels[model], levels = model_labels),
          effect = factor(effect, levels = c('y', 'fx', 'fr', 'fz')))
 
-# Okabe-Ito hue and point shape = fitting routine; line type and filled/open point = member within routine
-group_colors <- c("#CC79A7",   # joint fit with Z: reddish purple
-                  "#000000",   # penalty: black
-                  "#D55E00",   # post-hoc correction: vermillion
-                  "#0072B2")   # refit on held-out data: blue
-group_shapes <- list(c(21, 1), c(24, 2), c(22, 0), c(23, 5))  # (filled, open), same size
-method_colors <- setNames(rep(group_colors, lengths(model_groups)), model_labels)
-method_shapes <- setNames(unlist(Map(function(g, sh) sh[seq_along(g)], model_groups, group_shapes)), model_labels)
-method_lines  <- setNames(unlist(lapply(model_groups, function(g) c("solid", "22")[seq_along(g)])), model_labels)
+# Okabe-Ito colour per fitted model: an orthogonalised method shares the colour of
+# the fit it corrects (SSN corrects DNN with Controls (SGD)) and is drawn with
+# diamonds and dashes, all others with circles and solid lines
+method_colors <- setNames(c(
+  "#CC79A7", "#E69F00", "#D55E00",   # DNN with Controls (SGD), NAM, NAM + concurvity reg.
+  "#999999",                         # CF-Net
+  "#CC79A7", "#009E73",              # SSN, PHO + Refit
+  "#0072B2", "#0072B2"               # DNN with Controls, + Orthogonalisation
+), model_labels)
+orthogonalised <- model_labels %in% c("SSN [9]", "PHO + Refit [19]", "DNN with Controls\n+ Orthogonalisation")
+method_shapes <- setNames(ifelse(orthogonalised, 23, 21), model_labels)
+method_lines  <- setNames(ifelse(orthogonalised, "22", "solid"), model_labels)
 
 # blank legend rows between the groups
 spacers <- paste0("spacer", seq_len(length(model_groups) - 1))
