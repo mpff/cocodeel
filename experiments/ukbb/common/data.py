@@ -1,4 +1,5 @@
 """UKBB HighAlc data: HDF5 loading, the synthetic-confounding DGP, and the covariate dataset/loader."""
+import os
 import sys
 import random
 from pathlib import Path
@@ -9,6 +10,7 @@ import torch
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader
 from scipy.stats import norm
+from sklearn.model_selection import StratifiedKFold
 
 # nitorch is vendored (not pip-installable); its transforms back default_transforms().
 CODE_ROOT = Path(__file__).resolve().parents[3]
@@ -17,10 +19,17 @@ from nitorch.transforms import IntensityRescale, ToTensor
 
 # ── constants ─────────────────────────────────────────────────────────────────
 RANDOM_STATE = 45
-DATA_ROOT = Path("~/Research/Datasets/proj-orthogonalisation").expanduser()
+# HDF5 files with the layout written by data/ukbb/make_dummy_data.py; UKBB_DATA_ROOT points to the real data
+DATA_ROOT = Path(os.environ.get("UKBB_DATA_ROOT", CODE_ROOT / "data" / "ukbb"))
 TRAIN_H5 = DATA_ROOT / "t1mniz2-l-highalcl0u2-bingeauditl1u3-alcfreq-c-sex-age-n14617.h5"
 HOLDOUT_H5 = DATA_ROOT / "holdout-t1mniz2-l-highalcl0u2-bingeauditl1u3-alcfreq-c-sex-age-n4505.h5"
 PRETRAINED_RESNET = DATA_ROOT / "pretrained_models" / "r3d50_K_200ep.pth"
+N_SPLITS = 5                   # outer CV folds
+NTRAIN = 5000                  # resampled training observations per outer fold
+NTEST = 2500
+# train_backbones.py writes the backbones; the refit, cross-fit and competitor scripts read them
+RUN_DIR = CODE_ROOT / "experiments" / "ukbb" / "runs"
+BACKBONE_DIR = RUN_DIR / "backbones"
 
 
 # ── seeding ───────────────────────────────────────────────────────────────────
@@ -47,13 +56,8 @@ def load_ukbb_data():
 
 
 # ── synthetic confounding DGP ─────────────────────────────────────────────────
-def sample_y_z(n, z_coef, rng, age_col, *, int_coef=0.0, rho_coef=0.0):
-    """Draw synthetic targets with eta = 2*(sex-0.5) - z_coef*a + int_coef*(sex-0.5)*a, a=(age-mu)/(0.9*std).
-
-    int_coef makes the image-borne signal interact with the confounder, taking the DGP
-    outside the additive model class; rho_coef tilts P(sex=1|age) so signal and confounder
-    are no longer independent. Both default to zero, reproducing the Section 6 DGP.
-    """
+def sample_y_z(n, z_coef, rng, age_col):
+    """Draw synthetic targets with eta = 2*(sex-0.5) - z_coef*a, a = (age-mu)/(0.9*std), y ~ Bernoulli(sigmoid(eta))."""
     # age marginal
     mu_z, std_z = norm.fit(age_col)
     std_z *= 0.9
@@ -63,39 +67,47 @@ def sample_y_z(n, z_coef, rng, age_col, *, int_coef=0.0, rho_coef=0.0):
     z_sample = rng.choice(z_range, n, p=p_z)
     a_tilde = (z_sample - mu_z) / std_z
 
-    # sex marginal; the uncorrelated branch keeps the released runs bit-exact, as binomial
-    # would draw the same distribution but consume the generator stream differently
-    if rho_coef == 0.0:
-        sex_sample = rng.integers(0, 2, n)
-    else:
-        sex_sample = rng.binomial(1, 1 / (1 + np.exp(-rho_coef * a_tilde)), n)
+    # sex marginal, independent of age
+    sex_sample = rng.integers(0, 2, n)
 
     # outcome
-    eta = 2.0 * (sex_sample - 0.5) - z_coef * a_tilde + int_coef * (sex_sample - 0.5) * a_tilde
+    eta = 2.0 * (sex_sample - 0.5) - z_coef * a_tilde
     y_sample = rng.binomial(1, 1 / (1 + np.exp(-eta)), n)
     return np.column_stack((z_sample, sex_sample)), y_sample
 
 
-def resample_synthetic(ydata, Zdata, n, z_coef, random_state, *, replace=True, int_coef=0.0, rho_coef=0.0):
-    """Nearest-neighbour match real obs to synthetic (y, sex, age) targets; return n integer indices.
+def resample_synthetic(ydata, Zdata, n, z_coef, random_state):
+    """Draw n synthetic (y, sex, age) targets and match each to a real observation with equal y and sex and the
+    nearest age, with replacement; return the n integer indices.
 
-    Disjointness across two calls holds only when they operate on disjoint candidate
-    pools — the caller splits the pool before resampling, not after. With replace=False
-    each pool obs is used at most once. int_coef/rho_coef are passed to sample_y_z.
+    Two calls give disjoint samples only on disjoint candidate pools, so the caller splits the pool before resampling.
     """
     rng = np.random.default_rng(random_state)
-    z_sample, y_sample = sample_y_z(n, z_coef, rng, age_col=Zdata[:, 0],
-                                    int_coef=int_coef, rho_coef=rho_coef)
-    used = np.zeros(len(ydata), dtype=bool)
+    z_sample, y_sample = sample_y_z(n, z_coef, rng, age_col=Zdata[:, 0])
     sample = []
     for i in range(n):
-        idx = np.where((ydata == y_sample[i]) & (Zdata[:, 1] == z_sample[i, 1]) & ~used)[0]
+        idx = np.where((ydata == y_sample[i]) & (Zdata[:, 1] == z_sample[i, 1]))[0]
         dist = np.abs(Zdata[idx, 0] - z_sample[i, 0])
         closest = np.where(dist == dist.min())[0]
         sample.append(idx[rng.choice(closest)])
-        if not replace:
-            used[sample[-1]] = True
     return np.array(sample)
+
+
+def resample_partition(train_ix, y, Z, coef, seed, K):
+    """Split an outer training fold into K stratified pools, then resample NTRAIN // K observations from each.
+
+    Splitting before resampling keeps the K parts disjoint although resample_synthetic draws with replacement.
+    """
+    inner = StratifiedKFold(n_splits=K, shuffle=True, random_state=seed)
+    pools = [train_ix[ix] for _, ix in inner.split(np.zeros(len(train_ix)), y[train_ix])]
+    return [pool[resample_synthetic(y[pool], Z[pool], NTRAIN // K, coef, seed + 100 * k)]
+            for k, pool in enumerate(pools)]
+
+
+def outer_fold(y, fold):
+    """Training indices of outer CV fold `fold`."""
+    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
+    return list(cv.split(np.zeros(len(y)), y))[fold][0]
 
 
 # ── dataset / loaders ─────────────────────────────────────────────────────────

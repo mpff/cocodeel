@@ -1,18 +1,17 @@
 #!/usr/bin/env python
-"""Sample-split Panel A/B: refit the age and age+sex heads from released base checkpoints.
+"""DNN with Controls on the UKBB backbones: refit the last layer with age (and age + sex) as control variables.
 
 For each (coef, fold) this loads the base_full and base_half backbones (and base_half_B for
 the cross-fit) from a run's checkpoints, refits the linear f_Z heads without retraining any
 CNN, and evaluates on the shared balanced test set. It reports the uncontrolled DNN, the
 single-split refit (head on h2, backbone base_half trained on h1), and the 2-fold cross-fit
 (the A/B ensemble of the h2-head over base_half and the h1-head over base_half_B, via
-CrossFitEnsemble). The partition mirrors train_backbones.py, so each refit lands on the same
-half as the released run. aggregate.py reduces the per-fold records to the R-ready rexports
+CrossFitEnsemble). The partition is the one of train_backbones.py, so each head is refit on the half
+its backbone has not seen. aggregate.py reduces the per-fold records to the R-ready rexports
 and crossfit_results.csv.
 
-Usage:  python experiments/ukbb/refit_from_checkpoints.py --coefs 0.0,2.0 --folds 0,1,2,3,4
+Usage:  python experiments/ukbb/refit_from_checkpoints.py --gpu 0
 """
-import os
 import gc
 import sys
 import json
@@ -22,14 +21,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experiments.ukbb.common.backbone import ResNet50
 from experiments.ukbb.common.data import (
-    RANDOM_STATE, seed_everything, load_ukbb_data, resample_synthetic,
+    RANDOM_STATE, NTEST, BACKBONE_DIR, RUN_DIR, outer_fold, resample_partition, seed_everything, load_ukbb_data, resample_synthetic,
     NumpyCovarDataset, fast_loader, default_transforms,
 )
 from cocodeel.model import BaseNetwork
@@ -38,19 +37,14 @@ from cocodeel.crossfit import CrossFitEnsemble
 
 # ── run config ────────────────────────────────────────────────────────────────
 COEFS_DEFAULT = [0.0, 2.0]
-N_SPLITS = 5
-NTRAIN_PER_HALF = 2500
-NTEST = 2500
 BATCH_SIZE = 48
 # the full image array (~53 GB) is held in RAM and every call site slices it with fancy
 # indexing, which copies; 16 forked workers inherit all of it and exhausted host memory
 NUM_WORKERS = 4
-REFIT_MAX_ITERS = 400          # IRLS backfitting controls (match the released run)
+REFIT_MAX_ITERS = 400          # IRLS backfitting controls
 REFIT_TOL = 1e-3
-TRUE_B_AGE_RAW = -0.298        # DGP age coef in logit/raw units (for reference)
-TRUE_B_SEX_RAW = 2.0
-SRC_RUN = ROOT / "experiments/ukbb/runs/2026-04-26_13-16-37_final_v2"
-OUT_RUN = ROOT / "experiments/ukbb/runs/final_v2_refit"
+SRC_RUN = BACKBONE_DIR
+OUT_RUN = RUN_DIR / "refit"
 MODEL_PARAMS = dict(backbone=ResNet50, backbone_params={"pretrained_model": ""},
                     num_covariates=0, link="logit")
 
@@ -58,24 +52,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--coefs", type=str, default="0.0,2.0")
 parser.add_argument("--folds", type=str, default="0,1,2,3,4")
-parser.add_argument("--int-coef", type=float, default=0.0)
-parser.add_argument("--rho-coef", type=float, default=0.0)
-parser.add_argument("--src-run", type=str, default=None)
-parser.add_argument("--out-run", type=str, default=None)
 args = parser.parse_args()
 COEFS = [float(c) for c in args.coefs.split(",")]
 FOLDS = [int(f) for f in args.folds.split(",")]
-DGP = dict(int_coef=args.int_coef, rho_coef=args.rho_coef)
-
-# non-additive DGP variants read and write their own run dirs
-if any(DGP.values()):
-    TAG = f"nonadd_int{args.int_coef:g}_rho{args.rho_coef:g}"
-    SRC_RUN = ROOT / "experiments/ukbb/runs" / TAG
-    OUT_RUN = ROOT / "experiments/ukbb/runs" / f"{TAG}_refit"
-if args.src_run:
-    SRC_RUN = Path(args.src_run)
-if args.out_run:
-    OUT_RUN = Path(args.out_run)
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 seed_everything(RANDOM_STATE)
@@ -169,7 +148,7 @@ def crossfit_summary(name, coef, fold, ens, ncov, loader):
 
     After .recenter(full), f_Z has zero mean on the training sample, so the marginal
     prediction over the training-Z distribution is sigmoid(intercept + f_X) — obtained by
-    dropping f_Z from eta. This matches the released crossfit_results.csv convention.
+    dropping f_Z from eta.
     """
     ens.eval()
     out = ens.models[0].output_func
@@ -199,16 +178,13 @@ def crossfit_summary(name, coef, fold, ens, ncov, loader):
 # ── refit one (coef, fold) ────────────────────────────────────────────────────
 def run_fold(coef, fold):
     fold_seed = RANDOM_STATE + fold
-    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
-    train_ix = list(cv.split(np.zeros(len(y)), y))[fold][0]
+    train_ix = outer_fold(y, fold)
 
-    # partition (mirror train_backbones.py: split pool before resampling)
-    pool_A, pool_B = train_test_split(train_ix, test_size=0.5, random_state=fold_seed, stratify=y[train_ix])
-    h1_idx = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed, **DGP)]
-    h2_idx = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100, **DGP)]
+    # split the outer training fold into two pools before resampling, so the halves are disjoint
+    h1_idx, h2_idx = resample_partition(train_ix, y, Z, coef, fold_seed, K=2)
     full_idx = np.concatenate([h1_idx, h2_idx])
 
-    # backbones (load released state dicts; already centered, link=logit)
+    # backbones (centered, link=logit)
     ckpt_dir = SRC_RUN / f"coef={coef}" / f"fold={fold}"
     base_full = BaseNetwork(**MODEL_PARAMS).to(device)
     base_full.load_state_dict(torch.load(ckpt_dir / "base_full.pt", map_location=device))
@@ -217,7 +193,7 @@ def run_fold(coef, fold):
     base_half.load_state_dict(torch.load(ckpt_dir / "base_half.pt", map_location=device))
     base_half.eval()
 
-    # refit (age, then age+sex) on h2; same inner-split seed as the released run
+    # refit (age, then age+sex) on h2
     # age and age+sex share the inner split seed (+202) so both refits validate on the
     # same held-out 20% of h2 — a paired comparison; the B-side mirrors this with +203.
     age_tr, age_va = refit_loaders(h2_idx, fold_seed + 202, z_cols=[0])

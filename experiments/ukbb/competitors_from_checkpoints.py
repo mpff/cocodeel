@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Post-hoc competitors on the released backbones: orthogonalisation, feature erasure, last-layer retraining.
+"""Post-hoc competitors on the UKBB backbones: orthogonalisation, feature erasure, last-layer retraining.
 
 For each (coef, fold) this loads base_full (the DNN trained on the full confounded sample, no
 control), extracts its features phi on that sample and on the balanced test set, and fits three
@@ -20,7 +20,7 @@ as for the refit and the joint model.
 Deep feature reweighting (DFR, Kirichenko et al. 2023) retrains the last layer as an l1-penalised
 logistic regression on group-balanced subsets (all of the smallest group, an equal draw from every
 other) and averages the weights over the subsets. Groups are g = (y, age quintile of h1). Both
-variants follow the released dfr_evaluate_spurious.py at its defaults, with base_half's training
+variants follow the reference implementation of Kirichenko et al. at its defaults, with base_half's training
 half h1 as "train" and the held-out half h2 as "val":
 
   dfr_val_age  DFR^Val_Tr: C maximises the worst-group accuracy on one random half of h2 after
@@ -37,9 +37,9 @@ refit_from_checkpoints.py; its marginal prediction drops f_Z, centred on that sa
 as for the sample-split and cross-fit rows.
 
 Features are cached per fold in features.npz (base_full) and features_base_half.npz. Writes one row
-per (method, coef, fold) to competitor_results.csv in final_v2_refit/.
+per (method, coef, fold) to runs/refit/competitor_results.csv.
 
-Usage:  python experiments/ukbb/competitors_from_checkpoints.py --gpu 0 --coefs 0.0,2.0 --folds 0,1,2,3,4
+Usage:  python experiments/ukbb/competitors_from_checkpoints.py --gpu 0
 """
 import sys
 import csv
@@ -49,7 +49,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score, log_loss
@@ -58,7 +58,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experiments.ukbb.common.backbone import ResNet50
 from experiments.ukbb.common.data import (
-    RANDOM_STATE, seed_everything, load_ukbb_data, resample_synthetic,
+    RANDOM_STATE, NTEST, BACKBONE_DIR, RUN_DIR, outer_fold, resample_partition, seed_everything, load_ukbb_data, resample_synthetic,
     NumpyCovarDataset, fast_loader, default_transforms,
 )
 from cocodeel.model import BaseNetwork
@@ -67,19 +67,16 @@ from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.crossfit import CrossFitEnsemble
 
 # ── run config ────────────────────────────────────────────────────────────────
-N_SPLITS = 5
-NTRAIN_PER_HALF = 2500
-NTEST = 2500
 BATCH_SIZE = 48
 NUM_WORKERS = 4
 C_GRID = np.logspace(-5, 1, 13)    # inverse L2 penalty of the logistic head
-DFR_C_GRID = [1.0, 0.7, 0.3, 0.1, 0.07, 0.03, 0.01]   # released dfr_evaluate_spurious.py
+DFR_C_GRID = [1.0, 0.7, 0.3, 0.1, 0.07, 0.03, 0.01]   # grid of the DFR reference implementation
 N_AGE_BINS = 5
 REFIT_MAX_ITERS = 400   # IRLS backfitting controls, as in refit_from_checkpoints.py
 REFIT_TOL = 1e-3
 Z_COLS = [0]   # Z = age
-SRC_RUN = ROOT / "experiments/ukbb/runs/2026-04-26_13-16-37_final_v2"
-OUT_RUN = ROOT / "experiments/ukbb/runs/final_v2_refit"
+SRC_RUN = BACKBONE_DIR
+OUT_RUN = RUN_DIR / "refit"
 MODEL_PARAMS = dict(backbone=ResNet50, backbone_params={"pretrained_model": ""},
                     num_covariates=0, link="logit")
 FIELDS = ["method", "coef", "fold", "auc", "bacc", "auc_marg", "bacc_marg", "corr_age", "corr_sex", "C"]
@@ -189,7 +186,7 @@ def averaged_head(fits, scaler):
 
 
 def dfr_val(phi_tr, phi_va, y_va, g_va, rng):
-    """DFR^Val_Tr: dfr_on_validation_tune and dfr_on_validation_eval of the released code."""
+    """DFR^Val_Tr: dfr_on_validation_tune and dfr_on_validation_eval of the DFR reference code."""
     perm = rng.permutation(len(y_va))
     tune, fit = perm[:len(y_va) // 2], perm[len(y_va) // 2:]
     fit = fit[balanced_subset(g_va[fit], rng)]
@@ -203,7 +200,7 @@ def dfr_val(phi_tr, phi_va, y_va, g_va, rng):
 
 
 def dfr_train(phi_tr, y_tr, g_tr, phi_va, y_va, g_va, rng):
-    """DFR^Tr_Tr: dfr_train_subset_tune and dfr_train_subset_eval of the released code."""
+    """DFR^Tr_Tr: dfr_train_subset_tune and dfr_train_subset_eval of the DFR reference code."""
     scaler = StandardScaler().fit(phi_tr)
     b = balanced_subset(g_tr, rng)
     wga = {C: worst_group_acc(y_va, dfr_logreg(scaler.transform(phi_tr[b]), y_tr[b], C, max_iter=20)
@@ -215,12 +212,9 @@ def dfr_train(phi_tr, y_tr, g_tr, phi_va, y_va, g_va, rng):
 
 def run_fold(coef, fold, done):
     fold_seed = RANDOM_STATE + fold
-    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
-    train_ix = list(cv.split(np.zeros(len(y)), y))[fold][0]
-    # partition (mirror train_backbones.py: split pool before resampling)
-    pool_A, pool_B = train_test_split(train_ix, test_size=0.5, random_state=fold_seed, stratify=y[train_ix])
-    h1_idx = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed)]
-    h2_idx = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100)]
+    train_ix = outer_fold(y, fold)
+    # split the outer training fold into two pools before resampling, so the halves are disjoint
+    h1_idx, h2_idx = resample_partition(train_ix, y, Z, coef, fold_seed, K=2)
     full_idx = np.concatenate([h1_idx, h2_idx])
     y_tr, Z_tr = y[full_idx].astype(int), Z[full_idx].astype(np.float64)
 

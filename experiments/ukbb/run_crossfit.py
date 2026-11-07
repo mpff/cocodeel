@@ -1,15 +1,13 @@
 #!/usr/bin/env python
-"""K-fold cross-fit from released backbone checkpoints, ensembled with CrossFitEnsemble.
+"""Cross-fit (K=3) of the DNN with Controls on the UKBB backbones, ensembled with CrossFitEnsemble.
 
-For each (coef, outer fold) this loads the per-rotation backbones (each trained on the union
-of the other inner folds), refits a linear f_Z head on the held-out inner fold, and forms the
-cross-fit ensemble eta = (1/K) sum_k eta_k. It also reports the no-sample-split refit (head and
-backbone share all NTRAIN obs) and the single-split refit (rotation k=0 alone) — the two biased
-estimators the figure contrasts against the cross-fit. Backbones are never retrained. aggregate.py
-reduces the records to k{K}_crossfit_results.csv.
+For each (coef, outer fold) this loads the K rotation backbones of train_backbones.py, backbone k
+trained on all parts but the k-th, refits a linear f_Z head of each on its held-out part k, and
+forms the cross-fit ensemble eta = (1/K) sum_k eta_k. It also reports the no-sample-split refit
+(base_full and its head on the same observations) and the single-split refit (rotation k=0 alone).
+aggregate.py reduces the records to k{K}_crossfit_results.csv.
 
-Usage:  python experiments/ukbb/run_crossfit.py --K 2 --run experiments/ukbb/runs/2026-05-03_16-43-32_n5k_noreplace_k2 \
-            --ntrain 5000 --no-replace --coefs 0.0,2.0 --folds 0,1,2,3,4
+Usage:  python experiments/ukbb/run_crossfit.py --gpu 0
 """
 import gc
 import sys
@@ -20,14 +18,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experiments.ukbb.common.backbone import ResNet50
 from experiments.ukbb.common.data import (
-    RANDOM_STATE, seed_everything, load_ukbb_data, resample_synthetic,
+    RANDOM_STATE, NTEST, BACKBONE_DIR, RUN_DIR, outer_fold, resample_partition, seed_everything, load_ukbb_data, resample_synthetic,
     NumpyCovarDataset, fast_loader, default_transforms,
 )
 from cocodeel.model import BaseNetwork
@@ -35,40 +33,30 @@ from cocodeel.refit_model import RefitCovarNetwork
 from cocodeel.crossfit import CrossFitEnsemble
 
 # ── run config ────────────────────────────────────────────────────────────────
-N_SPLITS = 5                   # outer CV folds
-NTEST = 2500
 BATCH_SIZE = 48
-NUM_WORKERS = 16
-REFIT_MAX_ITERS = 400          # IRLS backfitting controls (match the released run)
+NUM_WORKERS = 4
+REFIT_MAX_ITERS = 400          # IRLS backfitting controls
 REFIT_TOL = 1e-3
 MODEL_PARAMS = dict(backbone=ResNet50, backbone_params={"pretrained_model": ""},
                     num_covariates=0, link="logit")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=0)
-parser.add_argument("--K", type=int, default=2)
+parser.add_argument("--K", type=int, default=3)
 parser.add_argument("--coefs", type=str, default="0.0,2.0")
 parser.add_argument("--folds", type=str, default="0,1,2,3,4")
-parser.add_argument("--run", type=str, required=True, help="run dir holding coef=*/fold=*/{full,kK}/ checkpoints")
-parser.add_argument("--ntrain", type=int, default=5000)
-parser.add_argument("--no-replace", dest="replace", action="store_false")
-parser.add_argument("--replace", dest="replace", action="store_true")
-parser.set_defaults(replace=False)
 args = parser.parse_args()
 K = args.K
 COEFS = [float(c) for c in args.coefs.split(",")]
 FOLDS = [int(f) for f in args.folds.split(",")]
-NTRAIN = args.ntrain
-REPLACE = args.replace
-RUN = (ROOT / args.run) if not Path(args.run).is_absolute() else Path(args.run)
-OUT_RUN = ROOT / "experiments/ukbb/runs" / f"{RUN.name}_refit"
+RUN = BACKBONE_DIR
+OUT_RUN = RUN_DIR / f"crossfit_k{K}"
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 seed_everything(RANDOM_STATE)
 device = torch.device(f"cuda:{args.gpu}")
 tform = default_transforms()
-print(f"[{datetime.datetime.now():%H:%M:%S}] device=cuda:{args.gpu}  K={K}  ntrain={NTRAIN}  "
-      f"replace={REPLACE}  run={RUN.name}  out={OUT_RUN.name}", flush=True)
+print(f"[{datetime.datetime.now():%H:%M:%S}] device=cuda:{args.gpu}  K={K}  out={OUT_RUN.name}", flush=True)
 
 # ── data ──────────────────────────────────────────────────────────────────────
 d = load_ukbb_data()
@@ -155,21 +143,19 @@ def ensemble_metrics(name, coef, fold, ens, ncov, test_ld, train_grid):
 # ── one (coef, fold) ──────────────────────────────────────────────────────────
 def run_fold(coef, fold):
     fold_seed = RANDOM_STATE + fold
-    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
-    train_ix = list(cv.split(np.zeros(len(y)), y))[fold][0]
+    train_ix = outer_fold(y, fold)
 
-    # resample + inner K-fold partition (mirror the released run)
-    full_idx = train_ix[resample_synthetic(y[train_ix], Z[train_ix], NTRAIN, coef, fold_seed, replace=REPLACE)]
-    inner = StratifiedKFold(n_splits=K, shuffle=True, random_state=fold_seed)
-    h_idx = [full_idx[fi] for _, fi in inner.split(np.zeros(NTRAIN), y[full_idx])]
+    # the partitions of train_backbones.py: K parts for the rotations, two halves for base_full
+    h_idx = resample_partition(train_ix, y, Z, coef, fold_seed, K=K)
+    full_idx = np.concatenate(resample_partition(train_ix, y, Z, coef, fold_seed, K=2))
 
     ckpt = RUN / f"coef={coef}" / f"fold={fold}"
     test_ld = fast_loader(NumpyCovarDataset(X_te, y_te, Z_te, tform),
                           batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
 
     rows = []
-    # dnn baseline (uncontrolled backbone on all NTRAIN)
-    base_full = load_backbone(ckpt / "full" / "base_full.pt")
+    # dnn baseline (uncontrolled backbone on all observations)
+    base_full = load_backbone(ckpt / "base_full.pt")
     y_dnn, fx_dnn = predict_dnn(base_full, test_ld)
     rows.append(base_metrics("dnn", coef, fold, y_dnn, fx_dnn))
     print(f"[{datetime.datetime.now():%H:%M:%S}]    {'dnn':>20}: auc={rows[-1]['auc']:.4f}", flush=True)
@@ -185,8 +171,8 @@ def run_fold(coef, fold):
             tr, va = refit_loaders(h_idx[k], fold_seed + (2000 if ncov == 1 else 3000) + k, z_cols)
             m = RefitCovarNetwork(bb, num_covariates=ncov, orthogonalize=False).to(device)
             members.append(m.fit(tr, va, max_iters=REFIT_MAX_ITERS, tol=REFIT_TOL))
-        # no-sample-split refit (head + backbone share all NTRAIN)
-        bb_full = load_backbone(ckpt / "full" / "base_full.pt")
+        # no-sample-split refit (head + backbone share all observations)
+        bb_full = load_backbone(ckpt / "base_full.pt")
         tr, va = refit_loaders(full_idx, fold_seed + (700 if ncov == 1 else 800), z_cols)
         nosamp = RefitCovarNetwork(bb_full, num_covariates=ncov, orthogonalize=False).to(device)
         nosamp = nosamp.fit(tr, va, max_iters=REFIT_MAX_ITERS, tol=REFIT_TOL)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 """Reduce per-fold refit records into the R-ready rexports for the UKBB application figure.
 
-Reads every coef=*/fold=*/record.npz under a run directory (written by
-refit_from_checkpoints.py) and writes the sample-split rexports and the summary
-raw_results.csv with the schemas the figure scripts read.
+Reads every coef=*/fold=*/record.npz under a run directory and writes the sample-split
+rexports, raw_results.csv and crossfit_results.csv (records of refit_from_checkpoints.py,
+runs/refit) or k3_crossfit_results.csv (records of run_crossfit.py, runs/crossfit_k3).
 
-Usage:  python experiments/ukbb/aggregate.py --run experiments/ukbb/runs/final_v2_refit
+Usage:  python experiments/ukbb/aggregate.py [--run experiments/ukbb/runs/crossfit_k3]
 """
 import csv
 import json
@@ -19,7 +19,7 @@ METHODS = ["base_full", "base_half", "refit_age", "refit_age_sex"]
 REFITS = ["refit_age", "refit_age_sex"]
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--run", type=str, default="experiments/ukbb/runs/final_v2_refit")
+parser.add_argument("--run", type=str, default="experiments/ukbb/runs/refit")
 args = parser.parse_args()
 RUN = (ROOT / args.run) if not Path(args.run).is_absolute() else Path(args.run)
 REX = RUN / "rexports"

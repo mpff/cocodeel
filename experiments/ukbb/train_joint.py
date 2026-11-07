@@ -4,15 +4,13 @@
 Unlike the additive refit/cross-fit estimators (eta = intercept + f_X(X) + f_Z(Z)), this baseline
 concatenates the ResNet50 image features with age and passes them through an MLP head, so the
 network can learn image x age interactions (non-additive). Like base_full, the backbone starts
-from the Kinetics-pretrained init and is trained end-to-end, here jointly with age; a warm start
-from base_full cannot show whether the network uses age, because its features already encode
-age. Because there is no additive f_Z to drop, age is marginalised by averaging predictions over
+from the Kinetics-pretrained init and is trained end-to-end, here jointly with age. Because there is no additive f_Z to drop, age is marginalised by averaging predictions over
 the training age distribution:
     y_marg(x_i) = mean_j sigmoid( DNN(x_i, age_j) ).
 Writes one row per (coef, fold) to joint_results.csv (method "joint_age") for the figure's
-"Joint model" box.
+"Joint DNN" box.
 
-Usage:  python experiments/ukbb/train_joint.py --coefs 0.0,2.0 --folds 0,1,2,3,4
+Usage:  python experiments/ukbb/train_joint.py --gpu 0
 """
 import sys
 import gc
@@ -25,23 +23,20 @@ import numpy as np
 import torch
 import torch.nn as nn
 import sklearn.utils.class_weight
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, balanced_accuracy_score
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from experiments.ukbb.common.backbone import ResNet50
 from experiments.ukbb.common.data import (
-    RANDOM_STATE, PRETRAINED_RESNET, seed_everything, load_ukbb_data, resample_synthetic,
-    NumpyCovarDataset, fast_loader, default_transforms,
+    RANDOM_STATE, NTEST, RUN_DIR, outer_fold, resample_partition, PRETRAINED_RESNET, seed_everything, load_ukbb_data,
+    resample_synthetic, NumpyCovarDataset, fast_loader, default_transforms,
 )
 from cocodeel.links import LINKS
 from cocodeel.trainer import covar_trainer
 
 # ── run config ────────────────────────────────────────────────────────────────
-N_SPLITS = 5
-NTRAIN_PER_HALF = 2500
-NTEST = 2500
 BATCH_SIZE = 48
 NUM_WORKERS = 16
 HIDDEN = 64                    # MLP fusion head width
@@ -50,23 +45,15 @@ LR = 1e-5
 WEIGHT_DECAY = 1e-5
 EPOCHS = 100
 PATIENCE = 15
-SRC_RUN = ROOT / "experiments/ukbb/runs/2026-04-26_13-16-37_final_v2"
-OUT_RUN = ROOT / "experiments/ukbb/runs/final_v2_refit"
+OUT_RUN = RUN_DIR / "refit"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--coefs", type=str, default="0.0,2.0")
 parser.add_argument("--folds", type=str, default="0,1,2,3,4")
-parser.add_argument("--lr", type=float, default=LR)
-parser.add_argument("--patience", type=int, default=PATIENCE)
-parser.add_argument("--epochs", type=int, default=EPOCHS)
-parser.add_argument("--freeze", action="store_true", help="freeze the backbone; train only the fusion head")
-parser.add_argument("--warmstart", action="store_true",
-                    help="start the backbone from the released base_full instead of the Kinetics init")
 args = parser.parse_args()
 COEFS = [float(c) for c in args.coefs.split(",")]
 FOLDS = [int(f) for f in args.folds.split(",")]
-LR, PATIENCE, EPOCHS = args.lr, args.patience, args.epochs
 
 # ── setup ─────────────────────────────────────────────────────────────────────
 seed_everything(RANDOM_STATE)
@@ -85,19 +72,12 @@ class FusionNetwork(nn.Module):
     """Late-fusion joint model: ResNet50 image features concatenated with Z into an MLP head."""
 
     def __init__(self, backbone, backbone_params=None, num_covariates=1, link="identity",
-                 hidden=HIDDEN, warmstart=None, freeze=False):
+                 hidden=HIDDEN):
         super().__init__()
         self.num_covariates = num_covariates
         self.link = link
         self._link = LINKS[link]
         self.backbone = backbone(**(backbone_params or {}))
-        if warmstart:
-            sd = torch.load(warmstart, map_location="cpu")
-            bb = {k[len("backbone."):]: v for k, v in sd.items() if k.startswith("backbone.")}
-            self.backbone.load_state_dict(bb)
-        if freeze:
-            for p in self.backbone.parameters():
-                p.requires_grad = False
         nf = self.backbone.out_features
         self.head = nn.Sequential(
             nn.Linear(nf + num_covariates, hidden), nn.ReLU(),
@@ -162,13 +142,10 @@ def joint_metrics(model, coef, fold, mean, std, grid_ages):
 # ── one (coef, fold) ──────────────────────────────────────────────────────────
 def run_fold(coef, fold):
     fold_seed = RANDOM_STATE + fold
-    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
-    train_ix = list(cv.split(np.zeros(len(y)), y))[fold][0]
+    train_ix = outer_fold(y, fold)
 
-    # partition (mirror train_backbones.py) and the full training set (h1 u h2)
-    pool_A, pool_B = train_test_split(train_ix, test_size=0.5, random_state=fold_seed, stratify=y[train_ix])
-    h1 = pool_A[resample_synthetic(y[pool_A], Z[pool_A], NTRAIN_PER_HALF, coef, fold_seed)]
-    h2 = pool_B[resample_synthetic(y[pool_B], Z[pool_B], NTRAIN_PER_HALF, coef, fold_seed + 100)]
+    # split the outer training fold into two pools before resampling, so the halves are disjoint
+    h1, h2 = resample_partition(train_ix, y, Z, coef, fold_seed, K=2)
     full_idx = np.concatenate([h1, h2])
     mean, std = float(Z[full_idx, 0].mean()), float(Z[full_idx, 0].std())
 
@@ -185,15 +162,9 @@ def run_fold(coef, fold):
         tr_ld, va_ld, y_tr = loaders(full_idx, fold_seed + 200, mean, std)
         cw = sklearn.utils.class_weight.compute_class_weight("balanced", classes=np.unique(y_tr), y=y_tr)
         pos_weight = torch.tensor(cw[1] / cw[0]).to(device)
-        # from scratch: backbone from the Kinetics-pretrained init, learns with Z jointly.
-        # --warmstart: backbone from the released base_full (pretrained="" since it is overwritten).
-        if args.warmstart:
-            pretrained, warmstart = "", str(SRC_RUN / f"coef={coef}/fold={fold}/base_full.pt")
-        else:
-            pretrained, warmstart = str(PRETRAINED_RESNET), None
-        model_params = dict(backbone=ResNet50, backbone_params={"pretrained_model": pretrained},
-                            num_covariates=1, link="identity", hidden=HIDDEN, freeze=args.freeze,
-                            warmstart=warmstart)
+        # backbone from the Kinetics-pretrained init, trained jointly with the head on (X, age)
+        model_params = dict(backbone=ResNet50, backbone_params={"pretrained_model": str(PRETRAINED_RESNET)},
+                            num_covariates=1, link="identity", hidden=HIDDEN)
         model = covar_trainer(
             model=FusionNetwork, model_params=model_params, train_loader=tr_ld, val_loader=va_ld,
             device=f"cuda:{args.gpu}", epochs=EPOCHS, lr=LR, weight_decay=WEIGHT_DECAY, patience=PATIENCE,
