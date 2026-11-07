@@ -42,6 +42,7 @@ shared_theme <- theme_bw() +
     axis.text.y = element_text(hjust = 1.25, size = 6),
     axis.title.x = element_text(margin = margin(t = 0)),
     text = element_text(size = 8, family = "serif"),
+    strip.text = element_text(size = 6.5, margin = margin(2, 2, 2, 2)),
     plot.margin = margin(2, 2, 2, 2)
   )
 
@@ -63,7 +64,7 @@ make_panel <- function(data, ylab, ylim = c(1e-4, 1.25)) {
     geom_point(aes(color = params_k), alpha = 0.8, size = 0.8) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
-      breaks = 100 * 2^(1:7)
+      breaks = 100 * 4^(1:4) / 2
     ) +
     scale_y_log10(name = ylab) +
     PARAMS_COLOR_SCALE +
@@ -106,7 +107,7 @@ nam_var  <- make_panel(
 fig <- (ctrl_mspe | ctrl_bias | ctrl_var) /
        (nam_mspe  | nam_bias  | nam_var) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "bottom", legend.margin = margin(0, 0, 0, 0),
+  theme(legend.position = "bottom", legend.margin = margin(0, 0, 0, 0), legend.box.spacing = unit(2, "pt"),
         legend.key.width = unit(0.4, "in"), legend.title.position = "left",
         legend.title = element_text(margin = margin(r = 6)))
 
