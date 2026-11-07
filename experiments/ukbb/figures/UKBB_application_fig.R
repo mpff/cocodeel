@@ -744,10 +744,10 @@ pB_right_main <- make_auc_panel_4(
 # competitor_results.csv from competitors_from_checkpoints.py).
 competitor_labels <- c(
   joint_age                = "Joint DNN",
-  posthoc_web_age          = "DNN (Baseline)\n+ Orth.",
-  posthoc_web_features_age = "PHO +\nRefit",
-  leace_age                = "LEACE",
-  dfr_val_age              = "DFR"
+  posthoc_web_age          = "DNN (Baseline) + Orth.",
+  posthoc_web_features_age = "PHO + Refit [48]",
+  leace_age                = "LEACE [49]",
+  dfr_val_age              = "DFR [31]"
 )
 competitor_df <- bind_rows(
   read.csv(paste0(RUN_DIR, "joint_results.csv")),
