@@ -410,7 +410,7 @@ ROWS <- list(
 )
 FZ_ESTIMATORS <- c(UNORTH[1], ORTH[1])   # the others emit f_Z = 0 and are drawn in grey
 
-panel <- function(row, col, top, bottom, right, legend) {
+panel <- function(row, col, top, bottom, legend) {
   d <- df_bz %>% filter(model == row$model, metric == col$metric,
                         effect == if (col$effect == "fx") row$fx else col$effect)
   grey <- col$effect == "fz" && !(row$model %in% FZ_ESTIMATORS)
@@ -427,17 +427,26 @@ panel <- function(row, col, top, bottom, right, legend) {
     (if (col$effect == "y") scale_y_continuous(breaks = 1:5, labels = LIN_LABELS)
      else scale_y_log10(breaks = 10^c(-4, -2, 0), labels = LOG_LABELS)) +
     coord_cartesian(xlim = c(175, 100 * 2^7.05), ylim = col$ylim) +
-    facet_grid(model ~ .) +
     labs(y = NULL, title = if (top) TeX(col$title) else NULL) + theme_cell
   if (!bottom) p <- p + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
-  if (!right)  p <- p + theme(strip.text.y = element_blank(), strip.background.y = element_blank())
   p
 }
+# model name in a grey box of the same size in every row, as a separate column on the right
+label_box <- function(row) {
+  ggplot() +
+    annotate("text", x = 0, y = 0, label = row$model, angle = -90, size = 6.5 / .pt, family = "serif") +
+    theme_void() +
+    theme(panel.background = element_rect(fill = "grey85", colour = "grey20", linewidth = 0.3),
+          plot.margin = margin(3, 3, 3, 0))
+}
 panels <- list()
-for (i in seq_along(ROWS)) for (j in seq_along(COLUMNS))
-  panels[[length(panels) + 1]] <- panel(ROWS[[i]], COLUMNS[[j]], top = i == 1, bottom = i == 4,
-                                        right = j == 4, legend = j == 1 && i %in% c(1, 3))
-fig <- wrap_plots(panels, ncol = 4, byrow = TRUE) +
-  plot_layout(guides = "collect", widths = c(1, 1, 1, 1.2)) & theme(legend.position = "bottom")
+for (i in seq_along(ROWS)) {
+  for (j in seq_along(COLUMNS))
+    panels[[length(panels) + 1]] <- panel(ROWS[[i]], COLUMNS[[j]], top = i == 1, bottom = i == 4,
+                                          legend = j == 1 && i %in% c(1, 3))
+  panels[[length(panels) + 1]] <- label_box(ROWS[[i]])
+}
+fig <- wrap_plots(panels, ncol = 5, byrow = TRUE) +
+  plot_layout(guides = "collect", widths = c(1, 1, 1, 1, 0.22)) & theme(legend.position = "bottom")
 ggsave("experiments/simulation/output/graphics/Fig_bz_appendix.pdf", fig,
        width = 5.5, height = 5.2, units = "in", device = cairo_pdf)
