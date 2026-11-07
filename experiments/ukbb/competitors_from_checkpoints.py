@@ -31,6 +31,11 @@ half h1 as "train" and the held-out half h2 as "val":
 
 DFR needs no Z at prediction time, so its marginal prediction is its prediction.
 
+The DNN with Controls without a sample split (nosplit_age) refits the last layer of base_full with
+Z = age by RefitCovarNetwork on the same full training sample, with the controls of
+refit_from_checkpoints.py; its marginal prediction drops f_Z, centred on that sample, from eta,
+as for the sample-split and cross-fit rows.
+
 Features are cached per fold in features.npz (base_full) and features_base_half.npz. Writes one row
 per (method, coef, fold) to competitor_results.csv in final_v2_refit/.
 
@@ -58,6 +63,8 @@ from experiments.ukbb.common.data import (
 )
 from cocodeel.model import BaseNetwork
 from cocodeel.benchmarking.posthoc_model import FeatureErasureNetwork
+from cocodeel.refit_model import RefitCovarNetwork
+from cocodeel.crossfit import CrossFitEnsemble
 
 # ── run config ────────────────────────────────────────────────────────────────
 N_SPLITS = 5
@@ -68,6 +75,8 @@ NUM_WORKERS = 4
 C_GRID = np.logspace(-5, 1, 13)    # inverse L2 penalty of the logistic head
 DFR_C_GRID = [1.0, 0.7, 0.3, 0.1, 0.07, 0.03, 0.01]   # released dfr_evaluate_spurious.py
 N_AGE_BINS = 5
+REFIT_MAX_ITERS = 400   # IRLS backfitting controls, as in refit_from_checkpoints.py
+REFIT_TOL = 1e-3
 Z_COLS = [0]   # Z = age
 SRC_RUN = ROOT / "experiments/ukbb/runs/2026-04-26_13-16-37_final_v2"
 OUT_RUN = ROOT / "experiments/ukbb/runs/final_v2_refit"
@@ -263,6 +272,34 @@ def run_fold(coef, fold, done):
             if (m, coef, fold) not in done:
                 fx = phi_te_h.astype(np.float64) @ w
                 rows.append(summary(m, coef, fold, beta0 + fx, beta0 + fx, fx, C))
+
+    # DNN with Controls, no sample split: base_full's last layer refit with age on full_idx,
+    # inner 80/20 split seeded as the sample-split refit in refit_from_checkpoints.py
+    m = "nosplit_age"
+    if (m, coef, fold) not in done:
+        base_full = BaseNetwork(**MODEL_PARAMS).to(device)
+        base_full.load_state_dict(torch.load(src_dir / "base_full.pt", map_location=device))
+        base_full.eval()
+        tr_loc, va_loc = train_test_split(np.arange(len(full_idx)), test_size=0.2,
+                                          random_state=fold_seed + 202, stratify=y[full_idx])
+        tr, va = [fast_loader(NumpyCovarDataset(X[full_idx[i]], y[full_idx[i]], Z[full_idx[i]][:, Z_COLS], tform),
+                              batch_size=BATCH_SIZE, shuffle=sh, num_workers=NUM_WORKERS)
+                  for i, sh in [(tr_loc, True), (va_loc, False)]]
+        refit = RefitCovarNetwork(base_full, num_covariates=1, orthogonalize=False).to(device)
+        ens = CrossFitEnsemble([refit.fit(tr, va, max_iters=REFIT_MAX_ITERS, tol=REFIT_TOL)]).eval()
+        te = fast_loader(NumpyCovarDataset(X_te, y_te, Z_te[:, Z_COLS], tform),
+                         batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+        eta, fz, fx = [], [], []
+        with torch.no_grad():
+            for b in te:
+                x, z = b["X"].to(device, non_blocking=True), b["Z"].to(device, non_blocking=True)
+                eta.append(ens.predict_eta(x, z).cpu().numpy())
+                fz.append(ens.predict_fz(z).cpu().numpy())
+                fx.append(ens.predict_fx(x).cpu().numpy())
+        eta, fz, fx = [np.concatenate(a).flatten().astype(np.float64) for a in (eta, fz, fx)]
+        rows.append(summary(m, coef, fold, eta, eta - fz, fx))
+        del base_full, refit, ens
+        torch.cuda.empty_cache()
     return rows
 
 
