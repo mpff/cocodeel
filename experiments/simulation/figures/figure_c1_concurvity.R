@@ -36,19 +36,24 @@ df_bz <- df_raw %>%
   mutate(model = factor(model_labels[model], levels = model_labels),
          effect = factor(effect, levels = c('y', 'fx', 'fr', 'fz')))
 
-# hue = fitting routine, lightness = member within routine
-method_colors <- setNames(c(
-  "#3F007D", "#6A51A3",   # joint fit with Z: purples
-  "#7F3B08", "#E08214",   # penalty: oranges
-  "#AE017E", "#F768A1",   # post-hoc correction: pinks
-  "#00441B", "#41AB5D"    # refit on held-out data: greens
-), model_labels)
+# Okabe-Ito hue and point shape = fitting routine; line type and filled/open point = member within routine
+group_colors <- c("#CC79A7",   # joint fit with Z: reddish purple
+                  "#000000",   # penalty: black
+                  "#D55E00",   # post-hoc correction: vermillion
+                  "#0072B2")   # refit on held-out data: blue
+group_shapes <- list(c(21, 1), c(24, 2), c(22, 0), c(23, 5))  # (filled, open), same size
+method_colors <- setNames(rep(group_colors, lengths(model_groups)), model_labels)
+method_shapes <- setNames(unlist(Map(function(g, sh) sh[seq_along(g)], model_groups, group_shapes)), model_labels)
+method_lines  <- setNames(unlist(lapply(model_groups, function(g) c("solid", "22")[seq_along(g)])), model_labels)
 
 # blank legend rows between the groups
 spacers <- paste0("spacer", seq_len(length(model_groups) - 1))
 legend_breaks <- head(unlist(Map(function(g, s) c(unname(g), s),
                                  model_groups, c(spacers, NA))), -1)
-legend_colors <- c(method_colors, setNames(rep("transparent", length(spacers)), spacers))
+spacer_values <- function(v) setNames(rep(v, length(spacers)), spacers)
+legend_colors <- c(method_colors, spacer_values("transparent"))
+legend_shapes <- c(method_shapes, spacer_values(NA))
+legend_lines  <- c(method_lines, spacer_values("blank"))
 legend_labels <- setNames(ifelse(legend_breaks %in% spacers, " ", legend_breaks), legend_breaks)
 
 # Shared theme — legend is collected by patchwork and placed at the bottom
@@ -75,13 +80,13 @@ shared_theme <- theme_bw() +
   )
 
 # Reusable plotting function
-make_plot <- function(data, ylab, strip_labels = TRUE) {
+make_plot <- function(data, ylab, strip_labels = TRUE, ylim = c(0.3, 2e-4)) {
   p <- ggplot(
     data,
     aes(x = n * 0.5, y = value, group = model)
   ) +
-    geom_line(aes(color = model), alpha = 0.8, linewidth = 0.8) +
-    geom_point(aes(color = model), alpha = 0.8, size = 0.8) +
+    geom_line(aes(color = model, linetype = model), alpha = 0.85, linewidth = 0.7) +
+    geom_point(aes(color = model, fill = model, shape = model), alpha = 0.85, size = 1.1, stroke = 0.5) +
     scale_x_log10(
       name = TeX("$N_{train}$ ($\\log_{10}$ scale)"),
       breaks = 100 * 2^(1:9)
@@ -89,10 +94,16 @@ make_plot <- function(data, ylab, strip_labels = TRUE) {
     scale_y_log10(name = ylab, labels = function(x) formatC(x, format = "e", digits = 0)) +
     scale_color_manual(name = NULL, values = legend_colors, limits = legend_breaks,
                        breaks = legend_breaks, labels = legend_labels) +
+    scale_fill_manual(name = NULL, values = legend_colors, limits = legend_breaks,
+                      breaks = legend_breaks, labels = legend_labels) +
+    scale_shape_manual(name = NULL, values = legend_shapes, limits = legend_breaks,
+                       breaks = legend_breaks, labels = legend_labels) +
+    scale_linetype_manual(name = NULL, values = legend_lines, limits = legend_breaks,
+                          breaks = legend_breaks, labels = legend_labels) +
     guides(color = guide_legend(ncol = 1)) +
     coord_cartesian(
       xlim = c(175, 100 * 2^9.5),
-      ylim = c(0.3, 2e-4)
+      ylim = ylim
     ) +
     shared_theme
 
@@ -120,7 +131,19 @@ b2 <- make_plot(
 # (single vertical column). Figure is double-column width.
 b <- (b1 + b2) +
   plot_layout(guides = "collect") &
-  theme(legend.position = "right", plot.margin = margin(0, 0, 0, 0))
+  theme(legend.position = "right", plot.margin = margin(0, 6, 0, 0))
 
 ggsave("experiments/simulation/output/graphics/Fig2_Concurvity.pdf", b, width = 5.5, height = 1.45, units = "in", dpi=600, device = cairo_pdf)
 
+# Appendix: the Bias^2 + Var split of both MSPE panels (rows), on one y-range
+ylim_bv <- c(0.3, 3e-6)
+bv <- list(
+  make_plot(df_bz %>% filter(effect == "fx", metric == "bias2"), TeX("$Bias^2(\\hat{f}_X)$"), ylim = ylim_bv),
+  make_plot(df_bz %>% filter(effect == "fr", metric == "bias2"), TeX("$Bias^2(\\hat{f}^{re}_X)$"), ylim = ylim_bv),
+  make_plot(df_bz %>% filter(effect == "fx", metric == "var"), TeX("$Var(\\hat{f}_X)$"), ylim = ylim_bv),
+  make_plot(df_bz %>% filter(effect == "fr", metric == "var"), TeX("$Var(\\hat{f}^{re}_X)$"), ylim = ylim_bv))
+b_bv <- wrap_plots(bv, ncol = 2) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right", plot.margin = margin(2, 6, 2, 0))
+
+ggsave("experiments/simulation/output/graphics/Fig_concurvity_bias_var.pdf", b_bv, width = 5.5, height = 2.9, units = "in", dpi=600, device = cairo_pdf)
