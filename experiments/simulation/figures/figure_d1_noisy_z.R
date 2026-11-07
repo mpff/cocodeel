@@ -1,8 +1,8 @@
 # Study D: estimation under a noisily measured control variable.
-# Layout mirrors figure_a1 (Fig 1b): x = N_train (log10), colour gradient over
+# Layout mirrors figure_a1 (Fig 1): x = N_train (log10), colour gradient over
 # the corruption level a of Z_tilde = (1-a) Z + a eps, facet rows = method;
 # left block targets f_X (refit, base), right block f_X^re (refit_orth, Weber).
-# One PDF per metric: MSPE, Bias^2, Var.
+# Appendix figures: Fig_noisyz_bias2.pdf and Fig_noisyz_var.pdf.
 library(readr)
 library(dplyr)
 library(ggplot2)
@@ -75,9 +75,8 @@ make_plot <- function(data, ylab, color_option, show_legend = TRUE,
 }
 
 plot_params <- list(
-  list(metric = "mspe",  fx_lab = "$MSPE(\\hat{f}_X)$",   fr_lab = "$MSPE(\\hat{f}^{re}_X)$",   out = "FigD1_a_mspe.pdf",  ylim = c(.4 * 1e-3, 1.25)),
-  list(metric = "bias2", fx_lab = "$Bias^2(\\hat{f}_X)$", fr_lab = "$Bias^2(\\hat{f}^{re}_X)$", out = "FigD1_a_bias2.pdf", ylim = c(.4 * 1e-4, 1.25)),
-  list(metric = "var",   fx_lab = "$Var(\\hat{f}_X)$",    fr_lab = "$Var(\\hat{f}^{re}_X)$",    out = "FigD1_a_var.pdf",   ylim = c(.4 * 1e-4, 1.25))
+  list(metric = "bias2", fx_lab = "$Bias^2(\\hat{f}_X)$", fr_lab = "$Bias^2(\\hat{f}^{re}_X)$", out = "Fig_noisyz_bias2.pdf", ylim = c(.4 * 1e-4, 1.25)),
+  list(metric = "var",   fx_lab = "$Var(\\hat{f}_X)$",    fr_lab = "$Var(\\hat{f}^{re}_X)$",    out = "Fig_noisyz_var.pdf",   ylim = c(.4 * 1e-4, 1.25))
 )
 
 for (m in plot_params) {
