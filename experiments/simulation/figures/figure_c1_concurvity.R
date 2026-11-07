@@ -21,7 +21,7 @@ df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 # with Z, with a penalty, by post-hoc correction, or by the refit on held-out
 # data. Citation numbers follow the preprint's bibliography.
 model_groups <- list(
-  c(nam = "Additive Model (lin. fz)"),
+  c(nam = "Additive Model (SGD, like [8])"),
   c(nam_mlp_conc = "Additive Model + concurvity reg. [22]",
     cfnet = "CF-Net [41]"),
   c(ssn = "SSN [9]",
