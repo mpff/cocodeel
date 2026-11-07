@@ -22,7 +22,7 @@ df_raw <- read_csv("experiments/simulation/output/concurvity.csv")
 # Citation numbers follow the preprint's bibliography.
 model_groups <- list(
   c(nam = "DNN with Controls (SGD)",
-    nam_mlp = "Additive Model (like [8])",
+    nam_mlp = "NAM (MLP fz, [8])",
     nam_mlp_conc = "+ concurvity reg. [22]"),
   c(ssn = "SSN [9]",
     posthoc_web_features = "PHO + Refit [19]"),
@@ -39,7 +39,7 @@ df_bz <- df_raw %>%
 # the fit it corrects (SSN corrects DNN with Controls (SGD)) and is drawn with
 # diamonds, all others with circles; dashes mark the methods whose target is f_X^re
 method_colors <- setNames(c(
-  "#CC79A7", "#E69F00", "#D55E00",   # DNN with Controls (SGD), Additive Model, + concurvity reg.
+  "#CC79A7", "#E69F00", "#D55E00",   # DNN with Controls (SGD), NAM, + concurvity reg.
   "#CC79A7", "#009E73",              # SSN, PHO + Refit
   "#0072B2", "#0072B2"               # DNN with Controls, + Orthogonalisation
 ), model_labels)
