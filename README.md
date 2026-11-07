@@ -1,43 +1,28 @@
 # cocodeel
 
-Control variables for deep neural networks, by refitting the last layer.
+Control variables for deep neural networks: refit the last layer of a trained DNN as an additive model in the network's features and a control variable.
 
-Code for *"Controlling for Omitted Variable Bias in Deep Neural Networks"*.
-Shortcut learning in a DNN is framed as omitted variable bias: a covariate
-`Z` (a confounder, an acquisition artefact, a demographic attribute) that
-correlates with both the network input `X` and the outcome `y` gets its
-effect wrongly attributed to `X`. The fix is the classical one from
-regression analysis — include `Z` as a control variable — applied to the
-last layer of a pretrained DNN, since concurvity between `X` and `Z` makes
-joint end-to-end training of both effects unreliable.
+Code for *Controlling for Omitted Variable Bias in Deep Neural Networks*.
 
-`RefitCovarNetwork` refits a pretrained backbone's last layer as an
-additive model `η = β₀ + f_X(X) + f_Z(Z)`, with `f_X` linear in the
-backbone features and `f_Z` linear in `Z`. Fitting is a ridge-penalised
-backfit (glmnet-style λ path, IRLS for non-identity links), with an
-optional secondary regression that orthogonalises `f_X` against `Z`.
+A DNN trained to predict `Y` from an input `X` (an image) also learns from any variable `Z` that is correlated with both: age, sex, the scanner site. It attributes the effect of `Z` to `X`. This is shortcut learning, and in regression terms it is omitted variable bias. The remedy from regression analysis is to include `Z` as a control variable. `cocodeel` does this for a trained DNN with backbone `φ`. It keeps `φ` fixed and refits the last layer as
+
+```
+g(E[Y | X, Z]) = η(X, Z) = β₀ + f_X(X) + f_Z(Z),    f_X(X) = φ(X)ᵀ β_X,    f_Z(Z) = Zᵀ β_Z,
+```
+
+by ridge-penalised backfitting, with IRLS for a non-identity link `g` and the ridge penalty `λ` chosen on a validation split. `f_X` is the direct effect of `X` with `Z` held fixed. The backbone and the refit must use disjoint samples, or the refit inherits the backbone's bias. Cross-fitting over `K` folds (Chernozhukov et al., 2018) recovers the full sample size. With `orthogonalize=True`, a post-hoc regression additionally removes from `f_X` the part that is linear in `Z`, giving `f_X^re`.
 
 ## Install
 
 ```
-conda env create -f environment.yml
-conda activate dl-mri
 pip install -e .
 ```
 
-`environment.yml` also pulls in R (`r-base`, `rpy2`, `r-glmnet`) — not used
-by the package itself. The R figure scripts under `experiments/` need
-additional R packages (`ggplot2`, `tikzDevice`, `patchwork`, …) that are
-**not** in `environment.yml`; see the per-experiment `README.md` for what
-each figure script needs.
+The package needs `torch`, `numpy`, `scipy` and `scikit-learn`. `environment.yml` is the conda environment of the experiments, including R for the figures.
 
-## Quickstart
+## Usage
 
-The estimator is only consistent if the backbone is pretrained on a sample
-disjoint from the one used for the last-layer refit — otherwise the
-backbone features are not exogenous (Pagan, 1984, "generated regressors";
-see the sample-splitting lemma in the paper). The recipe below is the
-paper's method: split the data in half, pretrain on `A`, refit on `B`.
+`RefitCovarNetwork` is a `torch.nn.Module`. It takes any trained `BaseNetwork`, whose backbone is a module with an `out_features` attribute.
 
 ```python
 import torch
@@ -46,100 +31,75 @@ from torch.utils.data import DataLoader
 from cocodeel.dataset import CovarDataset
 from cocodeel.model import BaseNetwork
 from cocodeel.refit_model import RefitCovarNetwork
+from cocodeel.crossfit import CrossFitEnsemble
 from cocodeel.trainer import covar_trainer
 
 
-class Backbone(torch.nn.Module):
-    """Stand-in for a pretrained DNN backbone phi: X -> R^q."""
+class Backbone(torch.nn.Module):          # phi: X -> R^q
     def __init__(self, in_features, out_features):
         super().__init__()
-        self.linear = torch.nn.Linear(in_features, out_features)
+        self.net = torch.nn.Sequential(torch.nn.Linear(in_features, 32), torch.nn.ReLU(),
+                                       torch.nn.Linear(32, out_features), torch.nn.ReLU())
         self.out_features = out_features
 
     def forward(self, x):
-        return torch.relu(self.linear(x))
+        return self.net(x)
 
 
-def toy_data(n, p_x=10, p_z=1):
-    X = torch.randn(n, p_x)
-    Z = torch.randn(n, p_z)
-    y = (2.0 * X[:, 0] + 3.0 * Z[:, 0] + 1.5).unsqueeze(1)
+def sample(n):                            # Z drives both X and y: y = 2 X_1 + 3 Z + noise
+    Z = torch.randn(n, 1)
+    X = torch.randn(n, 10) + Z
+    y = 2.0 * X[:, :1] + 3.0 * Z + 0.5 * torch.randn(n, 1)
     return X, Z, y
 
 
-def loaders(X, Z, y, batch_size=32):
-    ds = CovarDataset(X, Z, y)
-    return DataLoader(ds, batch_size=batch_size, shuffle=True), DataLoader(ds, batch_size=batch_size)
+def loaders(n):
+    ds_tr, ds_va = CovarDataset(*sample(n)), CovarDataset(*sample(n // 4))
+    return DataLoader(ds_tr, batch_size=64, shuffle=True), DataLoader(ds_va, batch_size=256)
 
 
-# Two disjoint samples: A pretrains the backbone, B refits the last layer.
-X_A, Z_A, y_A = toy_data(400)
-X_B, Z_B, y_B = toy_data(400)
-train_A, val_A = loaders(X_A, Z_A, y_A)
-train_B, val_B = loaders(X_B, Z_B, y_B)
+# 1. Train a DNN without controls on each of two disjoint samples A and B.
+(train_A, val_A), (train_B, val_B) = loaders(2000), loaders(2000)
+backbone = dict(backbone=Backbone, backbone_params=dict(in_features=10, out_features=8))
+dnn_A = covar_trainer(BaseNetwork, backbone, train_A, val_A).center_effects(train_A)
+dnn_B = covar_trainer(BaseNetwork, backbone, train_B, val_B).center_effects(train_B)
 
-# 1. Pretrain the backbone on A. BaseNetwork ignores Z.
-base = covar_trainer(
-    BaseNetwork,
-    dict(backbone=Backbone, backbone_params=dict(in_features=10, out_features=8)),
-    train_A, val_A, patience=12,
-)
+# 2. Refit each last layer with Z as a control variable on the other sample.
+refit_A = RefitCovarNetwork(dnn_A, num_covariates=1).fit(train_B, val_B)
+refit_B = RefitCovarNetwork(dnn_B, num_covariates=1).fit(train_A, val_A)
 
-# 2. Refit the last layer on B: Z enters additively, with a ridge-penalised
-#    backfit and an optional orthogonalisation of f_X against Z.
-model = RefitCovarNetwork(base, num_covariates=1, orthogonalize=True)
-model = model.fit(train_B, val_B)
+# 3. Cross-fit (K=2): average the two refits.
+model = CrossFitEnsemble([refit_A, refit_B]).recenter(train_A)
 
-fx = model.predict_fx(X_B, Z_B)   # DNN-input effect, orthogonal to Z
-fz = model.predict_fz(Z_B)        # control-variable effect
+X, Z, _ = sample(500)
+with torch.no_grad():
+    f_x = model.predict_fx(X, Z)          # direct effect of X
+    f_z = model.predict_fz(Z)             # effect of the control variable (true: 3 Z)
+    y_hat = model(X, Z)                   # g^{-1}(η)
 ```
 
-`model.lam` holds the selected ridge penalty and `model.lambda_path_` the
-full per-λ diagnostics (validation loss, convergence, coefficient norms) —
-useful for checking the λ selection.
+For a binary outcome, pass `link="logit"` in the model dictionary and `loss_fn=torch.nn.BCELoss()` to `covar_trainer`. A single sample split is one `RefitCovarNetwork`, without the ensemble.
 
-## Key concepts
+## Experiments
 
-- **Link functions.** `link="identity"` (Gaussian) and `link="logit"`
-  (binary) are supported; the backfit reduces to a closed-form ridge solve
-  for `"identity"` and runs IRLS otherwise. See `cocodeel/links.py`.
-- **Centering.** `X`, `Z`, and `y` are centered before fitting so that
-  `β₀` carries the population mean and the additive terms are
-  identifiable; `RefitCovarNetwork.center_effects` fits these means on
-  the refit sample. `predict_fx`/`predict_fz` stay zero-mean on that
-  sample after fitting.
-- **Orthogonalization.** With `orthogonalize=True`, a secondary linear
-  regression removes the part of `f_X` that is linearly explained by `Z`,
-  isolating the direct effect of `X` from the mediated effect that runs
-  through `Z`. Without it, `f_X` and `f_Z` are still debiased for omitted
-  variable bias, but a mediated effect of `Z` through `X` remains in `f_X`.
-- **Cross-fitting.** The two-sample split above uses half the data for
-  the backbone. `cocodeel.crossfit.CrossFitEnsemble` combines K fold-wise
-  refits into the cross-fit ensemble (Chernozhukov et al., 2018) that
-  recovers the rest.
-- **Benchmarks, not the method.** `cocodeel.benchmarking` holds
-  competitor baselines — `CovarNetwork` (end-to-end NAM-style joint
-  training of `f_X` and `f_Z`), `PostHocOrthNetwork`, the CF-Net
-  adversarial trainer, and an adapter around CIRCE (Pogodin et al.,
-  2023), whose original implementation is vendored unmodified at
-  `external/circe` (provenance in `external/circe/VENDORED_FROM`) —
-  used to show where joint training fails under concurvity. None of
-  them is exported from `cocodeel` directly.
+The experiments are scripts that run the method end to end, one per question. Each script opens with what it shows and which figures it produces; the R scripts in `figures/` draw them.
 
-## Reproducing the paper's experiments
+| Script | Shows | Paper figures |
+|---|---|---|
+| `experiments/simulation/study_a_linear_consistency.py` | The DNN with Controls recovers `f_X` as the confounding strength, backbone width, number of controls and sample size grow, while the DNN without controls absorbs `f_Z` | Fig 1, Fig 4, appendix |
+| `experiments/simulation/study_b_misspecification.py` | A nonlinear `f_Z` refit as linear in `Z` | appendix |
+| `experiments/simulation/study_c_concurvity_benchmark.py` | The DNN with Controls against neural additive models and post-hoc methods under concurvity | Fig 2, appendix |
+| `experiments/simulation/study_d_noisy_z.py` | A control variable measured with noise | appendix |
+| `experiments/ukbb/` | Brain MRI from the UK Biobank with synthetic confounding by age | Fig 5, appendix |
 
-- `experiments/simulation/` — the simulation study (paper Section
-  5): a synthetic image DGP, one self-contained script per study, and the
-  R scripts that produce every simulation figure. See its `README.md`.
-- `experiments/ukbb/` — the UK Biobank application (paper Section 6):
-  synthetic confounding on real T1 structural MRI. See its `README.md`.
-  UK Biobank data is access-controlled and not included here.
+The simulations run from the repository root, for example `NSIM=5 python experiments/simulation/study_a_linear_consistency.py`, and `python experiments/simulation/aggregate.py` reduces their predictions to the CSVs in `experiments/simulation/output/` that the figure scripts read. The UKBB data cannot be redistributed. `data/ukbb/make_dummy_data.py` writes random files with the same layout, so the UKBB pipeline runs end to end without access; `UKBB_DATA_ROOT` points it at the real data.
 
-## Testing
+## Citation
 
+```bibtex
+@article{pfeuffer2026controlling,
+  title  = {Controlling for Omitted Variable Bias in Deep Neural Networks},
+  author = {Pfeuffer, Manuel},
+  year   = {2026}
+}
 ```
-pytest tests/
-```
-
-Tests pin the ridge solve against closed-form OLS/ridge solutions and
-check the sample-split recovery of known effects — see `tests/`.

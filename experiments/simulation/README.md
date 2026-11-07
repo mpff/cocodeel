@@ -1,72 +1,32 @@
-# Simulation study — paper Section 5
+# Simulation study (Section 5)
 
-A synthetic "traffic-light" image DGP with a known confounder. Four
-self-contained study scripts reproduce every simulation figure in the paper;
-each trains its own models and writes per-seed predictions that `aggregate.py`
-reduces to the CSVs the R figure scripts read.
+Images from a synthetic "traffic-light" DGP with known `f_X`, `f_Z` and a control variable `Z` correlated with the image. Because the true effects are known, every estimator can be scored by the bias², variance and MSPE of `f̂_X`, `f̂_X^re` and `f̂_Z` over replications.
 
-## Studies → figures
-
-| Script | Sweeps (CSV names) | Figure scripts |
+| Script | Sweeps | Figure scripts |
 |---|---|---|
-| `study_a_linear_consistency.py` | `increasing_bz`, `binary_increasing_bz`, `increasing_q`, `increasing_cv`, `increasing_p` | `figures/figure_a1_linear_bz.R`, `figure_a2_binary_bz.R`, `figure_a3_adversarial_settings.R` |
-| `study_b_misspecification.py` | `nonlinear_fz`, `nonlinear_fz_misspec` | `figures/figure_b1_misspecification_fz.R` (+ `figure_b1_misspecification_fz_curve.R`), `figure_b2_misspecification_raw_z.R` |
-| `study_c_concurvity_benchmark.py` | `concurvity`, `concurvity_q` | `figures/figure_c1_concurvity.R`, `figure_c2_concurvity_backbone_width.R` |
-| `study_d_noisy_z.py` | `increasing_a` | `figures/figure_d1_noisy_z.R` |
+| `study_a_linear_consistency.py` | `increasing_bz`, `binary_increasing_bz`, `increasing_q`, `increasing_cv`, `increasing_p` | `figure_a1_linear_bz.R`, `figure_a2_binary_bz.R`, `figure_a3_adversarial_settings.R` |
+| `study_b_misspecification.py` | `nonlinear_fz`, `nonlinear_fz_misspec` | `figure_b1_misspecification_fz.R`, `figure_b1_misspecification_fz_curve.R`, `figure_b2_misspecification_raw_z.R` |
+| `study_c_concurvity_benchmark.py` | `concurvity`, `concurvity_q` | `figure_c1_concurvity.R`, `figure_c2_concurvity_backbone_width.R` |
+| `study_d_noisy_z.py` | `increasing_a` | `figure_d1_noisy_z.R` |
 
-Method keys in the CSVs: `refit` / `refit_orth` (RefitCovarNetwork, always
-2-fold cross-fit), `base` (uncontrolled DNN), `posthoc_web` (Weber,
-residualised predictions), `posthoc_web_features` (Weber, residualised
-backbone features with a refitted head), `leace` (LEACE, Belrose et al. 2023,
-with a refitted head), `nam` (CovarNetwork, linear f(Z)), `nam_mlp` /
-`nam_mlp_conc` (MLPCovarNetwork with the Siems penalty), `ssn`, `cfnet`
-(CF-Net, Zhao et al. 2020, published protocol), `circe` (CIRCE, Pogodin et
-al. 2023, released code); the last three at the strength chosen per n by
-`hpsearch/search_study_c_lam.py`.
+Method keys in the CSVs: `refit` and `refit_orth` are the DNN with Controls without and with orthogonalisation (2-fold cross-fit), `base` the DNN without controls, `posthoc_web` its orthogonalised predictions, `posthoc_web_features` PHO + Refit (Weber et al., 2023), `leace` LEACE (Belrose et al., 2023), `nam` and `nam_mlp` neural additive models with linear and MLP `f_Z`, `nam_mlp_conc` the MLP NAM with the concurvity penalty of Siems et al. (2023), `ssn` the semi-structured network of Rügamer et al., and `joint` a joint DNN `g(X, Z)`.
 
 ## Layout
 
-- `common/` — code shared by all studies: `dgp.py` (image DGP), `backbone.py`
-  (CNN), `loaders.py` (cross-fit data partitioning), `grid_runner.py`
-  (resumable multiprocessing sweep runner).
-- `study_*.py` — one script per study; hyperparameters are hardcoded
-  constants (values from `hpsearch/chosen_hps*.json`).
-- `aggregate.py` — reduces per-seed NPZ predictions into `output/<sweep>.csv`
-  (bias²/variance/MSPE per method and effect); it never overwrites an
-  existing CSV, so a new aggregation takes `--out-dir`.
-- `hpsearch/` — optional: re-derive the hardcoded hyperparameters
-  (`search_default.py` for studies A/B; `search_study_c.py` and
-  `search_study_c_q.py` for the per-n and per-(n, q) study-C searches,
-  `search_study_c_lam.py` for the competitors' penalty strength; shared driver
-  `_grid_search.py`). The chosen values are committed as JSON.
-- `figures/` — one R script per figure, reading `output/*.csv`.
+- `common/`: the DGP (`dgp.py`), the CNN backbone (`backbone.py`), the sample split into halves for cross-fitting (`loaders.py`), and a resumable multiprocessing runner (`grid_runner.py`).
+- `study_*.py`: one script per study, hyperparameters as constants at the top.
+- `hpsearch/`: the grid searches that chose those hyperparameters, with their results as JSON.
+- `aggregate.py`: reduces per-seed predictions to `output/<sweep>.csv`.
+- `figures/`: one R script per figure (`readr`, `dplyr`, `ggplot2`, `latex2exp`, `patchwork`, `tikzDevice`, `png`).
 
-## Reproducing a figure
+## Running
 
-From `~/Research/ovb-ddns/code/` in the `dl-mri` env:
+From the repository root:
 
 ```
 python experiments/simulation/study_a_linear_consistency.py
-python experiments/simulation/aggregate.py
+python experiments/simulation/aggregate.py --out-dir experiments/simulation/output/new
 Rscript experiments/simulation/figures/figure_a1_linear_bz.R
 ```
 
-Each study writes to a fixed, resumable run directory
-(`output/runs/study_*`): rerunning skips every `(sweep, setting, seed)`
-already on disk, so an interrupted run continues where it stopped and a
-completed run is a no-op. Saved predictions are never rewritten: methods
-added later run into their own run directory, which `aggregate.py` merges
-with the earlier one per seed (study C selects them with the env vars
-`METHODS` and `RUN_NAME`, e.g. `RUN_NAME=study_c_erasers
-METHODS=posthoc_web_features,leace`). `NSIM=5` (env var) runs a reduced number of seeds
-for a quick trial; the default is 50, and a trial run's seeds are reused by
-the full run. `COCODEEL_DEVICE` overrides the GPU (default `cuda:0`).
-
-## Status
-
-- The R packages the figure scripts need (`readr`, `dplyr`, `ggplot2`,
-  `tikzDevice`, `latex2exp`, `png`, `grid`, `patchwork`) are **not** listed
-  in `environment.yml` — install them separately in the `dl-mri` R.
-- `output/*.csv`, `output/example_image.png`, `output/graphics/` (the PDF
-  figures), and `output/hp_search_q*/` are committed. `output/runs/` and
-  `output/hp_search/` are gitignored and regenerated by the commands above.
+`NSIM` sets the number of replications and `COCODEEL_DEVICE` the device. A study writes to `output/runs/study_*/` and skips every (sweep, setting, seed) already there, so an interrupted run resumes. `aggregate.py` never overwrites an existing CSV.

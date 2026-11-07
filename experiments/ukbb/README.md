@@ -1,79 +1,31 @@
-# UKBB experiments — paper Section 6
+# Application to neuroimaging data with synthetic confounding (Section 6)
 
-Synthetic confounding on UK Biobank T1 structural MRI. A ResNet50 backbone is
-trained under a known age/sex confounder; the linear covariate head is then
-**refit from the frozen backbone** to control the omitted-variable bias. Every
-paper output is regenerated from the released backbone checkpoints without
-retraining the CNN.
+Predict high alcohol consumption (`highalc`) from T1-weighted brain MRI of the UK Biobank, with `age` as the control variable. Each outer training fold is resampled to a logistic DGP in which `sex` carries the signal (`β_sex = 2`) and `age` the confounding (`β_age ∈ {0, -2}`, the `coef` of the scripts). The test set is resampled with `β_age = 0`, so a model that uses `age` as a shortcut loses AUC on it. The backbone is a 3D ResNet-50 pretrained on Kinetics (`common/backbone.py`).
 
-## Stages → outputs → figure
+| Script | Does | Writes to `runs/` |
+|---|---|---|
+| `train_backbones.py` | trains the DNNs without controls: on all 5,000 observations, on each half, and on each two thirds | `backbones/` |
+| `refit_from_checkpoints.py` | DNN with Controls: Sample split and Cross-fit (K=2) | `refit/` |
+| `run_crossfit.py` | DNN with Controls: Cross-fit (K=3) | `crossfit_k3/` |
+| `competitors_from_checkpoints.py` | No sample split, orthogonalisation, PHO + Refit, LEACE, DFR | `refit/competitor_results.csv` |
+| `train_joint.py` | Joint DNN `g(X, age)`, marginalised over age | `refit/joint_results.csv` |
+| `aggregate.py` | reduces per-fold records to CSVs | `refit/`, `crossfit_k3/` |
+| `figures/UKBB_application_fig.R` | Fig 5 and the appendix figure and table (`ggplot2`, `dplyr`, `tidyr`, `mltools`) | `refit/graphics/` |
 
-| Script | Reads | Writes | Figure |
-|---|---|---|---|
-| `train_backbones.py` | UKBB HDF5 + pretrained ResNet | `runs/final_v2/coef=*/fold=*/base_{full,half,half_B}.pt` | — (source of truth; not in the reproducible loop) |
-| `refit_from_checkpoints.py` | `base_{full,half,half_B}.pt` | per-fold `record.npz` + refit heads in `runs/final_v2_refit/` | Panel A/B |
-| `run_crossfit.py` | `k{K}/backbone_k*.pt`, `full/base_full.pt` | per-fold `record.npz` in `runs/<run>_refit/` | K-fold robustness |
-| `train_joint.py` | UKBB HDF5 + pretrained ResNet | `runs/final_v2_refit/coef=*/fold=*/joint_age.pt`, `joint_results.csv` | — |
-| `competitors_from_checkpoints.py` | `base_full.pt` | `runs/final_v2_refit/coef=*/fold=*/features.npz`, `competitor_results.csv` | — |
-| `aggregate.py` | per-fold `record.npz` | `rexports/*.csv`, `raw_results.csv`, `crossfit_results.csv` | — |
-| `figures/UKBB_application_fig.R` | the CSVs above | `runs/final_v2_refit/graphics/Fig_UKBB_application_{main,appendix}.pdf`, `Tab_UKBB_competitors.tex` | A/B |
+## Running
 
-Method keys in the CSVs: `base_full` (uncontrolled DNN), `base_half` (backbone on one
-half), `refit_age` (single-split refit, RefitCovarNetwork on the h2
-half), `crossfit_age` (2-fold cross-fit ensemble via
-`CrossFitEnsemble`), `joint_age` (joint DNN g(X, age), image features and age through
-an MLP head), and `dnn` / `refit_nosamp_*` / `refit_split_*` / `crossfit_k{K}_*`
-from the general K-fold study.
-
-## Layout
-
-- `common/` — shared machinery: `data.py` (HDF5 loading, the synthetic-confounding
-  DGP, `NumpyCovarDataset`, loaders) and `backbone.py` (the pretrained 3D ResNet50).
-- `train_backbones.py` — trains the three sample-split backbones per (coef, fold).
-  Kept for provenance only; the checkpoints are the irreplaceable artefact.
-- `refit_from_checkpoints.py` — the reproducible core: refit the age and age+sex heads
-  and the 2-fold cross-fit from the frozen backbones; one raw record per fold.
-- `run_crossfit.py` — general K-fold cross-fit from released `backbone_k*.pt`, ensembled
-  with `CrossFitEnsemble` (the K=2/K=3, n5k/n10k robustness runs).
-- `train_joint.py` — the joint DNN that takes age as a second input, trained per
-  (coef, fold) and evaluated with age marginalised over the training sample.
-- `competitors_from_checkpoints.py` — post-hoc competitors on the frozen base_full backbone:
-  orthogonalisation of f_X (`posthoc_web_*`), feature residualisation
-  (`posthoc_web_features_*`) and LEACE (`leace_*`), each for Z = age.
-- `aggregate.py` — reduces the per-fold records to the R-ready CSVs.
-- `figures/` — one R script per figure, reading only CSVs.
-
-Every stage uses fixed run directories with skip-if-exists resume: one output file per
-(coef, fold); rerunning skips finished folds. Cross-fitting always goes through
-`CrossFitEnsemble` from `src/cocodeel/crossfit.py` (`.recenter(pooled)` before effects
-are reported) — no ad-hoc fold-averaging in experiment code.
-
-## Reproducing Panel A/B
-
-From `~/Research/ovb-ddns/code/` in the `dl-mri` env, given the released checkpoints in
-`runs/2026-04-26_13-16-37_final_v2/`:
+From the repository root, with the data in `data/ukbb/` (or `UKBB_DATA_ROOT`) and the Kinetics ResNet-50 weights `r3d50_K_200ep.pth` in its `pretrained_models/`:
 
 ```
-python experiments/ukbb/refit_from_checkpoints.py --coefs 0.0,2.0 --folds 0,1,2,3,4
-python experiments/ukbb/aggregate.py --run experiments/ukbb/runs/final_v2_refit
+python data/ukbb/make_dummy_data.py              # without UK Biobank access
+python experiments/ukbb/train_backbones.py --gpu 0
+python experiments/ukbb/refit_from_checkpoints.py --gpu 0
+python experiments/ukbb/run_crossfit.py --gpu 0
+python experiments/ukbb/competitors_from_checkpoints.py --gpu 0
+python experiments/ukbb/train_joint.py --gpu 0
+python experiments/ukbb/aggregate.py
+python experiments/ukbb/aggregate.py --run experiments/ukbb/runs/crossfit_k3
 Rscript experiments/ukbb/figures/UKBB_application_fig.R
 ```
 
-`--gpu 0` by default (keep GPU 1 free). `refit_from_checkpoints.py` reads the base
-backbones from `--src-run` and writes regenerated rexports + the 2-fold cross-fit to
-`--out-run` (`runs/final_v2_refit/`); the figure's K=3 column and no-sample-split
-baseline are carried from the released runs unchanged.
-
-## Status
-
-- Run artefacts (`runs/`, ~96 GB of checkpoints + per-run CSVs) are gitignored and
-  access-controlled UKBB data cannot be redistributed. The paper-relevant runs are
-  hashed in `~/Research/ovb-ddns/baselines/sha256.txt`.
-- The attribution-map pipeline (`lrp/`) lives on the `dev` branch; it is not part of
-  the paper's reproducible loop.
-- The R figure packages (`ggplot2`, `dplyr`, `tidyr`, `mltools`, `grid`) must be
-  installed in the `dl-mri` R separately.
-
-## Data access
-
-UK Biobank data is access-controlled and cannot be redistributed.
+Every script skips the (coef, fold) pairs whose outputs exist, so an interrupted run resumes.

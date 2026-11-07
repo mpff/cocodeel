@@ -1,6 +1,6 @@
 """Study A — consistency of the cross-fitted refit for linear f_Z.
 
-Sweeps: increasing_bz (Fig 1), binary_increasing_bz (Fig 3), and the
+Sweeps: increasing_bz (Fig 1 and appendix), binary_increasing_bz (appendix), and the
 adversarial settings increasing_q / increasing_cv / increasing_p (Fig 4).
 Methods: refit and refit_orth (2-fold cross-fit); the bz sweeps add the
 full-sample baselines base (uncontrolled DNN) and posthoc_web (Weber).

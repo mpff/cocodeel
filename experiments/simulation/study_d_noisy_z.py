@@ -4,7 +4,7 @@ The DGP is held fixed at bz=1 (X and y are always generated from the true Z);
 only the control handed to the estimators is corrupted, mirroring measurement
 error: Z_tilde = (1-a) Z + a eps with eps ~ U([0,1]) iid, so Z_tilde stays in
 [0,1] with E[Z_tilde] = 1/2 and reliability Corr(Z, Z_tilde)^2 =
-(1-a)^2 / ((1-a)^2 + a^2). Methods mirror the Fig-1 bz sweep: refit and
+(1-a)^2 / ((1-a)^2 + a^2). Methods mirror the increasing_bz sweep of study A: refit and
 refit_orth (2-fold cross-fit) plus the full-sample baselines base
 (uncontrolled DNN, blind to Z_tilde) and posthoc_web (Weber). Endpoints anchor
 to known results: a=0 reproduces study A at bz=1, a=1 controls for pure noise
